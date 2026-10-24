@@ -35,3 +35,10 @@ tmp/
 .cf_api_token_secret
 .cf_secrets.json
 .internal_gateway_token
+
+# Local run scratch files
+.last_run_id
+.last_project_id
+*.docx
+docx_dump.txt
+fail_events.txt

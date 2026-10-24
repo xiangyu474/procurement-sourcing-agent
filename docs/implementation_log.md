@@ -2,56 +2,80 @@
 
 ## M0 — 平台与代理能力验证
 
-日期：2026-10-24
+日期：2026-10-24 ｜状态：**M0 通过**
 
-### 已完成
+### 已实现
 
-- 通读 v1.3 增量交接包（`00_START_HERE` 至 `05_EXECUTION_EVAL`）与 `baseline_v1.2/` 九份基线文档。
-- 建立独立项目骨架，不再沿用上游研究仓库的目录、示例、评测产物与无关旧实现。
-- Python 包重整为 `procurement_agent`：`agents/`（Deep Agents 主循环）、`api/`（Container 内
-  FastAPI）、`infra/`（环境配置、模型适配、SearchProvider 抽象）、`reports/`（DOCX 生成）。
-- 领域不变量固化为可执行约束：搜索结果只是候选来源（`SearchProvider` 返回 `SearchResult`），
-  不直接成为证据；Agent 系统提示词禁止捏造供应商、报价、来源与关系，并要求区分四类价格、
-  隔离模拟历史供应商。
-- 需求与历史数据解耦：M0 的执行端点不要求任何历史文件，阶段文案显式说明“历史文件未提供”。
-- Cloudflare 网关（TypeScript）实现：项目/运行创建、运行状态查询、阶段事件、内部回写鉴权、
-  R2 产物上传与 DOCX 下载；D1 migration 覆盖 `projects` / `runs` / `run_events`。
-- Worker 通过 Workflow 驱动 Container 执行 2–5 分钟长任务，任务进度经内部鉴权接口回写 D1，
-  页面刷新不影响运行状态。
+- 独立 Python 包 `procurement_agent`：`agents/`（Deep Agents 主循环）、`api/`（Container 内
+  FastAPI）、`infra/`（环境配置、模型适配、`SearchProvider` 抽象）、`reports/`（DOCX 生成）。
+- 领域不变量固化为可执行约束：搜索结果只是候选来源，不直接成为证据；Agent 系统提示词禁止
+  捏造供应商、报价、来源与关系，并要求区分四类价格、隔离模拟历史供应商。
+- 需求与历史数据解耦：M0 执行端点不要求任何历史文件，阶段文案显式说明“历史文件未提供”。
+- Cloudflare 网关（TypeScript）：项目/运行创建、运行状态、阶段事件、内部回写鉴权、R2 产物
+  上传与 DOCX 下载；Workflow 驱动 Container 长任务；失败写入终态 `FAILED` 与失败原因。
+- D1 三次增量 migration：`0001_init`（projects/runs/run_events）、`0002_run_idempotency`
+  （idempotency_key + 唯一索引）、`0003_run_last_error`（last_error）。
+- 幂等：`POST /api/projects/{id}/runs` 接受 `idempotency_key`，重复请求返回同一 `run_id`。
 
-### 实测结果（真实调用）
+### 部署（真实执行）
 
-- `uv run python scripts/live_model_smoke.py`：普通对话、约 11k 字符上下文、原始 tool calling、
-  Deep Agents 实际调用工具、Pydantic 结构化输出 **全部 PASS**。
-  - 结构化输出必须显式使用 `method="function_calling"`：该端点默认模式会返回被代码围栏包裹的
-    JSON，Pydantic 无法解析。这是实测结论，不做假设。
-- LangSmith trace（root trace id）：
-  - Deep Agents 工具执行：`01a16e21-6e97-7723-a154-13872a6b38da`
-  - 结构化输出：`01a16e21-95b3-7bc0-8fa7-fe9b866134d5`
-  - 对话 / 上下文探针：`01a16e21-3d86-7683-8826-eb1d30babb69`、`01a16e21-1b15-75f0-b518-1df55d853b54`
-  - 失败的结构化输出 trace 保留在 LangSmith 中，作为协议问题的证据。
-- `uv run python scripts/live_search_smoke.py`：Tavily 基础检索 **PASS**，返回
-  `https://developers.cloudflare.com/containers`。未发送任何采购或客户数据。
-- 本地单元测试：见下节命令输出。
+| 项目 | 值 |
+| --- | --- |
+| Worker | `https://procurement-sourcing-gateway.xiangyu474.workers.dev` |
+| Workflow | `procurement-sourcing-run` |
+| Container 应用 | `procurement-sourcing-gateway-sourcingcontainer`（`a03c199b-83f5-4544-995e-76c6932d14f4`） |
+| 镜像 | `registry.cloudflare.com/4132e127.../procurement-sourcing-gateway-sourcingcontainer@sha256:ffcd81b3...` |
+| D1 | `procurement-sourcing`（`3a67c338-107f-4053-b678-109dd218773c`） |
+| R2 | `procurement-sourcing-artifacts` |
+| 部署方式 | GitHub push → Cloudflare Workers Builds 远程构建（本机无 Docker） |
 
-### Cloudflare 账户与资源状态
+### 实测结果
 
-- Workers Paid 已升级：`cf containers applications list` 由 401（错误 1000）变为正常返回空列表。
-- R2 已激活：`cf r2 buckets list` 正常返回空列表。
-- `cf d1 list` 与 `cf workflows list` 均正常返回空列表，账户尚未创建任何 D1 数据库、
-  R2 桶、Workflow 或 Container 应用。
-- 本机不安装 Docker。Container 镜像通过 Cloudflare 托管构建环境构建，不依赖 Docker Hub。
+**本地**
+- `uv run python -m pytest -q` → **10 passed**
+- `npx tsc --noEmit` → 无错误
+- `uv run python scripts/live_model_smoke.py` → **PASS**（对话、11k 上下文、tool calling、
+  Deep Agents 实际调用工具、Pydantic 结构化输出）
+- `uv run python scripts/live_search_smoke.py` → **PASS**（Tavily 返回 3 条真实结果）
+- LangSmith root trace：`01a16e21-6e97-7723-a154-13872a6b38da`（Deep Agents 工具执行）、
+  `01a16e21-95b3-7bc0-8fa7-fe9b866134d5`（结构化输出）
+
+**云端（M0 验收）**
+- C01 创建任务：立即返回 `202` + `run_id`，状态 `QUEUED` ✅
+- C02/C03 断连存活：创建 run 后 **70 秒内不发起任何请求**，任务仍完整跑完并写入 6 条阶段事件 ✅
+- C04 失败恢复：故意触发容器 422（`duration_seconds=9999`），run 终态为 `FAILED`，
+  失败原因写入事件：`container task failed with status 422: ... "Input should be less than
+  or equal to 600"`；不再出现永久 `QUEUED` ✅
+- C05 幂等：同一 `idempotency_key` 两次请求返回同一 `run_id`（第二次带 `reused: true`）✅
+- C07 DOCX 下载：`GET /api/runs/{id}/report/download` → 200，37,509 字节，
+  `python-docx` 可解析，中文标题与 7 行阶段表正常 ✅
+- C08 越权访问：内部接口使用错误 token → `401 {"error":"unauthorized"}` ✅
+- R2 对象已核对：key `workspaces/default/projects/{run_id}/reports/{run_id}/report.docx`，
+  size 37,506，contentType 为 DOCX ✅
+
+**关键排障记录（均为实测，非推测）**
+1. Container 首次 500：`model_config` 是 Pydantic 保留字段名，导致应用导入即崩溃、
+   容器秒退。改为 `runtime_config`，并新增 `test_container_startup.py` 断言容器可导入，
+  避免同类问题再次只表现为云端启动失败。
+2. Container 内存：`lite` 实例不足以运行 Python 应用，改为 `standard-1`。
+3. 就绪探针：改用 `pingEndpoint = "localhost/health"`，直接探测应用健康路由而非仅探测端口。
+4. 失败 run 卡在 `QUEUED`：`last_error` 曾被加进已应用的 `0001` migration，实际未建列，
+   失败写入 SQL 抛错。已拆出 `0003_run_last_error.sql`。
+5. 环境：Git 与 curl 需走公司代理 `proxy.emea.ibm.com:8080`；Git 不读 Windows 系统代理。
 
 ### 已知限制
 
-- 尚未创建 D1 数据库、R2 桶与 GitHub 仓库，尚未产生任何部署链接与云端 Trace。
-- M0 的容器长任务、R2 产物与 DOCX 下载闭环尚未在云端跑通，因此 M0 未通过。
-- 模型端点的最大上下文长度、真实超时行为与限流响应尚未实测；客户端超时设置为 45 秒。
+- 容器内长任务目前是**阶段演练**，尚未接入真实检索、规格核验与比价；报告明确标注
+  “尚未执行公开检索、规格核验或价格比对”。
+- 无 Web UI：`/api/projects` 直接用 curl 调用。
+- 仓库仍为 private；比赛提交前需转 public。
+- `wrangler.bootstrap.jsonc` + `bootstrap.ts` 为首次建 Worker 的引导产物，可在下一切片删除。
+- 未做容器中途重启（SIGTERM）恢复测试；失败路径已验证，进程被杀场景待补。
 - 未获取精确计费数据，不声称具体金额。
 
-### 下一步
+### 下一步（v1.3 M1）
 
-1. 创建 GitHub 仓库并推送本项目，接入 Cloudflare Workers Builds（远程构建，无需本地 Docker）。
-2. 创建 D1 数据库与 R2 桶，回填 `wrangler.jsonc` 中的 ID 与网关地址。
-3. 在云端跑通 2–5 分钟长任务、状态查询与 DOCX 下载，验证容器重启后的失败恢复。
-4. M0 通过后进入 v1.3 M1：文字/PPT 需求解析、可选历史导入、官方素材回归。
+1. 按 v1.3.1 补丁实现 `SourcingSupervisor` + `SupplierResearcher` 池、`ProcurementAnalysisContext`
+   与冻结的 `SourcingDecisionSnapshot`（Web 与 DOCX 同源）。
+2. 需求解析：仅文字、仅 PPTX、PPT+XLSX 三条路径，历史 Excel 可后补导入。
+3. 官方两组 PPT/XLSX 回归：1000 行 / 38 列 / 第 8 行表头、模拟供应商不与公网同名主体合并。
