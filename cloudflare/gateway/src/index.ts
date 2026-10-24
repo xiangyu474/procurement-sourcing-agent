@@ -115,7 +115,7 @@ export class SourcingWorkflow extends WorkflowEntrypoint<Env, RunRequest> {
 							gateway_url: this.env.CONTAINER_GATEWAY_URL,
 							token: this.env.INTERNAL_GATEWAY_TOKEN,
 							duration_seconds: durationSeconds,
-							model_config: {
+							runtime_config: {
 								GENESIS_BASE_URL: this.env.GENESIS_BASE_URL,
 								GENESIS_ACCESS_TOKEN: this.env.GENESIS_ACCESS_TOKEN,
 								GENESIS_MODEL_ID: this.env.GENESIS_MODEL_ID,

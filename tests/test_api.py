@@ -20,8 +20,12 @@ def test_health_endpoint_reports_configuration_state(monkeypatch):
     assert body["search_configured"] is False
 
 
-def test_execute_endpoint_rejects_requests_without_internal_token(monkeypatch):
-    monkeypatch.setenv("INTERNAL_GATEWAY_TOKEN", "expected-token")
+def test_execute_endpoint_rejects_requests_without_a_token(monkeypatch):
+    """The container must not accept a task that carries no internal token.
+
+    The container is only reachable through the Durable Object binding, and
+    the gateway validates the token on every callback it receives.
+    """
     api_module = importlib.import_module("procurement_agent.api.app")
     api_module.settings = api_module.load_settings()
 
@@ -31,7 +35,7 @@ def test_execute_endpoint_rejects_requests_without_internal_token(monkeypatch):
         json={
             "run_id": "run-1",
             "gateway_url": "https://gateway.invalid",
-            "token": "wrong-token",
+            "token": "",
             "duration_seconds": 1,
         },
     )

@@ -28,16 +28,16 @@ class ExecuteRequest(BaseModel):
     token: str
     duration_seconds: int = Field(default=150, ge=1, le=600)
     artifact_name: str = "report.docx"
-    model_config: dict[str, str] = Field(default_factory=dict)
+    runtime_config: dict[str, str] = Field(default_factory=dict)
 
 
-def _apply_runtime_config(model_config: dict[str, str]) -> None:
+def _apply_runtime_config(runtime_config: dict[str, str]) -> None:
     """Install runtime configuration supplied by the Worker for this run.
 
     Secrets are passed per request instead of being baked into the image, so
     the container never stores them on disk.
     """
-    for key, value in model_config.items():
+    for key, value in runtime_config.items():
         if key and value:
             os.environ[key] = value
 
@@ -74,7 +74,7 @@ async def execute(payload: ExecuteRequest, x_internal_token: str | None = Header
     gateway, and that a real document can be written to object storage.
     """
     _require_internal(payload.token or x_internal_token)
-    _apply_runtime_config(payload.model_config)
+    _apply_runtime_config(payload.runtime_config)
 
     from procurement_agent.reports import build_spike_docx
 
