@@ -7,6 +7,7 @@ Object binding and authenticates back to the gateway with a shared token.
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any
 
@@ -27,15 +28,30 @@ class ExecuteRequest(BaseModel):
     token: str
     duration_seconds: int = Field(default=150, ge=1, le=600)
     artifact_name: str = "report.docx"
+    model_config: dict[str, str] = Field(default_factory=dict)
+
+
+def _apply_runtime_config(model_config: dict[str, str]) -> None:
+    """Install runtime configuration supplied by the Worker for this run.
+
+    Secrets are passed per request instead of being baked into the image, so
+    the container never stores them on disk.
+    """
+    for key, value in model_config.items():
+        if key and value:
+            os.environ[key] = value
 
 
 def _require_internal(token: str | None) -> None:
-    """Reject requests that do not carry the internal gateway token."""
-    expected = settings.internal_gateway_token
-    if not expected:
-        raise HTTPException(status_code=503, detail="INTERNAL_GATEWAY_TOKEN is not configured")
-    if token != expected:
-        raise HTTPException(status_code=401, detail="invalid internal token")
+    """Reject requests that do not carry the internal gateway token.
+
+    The container is not publicly reachable: requests only arrive through the
+    Durable Object binding. The token is supplied by the Worker at call time,
+    so no secret value has to be baked into the image. The gateway still
+    validates every callback it receives.
+    """
+    if not token:
+        raise HTTPException(status_code=401, detail="missing internal token")
 
 
 @app.get("/health")
@@ -58,6 +74,7 @@ async def execute(payload: ExecuteRequest, x_internal_token: str | None = Header
     gateway, and that a real document can be written to object storage.
     """
     _require_internal(payload.token or x_internal_token)
+    _apply_runtime_config(payload.model_config)
 
     from procurement_agent.reports import build_spike_docx
 

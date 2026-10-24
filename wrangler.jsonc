@@ -39,7 +39,7 @@
 		{
 			"binding": "DB",
 			"database_name": "procurement-sourcing",
-			"database_id": "REPLACE_WITH_D1_DATABASE_ID",
+			"database_id": "3a67c338-107f-4053-b678-109dd218773c",
 			"migrations_dir": "cloudflare/gateway/migrations"
 		}
 	],
@@ -50,6 +50,6 @@
 		}
 	],
 	"vars": {
-		"CONTAINER_GATEWAY_URL": "REPLACE_WITH_WORKERS_DEV_URL"
+		"CONTAINER_GATEWAY_URL": "https://procurement-sourcing-gateway.xiangyu474.workers.dev"
 	}
 }

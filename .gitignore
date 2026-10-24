@@ -29,3 +29,9 @@ dist-worker/
 logs/
 .local/
 tmp/
+
+# Local credential material created during setup (never committed)
+.cf_api_token_id
+.cf_api_token_secret
+.cf_secrets.json
+.internal_gateway_token

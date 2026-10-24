@@ -4,11 +4,18 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 export interface Env {
 	DB: D1Database;
 	BUCKET: R2Bucket;
-	SOURCING_CONTAINER: DurableObjectNamespace;
+	SOURCING_CONTAINER: DurableObjectNamespace<Container<Env>>;
 	INTERNAL_GATEWAY_TOKEN: string;
 	CONTAINER_GATEWAY_URL: string;
-	WORKFLOW: Workflow<Env, RunRequest>;
+	GENESIS_BASE_URL: string;
+	GENESIS_ACCESS_TOKEN: string;
+	GENESIS_MODEL_ID: string;
+	TAVILY_API_KEY: string;
+	WORKFLOW: Workflow<RunRequest>;
 }
+
+// The container receives the internal token from the Worker at request time so
+// that no secret value is baked into the image or the container configuration.
 
 export interface RunRequest {
 	runId: string;
@@ -105,6 +112,12 @@ export class SourcingWorkflow extends WorkflowEntrypoint<Env, RunRequest> {
 							gateway_url: this.env.CONTAINER_GATEWAY_URL,
 							token: this.env.INTERNAL_GATEWAY_TOKEN,
 							duration_seconds: durationSeconds,
+							model_config: {
+								GENESIS_BASE_URL: this.env.GENESIS_BASE_URL,
+								GENESIS_ACCESS_TOKEN: this.env.GENESIS_ACCESS_TOKEN,
+								GENESIS_MODEL_ID: this.env.GENESIS_MODEL_ID,
+								TAVILY_API_KEY: this.env.TAVILY_API_KEY,
+							},
 						}),
 					}),
 				);

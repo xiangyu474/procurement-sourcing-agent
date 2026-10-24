@@ -1,0 +1,13 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "procurement-sourcing-gateway",
+	"main": "cloudflare/gateway/src/bootstrap.ts",
+	"compatibility_date": "2026-10-13",
+	"compatibility_flags": ["nodejs_compat"],
+	"observability": {
+		"enabled": true
+	},
+	"vars": {
+		"CONTAINER_GATEWAY_URL": "https://procurement-sourcing-gateway.xiangyu474.workers.dev"
+	}
+}
