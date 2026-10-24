@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS runs (
 	status TEXT NOT NULL,
 	current_stage TEXT NOT NULL,
 	artifact_key TEXT,
+	last_error TEXT,
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL
 );

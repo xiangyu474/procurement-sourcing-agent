@@ -47,14 +47,18 @@ async function requireInternal(request: Request, env: Env): Promise<Response | n
 	return null;
 }
 
-async function upsertRun(env: Env, run: RunRequest): Promise<void> {
+async function upsertRun(
+	env: Env,
+	run: RunRequest,
+	idempotencyKey?: string,
+): Promise<void> {
 	const now = new Date().toISOString();
 	await env.DB.prepare(
-		`INSERT INTO runs (id, project_id, status, current_stage, created_at, updated_at)
-		 VALUES (?1, ?2, 'QUEUED', 'QUEUED', ?3, ?3)
-		 ON CONFLICT(id) DO UPDATE SET status = 'QUEUED', current_stage = 'QUEUED', updated_at = ?3`,
+		`INSERT INTO runs (id, project_id, status, current_stage, idempotency_key, created_at, updated_at)
+		 VALUES (?1, ?2, 'QUEUED', 'QUEUED', ?3, ?4, ?4)
+		 ON CONFLICT(id) DO UPDATE SET status = 'QUEUED', current_stage = 'QUEUED', updated_at = ?4`,
 	)
-		.bind(run.runId, run.projectId, now)
+		.bind(run.runId, run.projectId, idempotencyKey ?? null, now)
 		.run();
 }
 
@@ -81,6 +85,16 @@ async function updateRun(
 		.run();
 }
 
+async function failRun(env: Env, runId: string, reason: string): Promise<void> {
+	// Kept separate so a failure never overwrites a produced artifact.
+	await env.DB.prepare(
+		`UPDATE runs SET status = 'FAILED', current_stage = 'FAILED', updated_at = ?2, last_error = ?3
+		 WHERE id = ?1 AND status NOT IN ('COMPLETED')`,
+	)
+		.bind(runId, new Date().toISOString(), reason.slice(0, 400))
+		.run();
+}
+
 async function appendEvent(env: Env, runId: string, stage: string, detail: string): Promise<void> {
 	await env.DB.prepare(
 		`INSERT INTO run_events (id, run_id, stage, detail, created_at) VALUES (?1, ?2, ?3, ?4, ?5)`,
@@ -101,45 +115,56 @@ export class SourcingWorkflow extends WorkflowEntrypoint<Env, RunRequest> {
 	async run(event: WorkflowEvent<RunRequest>, step: WorkflowStep) {
 		const { runId, durationSeconds } = event.payload;
 
-		const result = await step.do(
-			"execute-container-task",
-			{ retries: { limit: 2, delay: "10 seconds", backoff: "exponential" }, timeout: "10 minutes" },
-			async () => {
-				const container = getContainer(this.env.SOURCING_CONTAINER, runId);
-				const response = await container.fetch(
-					new Request("http://container/internal/execute", {
-						method: "POST",
-						headers: { "content-type": "application/json" },
-						body: JSON.stringify({
-							run_id: runId,
-							gateway_url: this.env.CONTAINER_GATEWAY_URL,
-							token: this.env.INTERNAL_GATEWAY_TOKEN,
-							duration_seconds: durationSeconds,
-							runtime_config: {
-								GENESIS_BASE_URL: this.env.GENESIS_BASE_URL,
-								GENESIS_ACCESS_TOKEN: this.env.GENESIS_ACCESS_TOKEN,
-								GENESIS_MODEL_ID: this.env.GENESIS_MODEL_ID,
-								TAVILY_API_KEY: this.env.TAVILY_API_KEY,
-							},
+		try {
+			const result = await step.do(
+				"execute-container-task",
+				{ retries: { limit: 2, delay: "10 seconds", backoff: "exponential" }, timeout: "10 minutes" },
+				async () => {
+					const container = getContainer(this.env.SOURCING_CONTAINER, runId);
+					const response = await container.fetch(
+						new Request("http://container/internal/execute", {
+							method: "POST",
+							headers: { "content-type": "application/json" },
+							body: JSON.stringify({
+								run_id: runId,
+								gateway_url: this.env.CONTAINER_GATEWAY_URL,
+								token: this.env.INTERNAL_GATEWAY_TOKEN,
+								duration_seconds: durationSeconds,
+								runtime_config: {
+									GENESIS_BASE_URL: this.env.GENESIS_BASE_URL,
+									GENESIS_ACCESS_TOKEN: this.env.GENESIS_ACCESS_TOKEN,
+									GENESIS_MODEL_ID: this.env.GENESIS_MODEL_ID,
+									TAVILY_API_KEY: this.env.TAVILY_API_KEY,
+								},
+							}),
 						}),
-					}),
-				);
-				if (!response.ok) {
-					const body = await response.text().catch(() => "");
-					throw new Error(
-						`container task failed with status ${response.status}: ${body.slice(0, 500)}`,
 					);
-				}
-				return (await response.json()) as { artifact?: { key?: string } };
-			},
-		);
+					if (!response.ok) {
+						const body = await response.text().catch(() => "");
+						throw new Error(
+							`container task failed with status ${response.status}: ${body.slice(0, 500)}`,
+						);
+					}
+					return (await response.json()) as { artifact?: { key?: string } };
+				},
+			);
 
-		const artifactKey = result.artifact?.key ?? null;
-		await step.do("finalize-run", async () => {
-			await updateRun(this.env, runId, "COMPLETED", "REPORTING", artifactKey);
-		});
+			const artifactKey = result.artifact?.key ?? null;
+			await step.do("finalize-run", async () => {
+				await updateRun(this.env, runId, "COMPLETED", "REPORTING", artifactKey);
+			});
 
-		return { status: "COMPLETED", artifactKey };
+			return { status: "COMPLETED", artifactKey };
+		} catch (error) {
+			// A run must never stay QUEUED forever: record the failure so the
+			// client can see a terminal state and retry explicitly.
+			const message = error instanceof Error ? error.message : String(error);
+			await step.do("mark-run-failed", async () => {
+				await failRun(this.env, runId, message);
+				await appendEvent(this.env, runId, "FAILED", message.slice(0, 400));
+			});
+			throw error;
+		}
 	}
 }
 
@@ -191,10 +216,27 @@ export default {
 		const runsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/runs$/);
 		if (runsMatch && request.method === "POST") {
 			const projectId = runsMatch[1];
-			const body = (await request.json().catch(() => ({}))) as { duration_seconds?: number };
+			const body = (await request.json().catch(() => ({}))) as {
+				duration_seconds?: number;
+				idempotency_key?: string;
+			};
 			const durationSeconds = body.duration_seconds ?? 150;
+
+			// An idempotency key makes a repeated request return the same run
+			// instead of starting a second research task and paying for it.
+			if (body.idempotency_key) {
+				const existing = await env.DB.prepare(
+					`SELECT id, status FROM runs WHERE project_id = ?1 AND idempotency_key = ?2`,
+				)
+					.bind(projectId, body.idempotency_key)
+					.first<{ id: string; status: string }>();
+				if (existing) {
+					return json({ run_id: existing.id, status: existing.status, reused: true });
+				}
+			}
+
 			const runId = crypto.randomUUID();
-			await upsertRun(env, { runId, projectId, durationSeconds });
+			await upsertRun(env, { runId, projectId, durationSeconds }, body.idempotency_key);
 			await env.WORKFLOW.create({ params: { runId, projectId, durationSeconds } });
 			return json({ run_id: runId, status: "QUEUED" }, 202);
 		}
