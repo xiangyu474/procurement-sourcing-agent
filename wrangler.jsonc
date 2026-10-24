@@ -1,0 +1,55 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "procurement-sourcing-gateway",
+	"main": "cloudflare/gateway/src/index.ts",
+	"compatibility_date": "2026-10-13",
+	"compatibility_flags": ["nodejs_compat"],
+	"observability": {
+		"enabled": true
+	},
+	"containers": [
+		{
+			"class_name": "SourcingContainer",
+			"image": "./Dockerfile",
+			"max_instances": 2
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "SOURCING_CONTAINER",
+				"class_name": "SourcingContainer"
+			}
+		]
+	},
+	"exports": {
+		"SourcingContainer": {
+			"type": "durable-object",
+			"storage": "sqlite"
+		}
+	},
+	"workflows": [
+		{
+			"name": "procurement-sourcing-run",
+			"binding": "WORKFLOW",
+			"class_name": "SourcingWorkflow"
+		}
+	],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "procurement-sourcing",
+			"database_id": "REPLACE_WITH_D1_DATABASE_ID",
+			"migrations_dir": "cloudflare/gateway/migrations"
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "BUCKET",
+			"bucket_name": "procurement-sourcing-artifacts"
+		}
+	],
+	"vars": {
+		"CONTAINER_GATEWAY_URL": "REPLACE_WITH_WORKERS_DEV_URL"
+	}
+}
