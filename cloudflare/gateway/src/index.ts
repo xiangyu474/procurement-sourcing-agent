@@ -92,6 +92,9 @@ async function appendEvent(env: Env, runId: string, stage: string, detail: strin
 export class SourcingContainer extends Container {
 	defaultPort = 8000;
 	sleepAfter = "10m";
+	// Probe the application's own health route so readiness reflects the
+	// Python process, not just an open TCP port.
+	pingEndpoint = "localhost/health";
 }
 
 export class SourcingWorkflow extends WorkflowEntrypoint<Env, RunRequest> {
@@ -122,7 +125,10 @@ export class SourcingWorkflow extends WorkflowEntrypoint<Env, RunRequest> {
 					}),
 				);
 				if (!response.ok) {
-					throw new Error(`container task failed with status ${response.status}`);
+					const body = await response.text().catch(() => "");
+					throw new Error(
+						`container task failed with status ${response.status}: ${body.slice(0, 500)}`,
+					);
 				}
 				return (await response.json()) as { artifact?: { key?: string } };
 			},

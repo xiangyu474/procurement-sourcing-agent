@@ -11,6 +11,7 @@
 		{
 			"class_name": "SourcingContainer",
 			"image": "./Dockerfile",
+			"instance_type": "standard",
 			"max_instances": 2
 		}
 	],
