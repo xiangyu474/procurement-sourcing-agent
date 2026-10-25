@@ -24,7 +24,7 @@
 
 | 层 | 选型 |
 | --- | --- |
-| Agent Harness | Python `deepagents`（LangGraph），单一主控制循环 |
+| Agent Harness | Python `deepagents`（LangGraph）；v1.3.1 的 Supervisor + 1–3 个同类型 Researcher 属于 M2 |
 | 模型 | OpenAI 兼容接口（环境变量配置），结构化输出使用 function calling |
 | 搜索 | Tavily（经 `SearchProvider` 抽象，可替换） |
 | 云端 | Cloudflare Workers + Containers + D1 + R2 + Workflows |
@@ -73,8 +73,22 @@ npx wrangler deploy
 Container 镜像由 Cloudflare 托管构建环境构建（`Dockerfile`），本地不需要安装 Docker。
 镜像构建与首次部署耗时较长，部署后需要等待实例预���绪。
 
-## 状态与限制
+## 当前状态（2026-10-24）
 
-当前实现覆盖 M0：模型与搜索能力实测、Worker 网关、Container 长任务、D1 阶段状态、
-R2 产物持久化与 DOCX 下载闭环。需求解析、SourcingPlan、公开寻源、规格核验、比价与完整报告
-尚未实现，详见 `docs/implementation_log.md`。
+- **M0 云端闭环已实测**：Cloudflare Worker + Container + Workflow + D1/R2；长任务可在浏览器断连时继续，DOCX 写入 R2 并下载；Cloudflare 托管构建，无本机 Docker。
+- **M1 已在本地实现并测试**：纯文本、PPTX 需求抽取与受限 Requirement DSL；历史 XLSX 独立可选导入；官方两组材料回归读取到每组 14 个采购行、1000 条历史记录、38 列和第 8 行表头；官方模拟供应商使用独立命名空间；A 案 58/63 万台摘要值保留为未解决冲突。
+- 文本编译的 live 模型测试已通过：显式的 7.5 kW 下限进入 HARD/GTE DSL，CAN 接口偏好留为 PREFERENCE；引用经原文定位验证。
+- **M1 Cloudflare migration/API 尚未部署**：本地 Worker、D1 migration 与 Container API 代码待用户 review。当前公网 Worker 仍是 M0 版本。
+- **M2–M5 尚未开始**：Supervisor/Researcher 池、真实公开寻源与 Product Claims、Supplier Intelligence、Calculator、Data Fusion、Snapshot 及 Web/DOCX 同源报告都还没有实现。不得把 M0 阶段演练的零候选当成真实研究结果。
+
+可重现本地回归：
+
+```bash
+uv sync --python 3.11 --extra dev
+uv run --python 3.11 python -m pytest -q
+uv run --python 3.11 python scripts/live_demand_compile.py
+uv run --python 3.11 python scripts/live_official_demand_compile.py --case all
+npx tsc --noEmit
+```
+
+Live 命令需要本地 `.env`；官方素材从工作区旁的比赛资料目录读取，不复制到本仓库。完整过程、实测限制与 trace 见 `docs/implementation_log.md`。
