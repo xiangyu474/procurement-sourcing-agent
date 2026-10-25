@@ -78,7 +78,8 @@ Container 镜像由 Cloudflare 托管构建环境构建（`Dockerfile`），本�
 - **M0 云端闭环已实测**：Cloudflare Worker + Container + Workflow + D1/R2；长任务可在浏览器断连时继续，DOCX 写入 R2 并下载；Cloudflare 托管构建，无本机 Docker。
 - **M1 已在本地实现并测试**：纯文本、PPTX 需求抽取与受限 Requirement DSL；历史 XLSX 独立可选导入；官方两组材料回归读取到每组 14 个采购行、1000 条历史记录、38 列和第 8 行表头；官方模拟供应商使用独立命名空间；A 案 58/63 万台摘要值保留为未解决冲突。
 - 文本编译的 live 模型测试已通过：显式的 7.5 kW 下限进入 HARD/GTE DSL，CAN 接口偏好留为 PREFERENCE；引用经原文定位验证。
-- **M1 Cloudflare 已部分部署并实测**：文字项目创建→DSL 编译→API 读回成功；历史 XLSX 上传/import 为 1000×38 / 第 8 行表头，模拟标记和重复导入幂等通过；两组官方 PPTX 上传/编译/读回均返回 14 条采购行。云端 Case A 当前版本尚未输出 58/63 万台摘要冲突（本地版本已通过测试）；最新本地共享 intake Container 和重复导入响应字段修正待用户 review 后手动推送。
+- **M1 Cloudflare 已部分部署并实测**：文字项目创建→DSL 编译→API 读回成功；历史 XLSX 上传/import 为 1000×38 / 第 8 行表头，模拟标记和同项目重复导入幂等通过；两组官方 PPTX 上传/编译/读回均返回 14 条采购行。云端 Case A 当前版本尚未输出 58/63 万台摘要冲突（本地版本已通过测试）。
+- 完整云端验收又发现：同一 XLSX 导入不同项目时全局 dataset ID 会冲突。本地已改为项目作用域 ID 并加测试；共享 intake Container 与重复返回字段修正也待下一次 Workers Builds 部署后验证。
 - **M2–M5 尚未开始**：Supervisor/Researcher 池、真实公开寻源与 Product Claims、Supplier Intelligence、Calculator、Data Fusion、Snapshot 及 Web/DOCX 同源报告都还没有实现。不得把 M0 阶段演练的零候选当成真实研究结果。
 
 可重现本地回归：

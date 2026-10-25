@@ -51,3 +51,16 @@ def test_duplicate_history_upload_has_stable_dataset_id_and_duplicate_flag():
     )
     assert first.dataset_id == second.dataset_id
     assert second.duplicate_import is True
+
+
+def test_same_history_file_in_distinct_projects_has_distinct_dataset_identity():
+    content = make_book()
+    one = import_historical_xlsx(
+        content, project_id="project-one", source_file_name="history.xlsx", source_file_id="f1"
+    )
+    two = import_historical_xlsx(
+        content, project_id="project-two", source_file_name="history.xlsx", source_file_id="f2"
+    )
+    assert one.sha256 == two.sha256
+    assert one.dataset_id != two.dataset_id
+    assert one.transactions[0].project_id != two.transactions[0].project_id

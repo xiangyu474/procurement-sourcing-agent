@@ -41,7 +41,7 @@
 
 ### 本地验收结果
 
-- `uv run --python 3.11 python -m pytest -q`：**34 passed**。
+- `uv run --python 3.11 python -m pytest -q`：**35 passed**。
 - `npx tsc --noEmit`：**PASS**。
 - `uv run --python 3.11 python -m compileall -q src scripts tests`：**PASS**。
 - 两组官方 PPT：每份 7 页、每份 **14 条采购数据行**（表格 15 行含 header），数量、计划价、预算保留来源定位。
@@ -77,7 +77,8 @@
 
 ### 尚未完成 / M1 边界
 
-- M1 text-only、history import、Case 2 PPT-only API 保存/读回均已云端实测；Case A 云端 PPT compile 仍缺 58/63 `DataConflict`，本地 parser 已检测。待最新本地 Container image 部署后复验这项语义。
-- 最新本地 Worker/container 修正和重复导入响应字段尚未部署；没有执行 Git commit/push，按用户流程由用户 review 后手动提交/推送。
+- M1 text-only、history import、Case 2 PPT-only API 保存/读回均已云端实测；Case A 云端 PPT compile 返回 14 行并可读回，但旧远端 Container image 未生成 58/63 `DataConflict`，本地 extractor 已通过测试。
+- 部署后的完整云验收脚本在跨项目重复导入处发现真实 bug：历史 dataset ID 仅由文件 SHA 生成，两个不同项目导入同一 XLSX 时 D1 `history_datasets.id` 主键冲突。已将本地 dataset ID 改为 `hash(project_id + content_sha256)`，同项目仍稳定幂等、不同项目互相隔离，并加入回归测试。当前远端旧镜像尚未包含此修复。
+- 本地 Worker/container 修正包括共享 `m1-intake` DO、较短 idle sleep、重复导入响应统一 `dataset_id`；这些修改和 project-scoped dataset ID 待下一次 Workers Builds 部署后再重跑 `scripts/verify_m1_cloud_api.py`。
 - 无 Web UI；官方文件真实数据仍未进入寻源研究；没有真实供应商发现、产品 Claim、Supplier Intelligence、Calculator 或报告建议。
 - M2–M5 尚未开始；SIGTERM 中途终止恢复与精确真实费用观测仍为 M0/M5 遗留项。

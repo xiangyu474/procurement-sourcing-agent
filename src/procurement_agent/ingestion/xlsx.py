@@ -121,7 +121,10 @@ def import_historical_xlsx(
         raise ValueError("input is not an XLSX ZIP container")
 
     digest = hashlib.sha256(file_bytes).hexdigest()
-    dataset_id = f"hist_{digest[:24]}"
+    # Dataset identity is workspace/project scoped: the same file imported to
+    # two projects must not collide in D1 or leak one project's provenance into
+    # another project's history namespace.
+    dataset_id = "hist_" + hashlib.sha256(f"{project_id}:{digest}".encode("utf-8")).hexdigest()[:24]
     duplicate = digest in (previously_imported_hashes or set())
     workbook = openpyxl.load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
 
