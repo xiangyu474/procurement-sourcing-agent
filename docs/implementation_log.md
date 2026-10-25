@@ -1,84 +1,96 @@
 # Implementation Log
 
-## M0 — Cloudflare 部署与代理能力验证
+## M0 — Cloudflare deployment and agent smoke (passed)
 
-日期：2026-10-24 ｜状态：**M0 通过**
+- Deployed Worker: `https://procurement-sourcing-gateway.xiangyu474.workers.dev`.
+- Python Deep Agents Container, Durable Object, Workflows, D1, and private R2 are active. Container images build on Cloudflare Workers Builds; no local Docker/Docker Hub.
+- Verified task `202 + run_id`, 70-second browser disconnect, D1 stage events, terminal `FAILED`, idempotency key, internal bearer rejection, and DOCX write/read/download from R2.
+- M0 long work was a clearly labelled stage simulation; it did not claim actual supplier research.
+- Earlier faults fixed: Pydantic-reserved field name, insufficient `lite` instance, health probe, applied migration altered instead of adding a new migration, and failure state stuck at QUEUED.
+- Remaining M0 reliability work: SIGTERM/container termination recovery and exact provider/Cloudflare usage cost measurement.
 
-### 已通过的 M0 能力
+## M1 — Demand intake, Requirement DSL, optional XLSX history
 
-- Cloudflare Worker + Python Container + Durable Object + Workflow + D1 + R2 已真实部署。
-- Worker：`https://procurement-sourcing-gateway.xiangyu474.workers.dev`
-- Workers Builds 在 Cloudflare 远程构建 Container 镜像；本机不运行 Docker，不用 Docker Hub。
-- C01：创建任务即返回 `202 + run_id`；C02/C03：停止轮询 70 秒，任务继续并写入阶段事件；C04：容器请求故障写终态 `FAILED` 和原因；C05：相同 idempotency key 返回同一 run；C07：DOCX 写 R2 并下载；C08：错误内部 token 得 `401`。
-- 首次排障包括：Pydantic 的保留字段 `model_config`、Container 规格、健康探针、已应用 D1 migration 不可改写、失败状态不可永久 QUEUED。
-- M0 长任务是**阶段演练**，不是真实寻源；DOCX 明确说明没有检索/核验/比价。
+**Status: local test suite and deployed Cloud API acceptance passed. Repository remains private.**
 
-## M1 — Demand Intake / Requirement DSL / Optional History
+### Implemented files
 
-日期：2026-10-24 ｜状态：**本地验收通过；云端端到端仍有一条 PPT 容量阻塞**
+- `src/procurement_agent/domain/requirements.py`: versioned Requirement DSL, dynamic attribute keys, whitelisted types/operators, `HARD/PREFERENCE/UNKNOWN`, source provenance, `RESOLVED/AMBIGUOUS/UNSUPPORTED`, planned-price/budget types, conflicts, optional-history state and history row models.
+- `src/procurement_agent/ingestion/text.py`: revisioned plain-text input and character-range provenance.
+- `src/procurement_agent/ingestion/pptx.py`: extraction of slide text and every table cell with file/slide/shape/table/row/cell locators; no fixed-slide parser assumption.
+- `src/procurement_agent/ingestion/pptx_tables.py`: header-driven procurement-line extraction, planned prices and budgets, and source-grounded project-summary quantity conflicts. The Case A 58/63 万台 difference is retained as unresolved.
+- `src/procurement_agent/ingestion/xlsx.py`: automatic header scan, aliases, row provenance, stable SHA-256 dataset identity scoped by project, and simulated-supplier namespace isolation.
+- `src/procurement_agent/ingestion/compiler.py`: function-calling structured model compilation; strict Pydantic validation; source quotes must match source fragments; bad or incomplete outputs remain unstructured/ambiguous. Pixel basis ambiguity is guarded deterministically.
+- `src/procurement_agent/services/demand_intake.py`: independent source compilation, text/PPT conflict detection, optional history, and analysis-version behavior.
+- `src/procurement_agent/api/app.py`: internal Container endpoints for demand compilation, private PPTX retrieval and optional XLSX import.
+- `cloudflare/gateway/src/index.ts`, `cloudflare/gateway/migrations/0004_m1_demand_intake.sql`: bearer-protected project and input API, private R2 upload, compile/store/read, optional-history import, hash idempotency and demand/analysis revisions.
+- Tests/fixtures/scripts include DSL schema and semantics, ingestion, API handlers, migration contract, official regression, live compiler, live official PPT compilation and cloud API acceptance.
 
-### 文件级改动
+### Reproducible local verification
 
-- `src/procurement_agent/domain/requirements.py`：版本化 Requirement DSL（有限 operator/value types、
-  HARD/PREFERENCE/UNKNOWN、来源/原文、AMBIGUOUS/UNSUPPORTED）、PlannedAmount、DataConflict、History 模型。
-- `src/procurement_agent/ingestion/text.py`：纯文本 source revision 与字符位置 locator。
-- `src/procurement_agent/ingestion/pptx.py`：遍历所有 slide、shape、table/cell，保存文件/页/表/行/列定位；
-  按语义筛选输入，不把市场营销/市场容量直接当采购硬条件。
-- `src/procurement_agent/ingestion/pptx_tables.py`：按表头识别采购计划表并确定性提取采购行、数量、
-  计划采购单价/预算/税率；计划单价税基未知时保留 `UNKNOWN`；摘要数量声明保留可追溯冲突。
-- `src/procurement_agent/ingestion/xlsx.py`：前 30 行自动识别表头，别名映射，保存 source file/Sheet/row；
-  对官方模拟文件识别第 8 行表头、38 列、1000 行，并建立 `HISTORICAL_SUPPLIER_SIMULATED` 独立 ID。
-- `src/procurement_agent/ingestion/compiler.py`：真实模型 function-calling 结构编译；模型输出经过严格 Pydantic 校验；
-  Source quote 必须在源片段内，错引文/不完整 DSL 留为 UNKNOWN/UNSTRUCTURED；未给出像素测量口径时不能直接判定。
-- `src/procurement_agent/services/demand_intake.py`：文字/PPT 独立解析后融合；精确匹配需求项时检测来源冲突；
-  无历史返回 `NOT_PROVIDED`，导入新历史增加 analysis version，旧版本不被覆盖。
-- `src/procurement_agent/api/app.py`：Container 内部需求编译、私有 PPTX 获取、历史 XLSX 导入。
-- `cloudflare/gateway/src/index.ts` + `migrations/0004_m1_demand_intake.sql`：文本项目创建/版本追加、
-  PPTX/XLSX 私有 R2 上传、DSL 编译存取、独立历史导入/哈希去重；公共 API 要求 `DEMO_ACCESS_TOKEN`。
-- `tests/` 和 `scripts/`：DSL、语义 gold cases、来源/冲突、表格解析、历史导入、API service、migration 与官方回归；
-  `scripts/verify_m1_cloud_api.py` 提供部署后文字/PPT/历史/冲突/幂等 API 验收。官方竞赛资料保留在工作区外，
-  没有复制进新仓库。
+```bash
+uv run --python 3.11 python -m pytest -q
+# 36 passed
+npx tsc --noEmit
+# PASS
+uv run --python 3.11 python -m compileall -q src scripts tests
+# PASS
+uv run --python 3.11 python scripts/live_demand_compile.py
+# live Genesis: PASS — 100 电源模块, 额定输出功率 >= 7.5 kW is HARD, CAN is PREFERENCE, source locators retained
+uv run --python 3.11 python scripts/live_official_demand_compile.py --case 1
+# PASS — 14 purchase rows; 58/63 万台 summary conflict retained
+uv run --python 3.11 python scripts/live_official_demand_compile.py --case 2
+# PASS — 14 purchase rows, no invented technical hard constraints
+uv run --python 3.11 python scripts/eval_requirement_semantics.py
+# live, gold-labelled semantics: 6/6 PASS
+```
 
-### 本地验收结果
+Both official XLSX files parse as 1,000 non-empty rows, 38 columns, header row 8. They are explicitly marked synthetic and every imported supplier entity remains `HISTORICAL_SUPPLIER_SIMULATED`. Official files are outside this repository and were not committed.
 
-- `uv run --python 3.11 python -m pytest -q`：**35 passed**。
-- `npx tsc --noEmit`：**PASS**。
-- `uv run --python 3.11 python -m compileall -q src scripts tests`：**PASS**。
-- 两组官方 PPT：每份 7 页、每份 **14 条采购数据行**（表格 15 行含 header），数量、计划价、预算保留来源定位。
-- 两组官方 XLSX：每份 **1000 条交易行 / 38 列 / 第 8 行表头**；模拟身份隔离测试通过。
-- Case A 的“58 万台”和“63 万台”被保留为两个来源值不同的 `DataConflict`，未自动择一。
-- `scripts/live_demand_compile.py`：真实模型将“额定输出功率至少 7.5kW”编为 HARD/GTE，
-  将“最好支持 CAN”标为 PREFERENCE；resolved 字段引用源文。LangSmith trace：
-  `01a16f55-4b22-77d5-82c0-ea22d29dfb63`。
-- `scripts/eval_requirement_semantics.py`：6 个有 gold label 的实时语义案例 **6/6 PASS**，覆盖 GTE/LTE、
-  HARD/PREFERENCE、Boolean、像素口径歧义、宽泛质量/标准。语义 traces：
-  `01a170fc-1b2a-72e8-b00f-d19afeac2ff3`, `01a170fa-f34a-768d-87df-99feee6fa9e8`,
-  `01a170fa-c18c-70d8-a739-75cdc61bb743`, `01a170fa-7d4b-734c-a10f-6c5d05b5220f`,
-  `01a170fa-431b-7469-a84c-81e76f0ed9ad`, `01a170fa-0f88-7432-9d40-707a7583f7c8`。
+### Cloudflare M1 acceptance (real API calls)
 
-### Cloudflare M1 API 实测（用户已手动推送，未执行任何 Git 操作）
+- M1 Worker deployed from private GitHub through Workers Builds; D1 migration `0004_m1_demand_intake.sql` applied; API bearer secret is configured.
+- Anonymous project creation returns 401. Authenticated text-only project → compile → `GET /requirements` returns the same saved compilation, with history `NOT_PROVIDED`.
+- Official Case 2 PPTX-only upload → compile → readback passes with 14 line items and no history.
+- Official Case A PPTX compile returns 14 line items and retains the 58/63 万台 `DataConflict`; source evidence is preserved.
+- Official XLSX upload/import returns 1,000 × 38, header row 8, synthetic true; duplicate import is idempotent and does not increment the project analysis version again.
+- Re-importing the identical XLSX into separate projects now produces separate project-scoped dataset IDs. The prior global-hash ID collision was fixed and the full cloud script passes.
+- `scripts/verify_m1_cloud_api.py`: **PASS** across auth, text-only save/read, PPT-only save/read, Case A conflict, optional history import and duplicate import.
+- Final M1 Worker build version: `7173545a-c6ae-483f-904d-f3a25df48bbd`. Latest code commit: `7fd1570` (remote, private).
 
-- Workers Builds 从 M1 GitHub push 成功构建 Container 镜像并部署 Worker；D1 的 `0004_m1_demand_intake.sql`
-  已应用；M1 Worker 的 API bearer secret 已设置。
-- 未授权 `POST /api/projects` → **401**。
-- 纯文本需求流程：创建项目 → `requirement-compile` → `GET /requirements`，均成功；编译结果读回与写入结果相同；
-  无历史时 `NOT_PROVIDED`。
-- 官方 XLSX 独立上传并导入 → **1000 rows / 38 columns / header row 8 / synthetic true**；
-  `history_availability=IMPORTED`，分析版本更新。重复导入返回 `duplicate_import=true`，没有再次累计订单。
-- Case 2 PPTX 上传到私有 R2 返回 **201**，随后 `requirement-compile` 云端返回 **200**：14 条采购行、
-  历史状态 `NOT_PROVIDED`，`GET /requirements` 读回一致。
-- Case A PPTX 云端编译同样返回 **200**、14 条行项并可读回；但当前远端 Container 版本没有返回
-  58/63 万台摘要 `DataConflict`。本地 extractor 已通过测试并产生该冲突，说明远端 image 仍落后于最新本地修改。
-- 首次 Case 2 编译曾因两个旧的 per-project intake Container 处于 running 而超过 `max_instances=2`；
-  它们 idle 后重试成功。当前 Worker 每个项目用不同 Container DO 名称，多个 idle 任务会暂时耗尽实例上限。
-- 本地 Worker 已改为复用共享 `m1-intake` DO，并已统一重复导入 API 的 `dataset_id` 响应字段；
-  这两个修正尚未部署，需要用户 review 后手动推送。云端目前仍在运行用户手动推送的版本。
-- XLSX 重复导入 cloud test 返回 `duplicate_import=true` 且项目 `analysis_version` 未再次增加；旧远端响应返回 `id` 字段而非 `dataset_id`，因此语义去重通过、响应字段一致性仍待部署修正。
+### Traces
 
-### 尚未完成 / M1 边界
+- Live text Requirement DSL compile: LangSmith root trace `01a16f55-4b22-77d5-82c0-ea22d29dfb63`.
+- Six gold-labelled semantic cases: `01a170fc-1b2a-72e8-b00f-d19afeac2ff3`, `01a170fa-f34a-768d-87df-99feee6fa9e8`, `01a170fa-c18c-70d8-a739-75cdc61bb743`, `01a170fa-7d4b-734c-a10f-6c5d05b5220f`, `01a170fa-431b-7469-a84c-81e76f0ed9ad`, `01a170fa-0f88-7432-9d40-707a7583f7c8` (all successful).
+- Cloudflare Worker/Workflow/container results are recorded in D1 and the Worker Logs; no LLM/search key values are logged or stored in D1/R2.
 
-- M1 text-only、history import、Case 2 PPT-only API 保存/读回均已云端实测；Case A 云端 PPT compile 返回 14 行并可读回，但旧远端 Container image 未生成 58/63 `DataConflict`，本地 extractor 已通过测试。
-- 部署后的完整云验收脚本在跨项目重复导入处发现真实 bug：历史 dataset ID 仅由文件 SHA 生成，两个不同项目导入同一 XLSX 时 D1 `history_datasets.id` 主键冲突。已将本地 dataset ID 改为 `hash(project_id + content_sha256)`，同项目仍稳定幂等、不同项目互相隔离，并加入回归测试。当前远端旧镜像尚未包含此修复。
-- 本地 Worker/container 修正包括共享 `m1-intake` DO、较短 idle sleep、重复导入响应统一 `dataset_id`；这些修改和 project-scoped dataset ID 待下一次 Workers Builds 部署后再重跑 `scripts/verify_m1_cloud_api.py`。
-- 无 Web UI；官方文件真实数据仍未进入寻源研究；没有真实供应商发现、产品 Claim、Supplier Intelligence、Calculator 或报告建议。
-- M2–M5 尚未开始；SIGTERM 中途终止恢复与精确真实费用观测仍为 M0/M5 遗留项。
+## M2 — SourcingPlan, Tavily research and Supplier Intelligence
+
+**Status: local vertical slice implemented; migration 0005 applied remotely; Worker/Container deployment and cloud acceptance pending. Do not call M2 complete yet.**
+
+### Local implementation
+
+- Added `src/procurement_agent/domain/sourcing.py` for bounded/revisioned `SourcingPlan`, same-type Researcher task briefs, source snapshots/date hints, Supplier/Product/Offering/Claim/ProjectCandidate contracts, research actions, reuse/refresh/ignore decisions and run metrics.
+- Added `src/procurement_agent/services/sourcing_research.py`: structured plan generation, no invented market/goal, project/source-value redaction in Tavily queries, shared search/fetch/task/model-call budgets, D1-ready evidence/finding bundles, exact quote verification, unverified supplier identity, Longlist-only candidate creation, date-hint freshness review, source/query deduplication, partial results on researcher failure, and plan revisions for follow-up questions.
+- Extended `src/procurement_agent/agents/sourcing.py` with the sole Deep Agents Supervisor and one reusable `supplier_researcher` subagent type. The Supervisor owns delegated 1–3 tasks; public source text is treated as untrusted data. Prompt examples require exact plan question IDs, channel enums, source quotes and model-code evidence. The OpenAI-compatible Deep Agents profile excludes shell/default filesystem tools and the auto-added general-purpose subagent.
+- Extended `src/procurement_agent/infra/search.py` with Tavily Extract content retrieval. Search snippets remain discovery hints and never become evidence.
+- Added Cloudflare D1 migration `0005_m2_supplier_intelligence.sql` for shared Supplier/Product/Offering/Claim/Evidence, plan/task/action records, per-project Longlist candidates and run cost/token/trace metrics. It was applied remotely with Wrangler; it only adds tables/indexes and leaves M0/M1 tables unchanged. Worker code now has internal context/persist routes, private R2 snapshots, public authenticated evidence/candidate/library/run-research reads, and run-wide budget inputs. The Container validates deterministic Evidence IDs, URL/content hashes, source quotes and entity references before D1/R2 writes.
+- Added `CONTEXT.md`, `scripts/live_m2_research.py`, `scripts/verify_m2_cloud_api.py`, M2 domain/service tests, concurrent source/model dedup cases, partial-failure tests and SQLite migration-contract coverage.
+
+### M2 tests and live signal
+
+- Latest local unit/API/migration suite after the review fixes: **60 passed**.
+- `npx tsc --noEmit`: **PASS**; `uv run --python 3.11 python -m compileall -q src scripts tests`: **PASS**; Ruff checks for changed M2 code/tests/scripts: **PASS**.
+- Live trials produced both successful research artifacts and correctly reported partials. One earlier bounded trial collected **2 researcher tasks, 4 searches, 3 extracts, 2 suppliers, 3 products and 12 source-supported Claims**, with a plan revision. The latest strict-plan trial returned **PARTIAL / BUDGET_EXHAUSTED** at 15 model calls, with 2 tasks, 4 searches, 4 extracts, 3 candidates and 6 source-supported Claims; two candidates had exact model codes (`IPC501-5M-B`, `T-BC-IP5M-Z-2`) with locatable public datasheet/catalog evidence. It did not claim qualification; source-specific UNKNOWNs remain.
+- A separate live attempt timed out at the Genesis endpoint. Partial evidence capture and distinctions between `PARTIAL`, `FAILED`, `MODEL_TIMEOUT`, `RESEARCH_INPUT_REJECTED` and `BUDGET_EXHAUSTED` now have deterministic tests. Per-call model durations, token usage (when returned) and trace run IDs are included in run metrics.
+
+### Deployment still required
+
+- **Not deployed:** migrations 0005 and 0006 are applied, but Worker/gateway M2 code and the updated Container image have not been pushed/deployed. No claim of cloud D1/R2 persistence or cloud reuse is made yet.
+- After code review and Workers Builds deployment, run `uv run --python 3.11 python scripts/verify_m2_cloud_api.py` using ignored `.demo_access_token`. It caps each run at 4 searches, 4 fetches, 2 tasks, 2 plan revisions and 15 model calls; it verifies cold start, same-project rerun, cross-project reuse, D1 associations, R2 snapshot/hash/quote readback and project-candidate scope.
+- M2 hard-caps model calls and records prompt/completion tokens, per-call duration and trace IDs; the provider does not always report token usage, and exact currency cost remains unverified. Per official Cloudflare Workflows retry guidance, the M2 research step is configured with zero automatic retries so a container failure cannot silently reset its in-memory provider budget; M0 SPIKE keeps its prior bounded retries. Mid-research termination still produces a visible failure, but the cloud partial-output path must be verified.
+- At the last read-only secret-name check, Cloudflare did not have a `LANGSMITH_API_KEY` secret. The Worker forwards it only when configured; set the secret without displaying its value before cloud trace acceptance.
+
+### Not implemented (later scope)
+
+No M3 requirement-to-product PASS/FAIL gate, historical price comparison, supplier allocation, Data Fusion/SourcingDecisionSnapshot, M4 Web UI or final procurement DOCX report. The DOCX remains an M0 verification artifact; M2 Longlist does not mean technically qualified or RFQ-shortlisted.

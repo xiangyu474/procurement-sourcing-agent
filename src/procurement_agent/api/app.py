@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import time
+from dataclasses import replace
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException
@@ -16,13 +17,13 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from procurement_agent.domain.requirements import (
-    HistoryImportResult,
     RequirementSourceType,
     SourceFragment,
 )
+from procurement_agent.domain.sourcing import ResearchBudget
 from procurement_agent.infra import load_settings
 from procurement_agent.infra.llm import build_chat_model
-from procurement_agent.ingestion.compiler import compile_requirement_fragments
+from procurement_agent.infra.search import TavilyContentProvider, TavilySearchProvider
 from procurement_agent.ingestion.pptx import (
     extract_pptx_fragments,
     select_pptx_narrative_fragments,
@@ -31,6 +32,12 @@ from procurement_agent.ingestion.pptx_tables import extract_requirement_rows_fro
 from procurement_agent.ingestion.text import extract_text_fragments
 from procurement_agent.ingestion.xlsx import import_historical_xlsx
 from procurement_agent.services.demand_intake import build_demand_intake
+from procurement_agent.services.sourcing_research import (
+    ResearchBudgetExceeded,
+    ResearchInputError,
+    run_sourcing_research,
+    serialize_bundle_for_gateway,
+)
 
 app = FastAPI(title="Procurement Sourcing Agent Container", version="0.1.0")
 settings = load_settings()
@@ -84,6 +91,21 @@ class ImportHistoryRequest(BaseModel):
     sha256: str
     gateway_url: str
     token: str
+
+
+class ResearchRunRequest(BaseModel):
+    """Internal request for one bounded M2 Supervisor/Researcher run."""
+
+    project_id: str
+    run_id: str
+    gateway_url: str
+    token: str
+    runtime_config: dict[str, str] = Field(default_factory=dict)
+    research_budget: ResearchBudget = Field(
+        default_factory=lambda: ResearchBudget(
+            max_search_calls=4, max_fetches=4, max_tasks=2, max_rounds=2, max_model_calls=15
+        )
+    )
 
 
 def _apply_runtime_config(runtime_config: dict[str, str]) -> None:
@@ -205,6 +227,114 @@ async def _fetch_input(payload: CompileDemandRequest | ImportHistoryRequest, sou
         return response.content
 
 
+@app.post("/internal/research")
+async def research_run(payload: ResearchRunRequest, x_internal_token: str | None = Header(default=None)) -> dict[str, Any]:
+    """Run the M2 Supervisor/Researcher pool and persist its bounded result bundle."""
+    _require_internal(payload.token or x_internal_token)
+    _apply_runtime_config(payload.runtime_config)
+    research_settings = load_settings()
+    requested_budget = payload.research_budget
+    research_settings = replace(
+        research_settings,
+        max_search_calls=min(research_settings.max_search_calls, requested_budget.max_search_calls),
+        max_web_fetches=min(research_settings.max_web_fetches, requested_budget.max_fetches),
+        max_concurrent_researchers=min(research_settings.max_concurrent_researchers, requested_budget.max_tasks),
+        max_research_rounds=min(research_settings.max_research_rounds, requested_budget.max_rounds),
+        max_model_calls=min(research_settings.max_model_calls, requested_budget.max_model_calls),
+    )
+    if not research_settings.has_llm:
+        raise HTTPException(status_code=503, detail="M2 research requires a configured chat model")
+    if not research_settings.tavily_api_key:
+        raise HTTPException(status_code=503, detail="M2 research requires the Tavily search provider")
+
+    import httpx
+
+    await _post_event(payload, "INTERNAL_ANALYSIS", "已读取结构化需求与工作区内可复用的公开情报")
+    async with httpx.AsyncClient(timeout=60) as client:
+        context_response = await client.get(
+            f"{payload.gateway_url.rstrip('/')}/internal/projects/{payload.project_id}/sourcing-context",
+            params={"run_id": payload.run_id},
+            headers={"x-internal-token": payload.token},
+        )
+        if context_response.status_code == 404:
+            raise HTTPException(status_code=404, detail="project or compiled demand not found")
+        context_response.raise_for_status()
+        context = context_response.json()
+
+    await _post_event(payload, "WEB_RESEARCH", "SourcingPlan 已生成；Supervisor 正在按预算委派公开研究任务")
+    try:
+        model = build_chat_model(research_settings, timeout=180)
+        bundle = await run_sourcing_research(
+            model=model,
+            compilation=context["compilation"],
+            project_id=payload.project_id,
+            run_id=payload.run_id,
+            settings=research_settings,
+            search_provider=TavilySearchProvider(research_settings.tavily_api_key),
+            content_provider=TavilyContentProvider(research_settings.tavily_api_key),
+            existing_intelligence=context.get("existing_intelligence", []),
+            history_availability=context.get("history_availability", "NOT_PROVIDED"),
+        )
+    except ResearchBudgetExceeded as exc:
+        raise HTTPException(status_code=429, detail={"reason_code": "BUDGET_EXHAUSTED"}) from exc
+    except ResearchInputError as exc:
+        raise HTTPException(status_code=422, detail={"reason_code": "INVALID_RESEARCH_INPUT"}) from exc
+    except Exception as exc:
+        error_type = type(exc).__name__
+        lower_name = error_type.casefold()
+        if "timeout" in lower_name:
+            status_code, reason_code = 504, "MODEL_TIMEOUT"
+        elif "ratelimit" in lower_name:
+            status_code, reason_code = 429, "MODEL_RATE_LIMIT"
+        else:
+            status_code, reason_code = 502, "RESEARCH_EXECUTION_FAILED"
+        raise HTTPException(
+            status_code=status_code,
+            detail={"reason_code": reason_code, "error_type": error_type},
+        ) from exc
+    serialized = serialize_bundle_for_gateway(bundle)
+    async with httpx.AsyncClient(timeout=120) as client:
+        stored_response = await client.post(
+            f"{payload.gateway_url.rstrip('/')}/internal/runs/{payload.run_id}/research-results",
+            headers={"x-internal-token": payload.token},
+            json=serialized,
+        )
+        if not stored_response.is_success:
+            raise HTTPException(
+                status_code=stored_response.status_code,
+                detail=f"research result persistence failed: {stored_response.text[:500]}",
+            )
+    await _post_event(
+        payload,
+        "WEB_RESEARCH" if bundle.candidates else "PARTIAL",
+        f"公开研究结束：候选 {len(bundle.candidates)}，证据 {len(bundle.evidence)}，搜索 {bundle.search_calls} 次；未进行 M3 技术合格判定",
+    )
+    return {
+        "run_id": bundle.run_id,
+        "status": bundle.status.value,
+        "stop_reason_code": bundle.stop_reason_code,
+        "plan_id": bundle.plan.plan_id,
+        "plan_revision": bundle.plan.plan_revision,
+        "researcher_tasks": len(bundle.tasks),
+        "candidate_count": len(bundle.candidates),
+        "evidence_count": len(bundle.evidence),
+        "claim_count": len(bundle.claims),
+        "search_calls": bundle.search_calls,
+        "fetch_calls": bundle.fetch_calls,
+        "model_calls": bundle.model_calls,
+        "prompt_tokens": bundle.prompt_tokens,
+        "completion_tokens": bundle.completion_tokens,
+        "token_usage_observed": bundle.token_usage_observed,
+        "model_call_details": [item.model_dump(mode="json") for item in bundle.model_call_details],
+        "trace_run_ids": bundle.trace_run_ids,
+        "langsmith_tracing_enabled": bundle.langsmith_tracing_enabled,
+        "reused_intelligence_count": len(bundle.reused_intelligence_ids),
+        "refreshed_intelligence_count": len(bundle.refreshed_intelligence_ids),
+        "ignored_intelligence_count": len(bundle.ignored_intelligence_ids),
+        "warnings": bundle.warnings,
+    }
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     """Report container readiness without exposing configuration values."""
@@ -257,7 +387,7 @@ async def execute(payload: ExecuteRequest, x_internal_token: str | None = Header
     }
 
 
-async def _post_event(payload: ExecuteRequest, stage: str, detail: str) -> None:
+async def _post_event(payload: ExecuteRequest | ResearchRunRequest, stage: str, detail: str) -> None:
     """Report one stage event to the gateway, ignoring transient failures."""
     import httpx
 

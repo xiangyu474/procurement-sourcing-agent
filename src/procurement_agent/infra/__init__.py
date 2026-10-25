@@ -35,6 +35,9 @@ class Settings:
     max_search_calls: int
     max_web_fetches: int
     max_research_rounds: int
+    max_concurrent_researchers: int
+    max_model_calls: int
+    intelligence_stale_after_days: int
 
     @property
     def has_llm(self) -> bool:
@@ -54,7 +57,10 @@ def load_settings() -> Settings:
         r2_access_key_id=_optional("R2_ACCESS_KEY_ID"),
         r2_secret_access_key=_optional("R2_SECRET_ACCESS_KEY"),
         internal_gateway_token=_optional("INTERNAL_GATEWAY_TOKEN"),
-        max_search_calls=int(os.getenv("SOURCING_MAX_SEARCH_CALLS", "12")),
-        max_web_fetches=int(os.getenv("SOURCING_MAX_WEB_FETCHES", "24")),
-        max_research_rounds=int(os.getenv("SOURCING_MAX_RESEARCH_ROUNDS", "3")),
+        max_search_calls=max(1, min(int(os.getenv("SOURCING_MAX_SEARCH_CALLS", "12")), 12)),
+        max_web_fetches=max(1, min(int(os.getenv("SOURCING_MAX_WEB_FETCHES", "24")), 24)),
+        max_research_rounds=max(1, min(int(os.getenv("SOURCING_MAX_RESEARCH_ROUNDS", "3")), 3)),
+        max_concurrent_researchers=max(1, min(int(os.getenv("SOURCING_MAX_CONCURRENT_RESEARCHERS", "3")), 3)),
+        max_model_calls=max(1, min(int(os.getenv("SOURCING_MAX_MODEL_CALLS", "18")), 30)),
+        intelligence_stale_after_days=max(1, int(os.getenv("SOURCING_INTELLIGENCE_STALE_DAYS", "180"))),
     )

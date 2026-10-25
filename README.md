@@ -73,24 +73,22 @@ npx wrangler deploy
 Container 镜像由 Cloudflare 托管构建环境构建（`Dockerfile`），本地不需要安装 Docker。
 镜像构建与首次部署耗时较长，部署后需要等待实例预���绪。
 
-## 当前状态（2026-10-24）
+## 当前状态（M0/M1 已验收；M2 本地实现进行中）
 
-- **M0 云端闭环已实测**：Cloudflare Worker + Container + Workflow + D1/R2；长任务可在浏览器断连时继续，DOCX 写入 R2 并下载；Cloudflare 托管构建，无本机 Docker。
-- **M1 已在本地实现并测试**：纯文本、PPTX 需求抽取与受限 Requirement DSL；历史 XLSX 独立可选导入；官方两组材料回归读取到每组 14 个采购行、1000 条历史记录、38 列和第 8 行表头；官方模拟供应商使用独立命名空间；A 案 58/63 万台摘要值保留为未解决冲突。
-- 文本编译的 live 模型测试已通过：显式的 7.5 kW 下限进入 HARD/GTE DSL，CAN 接口偏好留为 PREFERENCE；引用经原文定位验证。
-- **M1 Cloudflare 已部分部署并实测**：文字项目创建→DSL 编译→API 读回成功；历史 XLSX 上传/import 为 1000×38 / 第 8 行表头，模拟标记和同项目重复导入幂等通过；两组官方 PPTX 上传/编译/读回均返回 14 条采购行。云端 Case A 当前版本尚未输出 58/63 万台摘要冲突（本地版本已通过测试）。
-- 完整云端验收又发现：同一 XLSX 导入不同项目时全局 dataset ID 会冲突。本地已改为项目作用域 ID 并加测试；共享 intake Container 与重复返回字段修正也待下一次 Workers Builds 部署后验证。
-- **M2–M5 尚未开始**：Supervisor/Researcher 池、真实公开寻源与 Product Claims、Supplier Intelligence、Calculator、Data Fusion、Snapshot 及 Web/DOCX 同源报告都还没有实现。不得把 M0 阶段演练的零候选当成真实研究结果。
+- **M0 已实测部署**：Cloudflare Worker + Python Container + Workflow + D1/R2；验证任务在浏览器断连后继续、阶段事件、幂等、失败状态和 DOCX 写入/下载。Container 由 Cloudflare Workers Builds 构建，不需本地 Docker。当前仍未完成 SIGTERM 恢复和精确费用观测；已验证断连时长不等于完整的 2–5 分钟门槛证明。
+- **M1 本地与云端验收通过**：纯文本、PPTX 需求与受限 Requirement DSL；历史 XLSX 独立可选导入。官方每组 PPTX 解析 14 条采购行；每组 XLSX 1000 行、38 列、第 8 行表头；模拟供应商隔离。Case A 的 58/63 万台差异保留为有来源的冲突。
+- 云端 `scripts/verify_m1_cloud_api.py` 实测通过：匿名请求 401、文本/PPT 编译与读回、Case A 冲突、历史导入及重复导入去重。最近 M1 Worker 代码提交为 `7fd1570`；仓库保持 private。
+- **M2 本地垂直切片已实现；Worker/Container 尚未部署**：版本化 SourcingPlan；一个 Deep Agents Supervisor 和同类型 Supplier Researcher；严格使用计划中的 question ID/渠道；Tavily Search/Extract；共享 search/fetch/task/model-call 预算；Claim 引文与 Evidence/R2 快照校验；D1 情报账本、R2 快照、项目 Longlist 和运行状态/成本/模型调用指标。D1 migrations `0005`/`0006` 已在远端应用（仅新增表/索引/状态字段）；当前 Worker 尚未包含这些路由。
+- 最近一次严格计划映射的 live 本地研究返回 `PARTIAL / BUDGET_EXHAUSTED`：**2 个 Researcher tasks、4 次搜索、4 次抓取、3 个候选、6 条来源支持 Claims、15 次模型调用**；含精确型号 `IPC501-5M-B` 与 `T-BC-IP5M-Z-2` 的公开资料。候选仍是未核实 Longlist；资料中的像素口径、身份和现售情况仍待确认。更早一次 live 重跑也遇到模型端点超时，未将失败冒充成功。
+- 最新本地 M2 验收：`pytest` **60 passed**，`npx tsc --noEmit`、Python `compileall` 和本阶段修改文件的 Ruff 检查通过。待 Worker/Container 部署后，运行 `scripts/verify_m2_cloud_api.py` 验证 D1/R2、同项目重复研究、跨项目复用及 LangSmith trace。
 
-可重现本地回归：
+本地验证命令：
 
 ```bash
-uv sync --python 3.11 --extra dev
 uv run --python 3.11 python -m pytest -q
-uv run --python 3.11 python scripts/live_demand_compile.py
-uv run --python 3.11 python scripts/live_official_demand_compile.py --case all
-uv run --python 3.11 python scripts/eval_requirement_semantics.py
 npx tsc --noEmit
+uv run --python 3.11 python -m compileall -q src scripts tests
+uv run --python 3.11 python scripts/live_m2_research.py --product "industrial IP camera" --minimum-resolution-mp 5
 ```
 
-Live 命令需要本地 `.env`；官方素材从工作区旁的比赛资料目录读取，不复制到本仓库。M1 云端 API 验收需在 Worker 部署更新后运行 `uv run --python 3.11 python scripts/verify_m1_cloud_api.py`（使用本地 `.demo_access_token`，不会打印 token）。完整过程、实测限制与 trace 见 `docs/implementation_log.md`。
+live 脚本需要本地 `.env`；它只打印经来源定位的公开结果，不打印密钥，且**不写 Cloudflare D1/R2**。云端 M2 验收脚本读取忽略文件 `.demo_access_token`，不输出 token；migration `0005` 已应用，待 Worker/Container 镜像部署后运行。当前没有 Web UI；M3 规格门禁、比价、Data Fusion 和最终报告仍未开始。详细记录见 `docs/implementation_log.md`。

@@ -12,16 +12,29 @@ export interface Env {
 	GENESIS_ACCESS_TOKEN: string;
 	GENESIS_MODEL_ID: string;
 	TAVILY_API_KEY: string;
+	LANGSMITH_API_KEY?: string;
+	LANGSMITH_TRACING?: string;
+	LANGSMITH_PROJECT?: string;
 	WORKFLOW: Workflow<RunRequest>;
 }
 
 // The container receives the internal token from the Worker at request time so
 // that no secret value is baked into the image or the container configuration.
 
+interface ResearchBudgetConfig {
+	max_search_calls: number;
+	max_fetches: number;
+	max_tasks: number;
+	max_rounds: number;
+	max_model_calls: number;
+}
+
 export interface RunRequest {
 	runId: string;
 	projectId: string;
 	durationSeconds: number;
+	mode: "SPIKE" | "SOURCING";
+	researchBudget?: ResearchBudgetConfig;
 }
 
 interface RunRow {
@@ -30,6 +43,7 @@ interface RunRow {
 	status: string;
 	current_stage: string;
 	artifact_key: string | null;
+	last_error: string | null;
 	created_at: string;
 	updated_at: string;
 }
@@ -55,6 +69,55 @@ interface SourceInputRow {
 	r2_key: string | null;
 	text_content: string | null;
 	created_at: string;
+}
+
+interface M2EvidencePayload {
+	evidence_id: string;
+	workspace_id: string;
+	source_type: string;
+	source_url: string;
+	normalized_url: string;
+	title: string;
+	publisher: string | null;
+	retrieved_at: string;
+	locator: string;
+	excerpt: string;
+	content_sha256: string;
+	content_date_hints: string[];
+	snapshot_text: string;
+	trust_notes: string;
+}
+
+interface M2BundlePayload {
+	workspace_id: string;
+	project_id: string;
+	run_id: string;
+	status: "COMPLETED" | "PARTIAL" | "FAILED";
+	stop_reason_code: string | null;
+	plan: Record<string, unknown>;
+	plan_history: Record<string, unknown>[];
+	tasks: Record<string, unknown>[];
+	suppliers: Record<string, unknown>[];
+	products: Record<string, unknown>[];
+	offerings: Record<string, unknown>[];
+	claims: Record<string, unknown>[];
+	evidence: M2EvidencePayload[];
+	candidates: Record<string, unknown>[];
+	actions: Record<string, unknown>[];
+	search_calls: number;
+	fetch_calls: number;
+	model_calls: number;
+	prompt_tokens: number;
+	completion_tokens: number;
+	token_usage_observed: boolean;
+	model_call_details: Record<string, unknown>[];
+	trace_run_ids: Record<string, string>;
+	langsmith_tracing_enabled: boolean;
+	reused_intelligence_ids: string[];
+	refreshed_intelligence_ids: string[];
+	ignored_intelligence_ids: string[];
+	warnings: string[];
+	completed_at: string;
 }
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
@@ -141,6 +204,415 @@ async function appendEvent(env: Env, runId: string, stage: string, detail: strin
 		.run();
 }
 
+async function batchD1(env: Env, statements: D1PreparedStatement[]): Promise<void> {
+	for (let offset = 0; offset < statements.length; offset += 50) {
+		const batch = statements.slice(offset, offset + 50);
+		if (batch.length) await env.DB.batch(batch);
+	}
+}
+
+function stringField(row: Record<string, unknown>, key: string): string {
+	const value = row[key];
+	return typeof value === "string" ? value : "";
+}
+
+function optionalStringField(row: Record<string, unknown>, key: string): string | null {
+	const value = row[key];
+	return typeof value === "string" && value.length ? value : null;
+}
+
+function stringArrayField(row: Record<string, unknown>, key: string): string[] {
+	const value = row[key];
+	return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function normalizeEvidenceUrl(value: string): string {
+	const parsed = new URL(value);
+	const host = parsed.hostname.toLowerCase().replace(/\.$/, "").replace(/^www\./, "");
+	const path = parsed.pathname.replace(/\/{2,}/g, "/") || "/";
+	return `${parsed.protocol}//${host}${path}${parsed.search}`;
+}
+
+function publicHttpUrl(value: string): boolean {
+	try {
+		const parsed = new URL(value);
+		if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) return false;
+		const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "").replace(/^www\./, "");
+		if (!host || host === "localhost" || host.endsWith(".local") || host.endsWith(".internal") || host.endsWith(".invalid") || host.endsWith(".test") || host.endsWith(".example")) return false;
+		if (host.includes(":") || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) return false;
+		if (parsed.port && !["80", "443"].includes(parsed.port)) return false;
+		if (/^(127\.|10\.|192\.168\.|169\.254\.|0\.)/.test(host) || host === "::1") return false;
+		if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return false;
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function existingM2Ids(
+	env: Env,
+	table: "intelligence_suppliers" | "intelligence_products" | "research_evidence",
+	ids: string[],
+): Promise<Set<string>> {
+	const found = new Set<string>();
+	for (let offset = 0; offset < ids.length; offset += 50) {
+		const chunk = ids.slice(offset, offset + 50);
+		if (!chunk.length) continue;
+		const placeholders = chunk.map((_, index) => `?${index + 1}`).join(", ");
+		const { results } = await env.DB.prepare(
+			`SELECT id FROM ${table} WHERE workspace_id = 'default' AND id IN (${placeholders})`,
+		).bind(...chunk).all<{ id: string }>();
+		for (const row of results) found.add(row.id);
+	}
+	return found;
+}
+
+async function persistM2ResearchBundle(env: Env, bundle: M2BundlePayload): Promise<{ evidenceCount: number; candidateCount: number }> {
+	if (bundle.workspace_id !== "default" || !bundle.project_id || !bundle.run_id || !bundle.plan) {
+		throw new Error("invalid M2 bundle scope or plan");
+	}
+	if (stringField(bundle.plan, "project_id") !== bundle.project_id || stringField(bundle.plan, "run_id") !== bundle.run_id) {
+		throw new Error("SourcingPlan project/run scope does not match research bundle");
+	}
+	if (bundle.plan_history.some(plan => stringField(plan, "project_id") !== bundle.project_id || stringField(plan, "run_id") !== bundle.run_id)) {
+		throw new Error("SourcingPlan history contains a mismatched project/run scope");
+	}
+	if (bundle.evidence.length > 50 || bundle.tasks.length > 3 || bundle.candidates.length > 300) {
+		throw new Error("M2 bundle exceeds configured persistence limits");
+	}
+	const currentPlan = bundle.plan;
+	const plans = [...bundle.plan_history, currentPlan];
+	const seenRevisions = new Set<number>();
+	for (const plan of plans) {
+		const revision = typeof plan.plan_revision === "number" ? plan.plan_revision : 0;
+		if (!revision || seenRevisions.has(revision)) throw new Error("invalid or duplicate SourcingPlan revision");
+		seenRevisions.add(revision);
+	}
+
+	const evidenceById = new Map(bundle.evidence.map(evidence => [evidence.evidence_id, evidence]));
+	const normalizeQuotedText = (value: string) => value.replace(/\s+/g, " ").trim().toLocaleLowerCase();
+	for (const evidence of bundle.evidence) {
+		if (!/^ev_[a-f0-9]{24}$/.test(evidence.evidence_id) || !evidence.snapshot_text || evidence.snapshot_text.length > 100_000) {
+			throw new Error("invalid evidence ID or oversized/empty source snapshot");
+		}
+		if (!publicHttpUrl(evidence.source_url) || !publicHttpUrl(evidence.normalized_url)) {
+			throw new Error("evidence must reference a public http(s) URL");
+		}
+		if (normalizeEvidenceUrl(evidence.source_url) !== evidence.normalized_url) {
+			throw new Error("normalized evidence URL does not match its source URL");
+		}
+		const snapshotHash = await sha256Hex(new TextEncoder().encode(evidence.snapshot_text));
+		if (snapshotHash !== evidence.content_sha256) throw new Error("source snapshot hash mismatch");
+		const identity = `default\x1f${evidence.normalized_url}\x1f${evidence.content_sha256}`;
+		const evidenceIdHash = await sha256Hex(new TextEncoder().encode(identity));
+		if (evidence.evidence_id !== `ev_${evidenceIdHash.slice(0, 24)}`) {
+			throw new Error("evidence ID is not bound to normalized URL and content hash");
+		}
+	}
+	const supplierIds = new Set(bundle.suppliers.map(supplier => stringField(supplier, "supplier_id")));
+	const productIds = new Set(bundle.products.map(product => stringField(product, "product_id")));
+	for (const supplier of bundle.suppliers) {
+		for (const evidenceId of stringArrayField(supplier, "evidence_ids")) {
+			if (!evidenceById.has(evidenceId)) throw new Error("supplier evidence link references an uncaptured snapshot");
+		}
+	}
+	for (const product of bundle.products) {
+		for (const evidenceId of stringArrayField(product, "evidence_ids")) {
+			if (!evidenceById.has(evidenceId)) throw new Error("product evidence link references an uncaptured snapshot");
+		}
+	}
+	for (const offering of bundle.offerings) {
+		if (!supplierIds.has(stringField(offering, "supplier_id")) || !productIds.has(stringField(offering, "product_id"))) {
+			throw new Error("offering references an unknown supplier or product");
+		}
+		for (const evidenceId of stringArrayField(offering, "evidence_ids")) {
+			if (!evidenceById.has(evidenceId)) throw new Error("offering evidence link references an uncaptured snapshot");
+		}
+	}
+	for (const claim of bundle.claims) {
+		const evidenceId = stringField(claim, "evidence_id");
+		const evidence = evidenceById.get(evidenceId);
+		if (!evidence || stringField(claim, "status") !== "SUPPORTED_BY_SOURCE") {
+			throw new Error("claim must reference a captured source and remain source-attributed");
+		}
+		const subjectType = stringField(claim, "subject_type");
+		const subjectId = stringField(claim, "subject_ref");
+		if (!(subjectType === "SUPPLIER" ? supplierIds.has(subjectId) : subjectType === "PRODUCT_MODEL" && productIds.has(subjectId))) {
+			throw new Error("claim subject reference does not resolve to a Supplier or Product");
+		}
+		if (!normalizeQuotedText(evidence.snapshot_text).includes(normalizeQuotedText(stringField(claim, "source_quote")))) {
+			throw new Error("claim quote is not present in its R2-bound source snapshot");
+		}
+	}
+	for (const task of bundle.tasks) {
+		const findings = task.findings;
+		if (!findings || typeof findings !== "object") continue;
+		const finding = findings as Record<string, unknown>;
+		for (const evidenceId of stringArrayField(finding, "evidence_ids")) {
+			if (!evidenceById.has(evidenceId)) throw new Error("task finding references a snapshot not captured in this run");
+		}
+		const proposals = Array.isArray(finding.candidate_claims) ? finding.candidate_claims : [];
+		for (const proposalValue of proposals) {
+			if (!proposalValue || typeof proposalValue !== "object") throw new Error("invalid candidate claim payload");
+			const proposal = proposalValue as Record<string, unknown>;
+			const supplierEvidence = evidenceById.get(stringField(proposal, "supplier_evidence_id"));
+			const productEvidence = evidenceById.get(stringField(proposal, "product_evidence_id"));
+			const supplierName = stringField(proposal, "supplier_name");
+			const supplierQuote = stringField(proposal, "supplier_name_quote");
+			const productQuote = stringField(proposal, "product_name_quote");
+			if (
+				!supplierEvidence || !productEvidence || !supplierName || !supplierQuote || !productQuote ||
+				!normalizeQuotedText(supplierEvidence.snapshot_text).includes(normalizeQuotedText(supplierQuote)) ||
+				!normalizeQuotedText(supplierQuote).includes(normalizeQuotedText(supplierName)) ||
+				!normalizeQuotedText(productEvidence.snapshot_text).includes(normalizeQuotedText(productQuote))
+			) throw new Error("candidate identity quote is not grounded in its cited snapshot");
+			const websiteDomain = optionalStringField(proposal, "supplier_website_domain");
+			if (websiteDomain && new URL(supplierEvidence.source_url).hostname.toLowerCase().replace(/^www\./, "") !== websiteDomain) {
+				throw new Error("supplier website domain does not match the cited source URL");
+			}
+			const brand = optionalStringField(proposal, "brand");
+			const brandQuote = optionalStringField(proposal, "brand_quote");
+			if (brand && (!brandQuote || !normalizeQuotedText(productEvidence.snapshot_text).includes(normalizeQuotedText(brandQuote)) || !normalizeQuotedText(brandQuote).includes(normalizeQuotedText(brand)))) {
+				throw new Error("brand quote is not grounded in its product snapshot");
+			}
+			const model = optionalStringField(proposal, "model");
+			const modelQuote = optionalStringField(proposal, "model_quote");
+			if (model && (!modelQuote || !normalizeQuotedText(productEvidence.snapshot_text).includes(normalizeQuotedText(modelQuote)) || !normalizeQuotedText(modelQuote).includes(normalizeQuotedText(model)))) {
+				throw new Error("model quote is not grounded in its product snapshot");
+			}
+			for (const claimKey of ["supplier_claims", "product_claims"]) {
+				const claimProposals = Array.isArray(proposal[claimKey]) ? proposal[claimKey] as Record<string, unknown>[] : [];
+				for (const claimProposal of claimProposals) {
+					const evidence = evidenceById.get(stringField(claimProposal, "evidence_id"));
+					const quote = stringField(claimProposal, "source_quote");
+					if (!evidence || !quote || !normalizeQuotedText(evidence.snapshot_text).includes(normalizeQuotedText(quote))) {
+						throw new Error("ResearchFinding claim quote is not grounded in its cited snapshot");
+					}
+				}
+			}
+		}
+	}
+	const reusedSupplierRefs = [...new Set(bundle.candidates.map(candidate => stringField(candidate, "supplier_id")).filter(id => id && !supplierIds.has(id)))];
+	const reusedProductRefs = [...new Set(bundle.candidates.map(candidate => optionalStringField(candidate, "product_id")).filter((id): id is string => Boolean(id && !productIds.has(id))))];
+	const reusedEvidenceRefs = [...new Set(bundle.candidates.flatMap(candidate => stringArrayField(candidate, "evidence_ids")).filter(id => !evidenceById.has(id)))];
+	const [knownSupplierRefs, knownProductRefs, knownEvidenceRefs] = await Promise.all([
+		existingM2Ids(env, "intelligence_suppliers", reusedSupplierRefs),
+		existingM2Ids(env, "intelligence_products", reusedProductRefs),
+		existingM2Ids(env, "research_evidence", reusedEvidenceRefs),
+	]);
+	if (reusedSupplierRefs.some(id => !knownSupplierRefs.has(id)) || reusedProductRefs.some(id => !knownProductRefs.has(id))) {
+		throw new Error("ProjectCandidate references unknown Supplier/Product intelligence");
+	}
+	if (reusedEvidenceRefs.some(id => !knownEvidenceRefs.has(id))) throw new Error("ProjectCandidate references unknown Evidence");
+
+	const evidenceKeys = new Map<string, string>();
+	await Promise.all(bundle.evidence.map(async evidence => {
+		const key = `workspaces/default/intelligence/evidence/${evidence.evidence_id}/${evidence.content_sha256}.txt`;
+		evidenceKeys.set(evidence.evidence_id, key);
+		await env.BUCKET.put(key, evidence.snapshot_text, {
+			httpMetadata: { contentType: "text/plain; charset=utf-8" },
+		});
+	}));
+
+	const now = bundle.completed_at;
+	const statements: D1PreparedStatement[] = [];
+	for (const plan of plans) {
+		statements.push(env.DB.prepare(
+			`INSERT INTO sourcing_plans (id, workspace_id, project_id, run_id, plan_revision, plan_json, created_at)
+			 VALUES (?1, 'default', ?2, ?3, ?4, ?5, ?6)
+			 ON CONFLICT(workspace_id, run_id, plan_revision) DO UPDATE SET plan_json = excluded.plan_json`,
+		).bind(
+			stringField(plan, "plan_id"), bundle.project_id, bundle.run_id,
+			typeof plan.plan_revision === "number" ? plan.plan_revision : 1,
+			JSON.stringify(plan), stringField(plan, "created_at") || now,
+		));
+	}
+	for (const task of bundle.tasks) {
+		const findings = task.findings;
+		statements.push(env.DB.prepare(
+			`INSERT INTO research_tasks (workspace_id, project_id, run_id, id, research_question, channel, status, findings_json, created_at)
+			 VALUES ('default', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+			 ON CONFLICT(workspace_id, run_id, id) DO UPDATE SET status = excluded.status, findings_json = excluded.findings_json`,
+		).bind(
+			bundle.project_id, bundle.run_id, stringField(task, "task_id"),
+			stringField(task, "research_question"), stringField(task, "channel"),
+			stringField(task, "status"), findings ? JSON.stringify(findings) : null, now,
+		));
+	}
+	for (const supplier of bundle.suppliers) {
+		statements.push(env.DB.prepare(
+			`INSERT INTO intelligence_suppliers (id, workspace_id, display_name, website_domain, identity_status, role, first_observed_at, last_observed_at)
+			 VALUES (?1, 'default', ?2, ?3, ?4, ?5, ?6, ?7)
+			 ON CONFLICT(id) DO UPDATE SET
+			 display_name = excluded.display_name,
+			 website_domain = COALESCE(intelligence_suppliers.website_domain, excluded.website_domain),
+			 role = COALESCE(excluded.role, intelligence_suppliers.role),
+			 last_observed_at = MAX(intelligence_suppliers.last_observed_at, excluded.last_observed_at)`,
+		).bind(
+			stringField(supplier, "supplier_id"), stringField(supplier, "display_name"),
+			optionalStringField(supplier, "website_domain"), stringField(supplier, "identity_status"),
+			optionalStringField(supplier, "role"), stringField(supplier, "first_observed_at"),
+			stringField(supplier, "last_observed_at"),
+		));
+	}
+	for (const product of bundle.products) {
+		statements.push(env.DB.prepare(
+			`INSERT INTO intelligence_products (id, workspace_id, product_name, brand, model, product_category, first_observed_at, last_observed_at)
+			 VALUES (?1, 'default', ?2, ?3, ?4, ?5, ?6, ?7)
+			 ON CONFLICT(id) DO UPDATE SET
+			 product_name = excluded.product_name,
+			 brand = COALESCE(intelligence_products.brand, excluded.brand),
+			 model = COALESCE(intelligence_products.model, excluded.model),
+			 product_category = COALESCE(intelligence_products.product_category, excluded.product_category),
+			 last_observed_at = MAX(intelligence_products.last_observed_at, excluded.last_observed_at)`,
+		).bind(
+			stringField(product, "product_id"), stringField(product, "product_name"),
+			optionalStringField(product, "brand"), optionalStringField(product, "model"),
+			optionalStringField(product, "product_category"), stringField(product, "first_observed_at"),
+			stringField(product, "last_observed_at"),
+		));
+	}
+	for (const offering of bundle.offerings) {
+		statements.push(env.DB.prepare(
+			`INSERT INTO supplier_product_offerings (id, workspace_id, supplier_id, product_id, relationship_status, first_observed_at, last_observed_at)
+			 VALUES (?1, 'default', ?2, ?3, ?4, ?5, ?6)
+			 ON CONFLICT(id) DO UPDATE SET last_observed_at = MAX(supplier_product_offerings.last_observed_at, excluded.last_observed_at)`,
+		).bind(
+			stringField(offering, "offering_id"), stringField(offering, "supplier_id"),
+			stringField(offering, "product_id"), stringField(offering, "relationship_status"),
+			now, now,
+		));
+	}
+	for (const evidence of bundle.evidence) {
+		const key = evidenceKeys.get(evidence.evidence_id);
+		if (!key) throw new Error("snapshot key missing for evidence");
+		statements.push(env.DB.prepare(
+			`INSERT INTO research_evidence
+			 (id, workspace_id, source_type, source_url, normalized_url, title, publisher, retrieved_at, locator, excerpt, content_sha256, content_date_hints_json, snapshot_r2_key, trust_notes, first_run_id, last_run_id)
+			 VALUES (?1, 'default', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14)
+			 ON CONFLICT(id) DO UPDATE SET last_run_id = excluded.last_run_id`,
+		).bind(
+			evidence.evidence_id, evidence.source_type, evidence.source_url, evidence.normalized_url,
+			evidence.title.slice(0, 500), evidence.publisher, evidence.retrieved_at, evidence.locator,
+			evidence.excerpt.slice(0, 4000), evidence.content_sha256,
+			JSON.stringify(evidence.content_date_hints ?? []), key, evidence.trust_notes, bundle.run_id,
+		));
+	}
+	for (const claim of bundle.claims) {
+		statements.push(env.DB.prepare(
+			`INSERT INTO research_claims
+			 (id, workspace_id, subject_type, subject_id, attribute, value, unit, status, evaluation_method, first_observed_at, last_observed_at)
+			 VALUES (?1, 'default', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
+			 ON CONFLICT(id) DO UPDATE SET last_observed_at = MAX(research_claims.last_observed_at, excluded.last_observed_at)`,
+		).bind(
+			stringField(claim, "claim_id"), stringField(claim, "subject_type"),
+			stringField(claim, "subject_ref"), stringField(claim, "attribute"),
+			stringField(claim, "value"), optionalStringField(claim, "unit"),
+			stringField(claim, "status"), stringField(claim, "evaluation_method"), now,
+		));
+		statements.push(env.DB.prepare(
+			`INSERT INTO claim_evidence_links (workspace_id, claim_id, evidence_id, source_quote)
+			 VALUES ('default', ?1, ?2, ?3) ON CONFLICT DO NOTHING`,
+		).bind(stringField(claim, "claim_id"), stringField(claim, "evidence_id"), stringField(claim, "source_quote")));
+	}
+	for (const supplier of bundle.suppliers) {
+		for (const evidenceId of stringArrayField(supplier, "evidence_ids")) {
+			statements.push(env.DB.prepare(
+				`INSERT INTO intelligence_entity_evidence VALUES ('default', 'SUPPLIER', ?1, ?2, ?3, ?3) ON CONFLICT DO NOTHING`,
+			).bind(stringField(supplier, "supplier_id"), evidenceId, now));
+		}
+	}
+	for (const product of bundle.products) {
+		for (const evidenceId of stringArrayField(product, "evidence_ids")) {
+			statements.push(env.DB.prepare(
+				`INSERT INTO intelligence_entity_evidence VALUES ('default', 'PRODUCT', ?1, ?2, ?3, ?3) ON CONFLICT DO NOTHING`,
+			).bind(stringField(product, "product_id"), evidenceId, now));
+		}
+	}
+	for (const offering of bundle.offerings) {
+		for (const evidenceId of stringArrayField(offering, "evidence_ids")) {
+			statements.push(env.DB.prepare(
+				`INSERT INTO intelligence_entity_evidence VALUES ('default', 'OFFERING', ?1, ?2, ?3, ?3) ON CONFLICT DO NOTHING`,
+			).bind(stringField(offering, "offering_id"), evidenceId, now));
+		}
+	}
+	for (const task of bundle.tasks) {
+		const findings = task.findings;
+		if (!findings || typeof findings !== "object") continue;
+		for (const evidenceId of stringArrayField(findings as Record<string, unknown>, "evidence_ids")) {
+			statements.push(env.DB.prepare(
+				`INSERT INTO research_evidence_tasks VALUES ('default', ?1, ?2, ?3) ON CONFLICT DO NOTHING`,
+			).bind(bundle.run_id, stringField(task, "task_id"), evidenceId));
+		}
+	}
+	for (const candidate of bundle.candidates) {
+		statements.push(env.DB.prepare(
+			`INSERT INTO project_candidates
+			 (id, workspace_id, project_id, requirement_id, supplier_id, product_id, stage, rationale, open_questions_json, first_seen_run_id, last_seen_run_id, updated_at)
+			 VALUES (?1, 'default', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, ?10)
+			 ON CONFLICT(id) DO UPDATE SET stage = excluded.stage, rationale = excluded.rationale,
+			 open_questions_json = excluded.open_questions_json, last_seen_run_id = excluded.last_seen_run_id, updated_at = excluded.updated_at`,
+		).bind(
+			stringField(candidate, "candidate_id"), bundle.project_id,
+			stringField(candidate, "requirement_id"), stringField(candidate, "supplier_id"),
+			optionalStringField(candidate, "product_id"), stringField(candidate, "stage"),
+			stringField(candidate, "rationale"), JSON.stringify(candidate.open_questions ?? []),
+			bundle.run_id, now,
+		));
+		for (const evidenceId of stringArrayField(candidate, "evidence_ids")) {
+			statements.push(env.DB.prepare(
+				`INSERT INTO project_candidate_evidence VALUES ('default', ?1, ?2) ON CONFLICT DO NOTHING`,
+			).bind(stringField(candidate, "candidate_id"), evidenceId));
+		}
+	}
+	for (const action of bundle.actions) {
+		statements.push(env.DB.prepare(
+			`INSERT INTO research_actions
+			 (id, workspace_id, project_id, run_id, task_id, research_question, channel, tool_name, query, result_refs_json, remaining_gaps_json, decision, cost_search_calls, cost_fetch_calls, occurred_at)
+			 VALUES (?1, 'default', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+			 ON CONFLICT(id) DO NOTHING`,
+		).bind(
+			stringField(action, "action_id"), bundle.project_id, bundle.run_id,
+			stringField(action, "task_id"), stringField(action, "research_question"),
+			stringField(action, "channel"), stringField(action, "tool_name"),
+			optionalStringField(action, "query"), JSON.stringify(action.result_refs ?? []),
+			JSON.stringify(action.remaining_gaps ?? []), stringField(action, "decision"),
+			typeof action.cost_search_calls === "number" ? action.cost_search_calls : 0,
+			typeof action.cost_fetch_calls === "number" ? action.cost_fetch_calls : 0,
+			stringField(action, "occurred_at"),
+		));
+	}
+	statements.push(env.DB.prepare(
+		`INSERT INTO research_run_costs
+		 (workspace_id, project_id, run_id, status, stop_reason_code, search_calls, fetch_calls, model_calls,
+		  prompt_tokens, completion_tokens, token_usage_observed, model_call_details_json, trace_run_ids_json,
+		  langsmith_tracing_enabled, candidate_count, evidence_count, reused_intelligence_count,
+		  refreshed_intelligence_count, ignored_intelligence_count, warnings_json, updated_at)
+		 VALUES ('default', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+		 ON CONFLICT(workspace_id, run_id) DO UPDATE SET
+		  status = excluded.status, stop_reason_code = excluded.stop_reason_code,
+		  search_calls = excluded.search_calls, fetch_calls = excluded.fetch_calls, model_calls = excluded.model_calls,
+		  prompt_tokens = excluded.prompt_tokens, completion_tokens = excluded.completion_tokens,
+		  token_usage_observed = excluded.token_usage_observed, model_call_details_json = excluded.model_call_details_json,
+		  trace_run_ids_json = excluded.trace_run_ids_json, langsmith_tracing_enabled = excluded.langsmith_tracing_enabled,
+		  candidate_count = excluded.candidate_count, evidence_count = excluded.evidence_count,
+		  reused_intelligence_count = excluded.reused_intelligence_count,
+		  refreshed_intelligence_count = excluded.refreshed_intelligence_count,
+		  ignored_intelligence_count = excluded.ignored_intelligence_count, warnings_json = excluded.warnings_json,
+		  updated_at = excluded.updated_at`,
+	).bind(
+		bundle.project_id, bundle.run_id, bundle.status, bundle.stop_reason_code,
+		bundle.search_calls, bundle.fetch_calls, bundle.model_calls, bundle.prompt_tokens,
+		bundle.completion_tokens, bundle.token_usage_observed ? 1 : 0, JSON.stringify(bundle.model_call_details),
+		JSON.stringify(bundle.trace_run_ids), bundle.langsmith_tracing_enabled ? 1 : 0,
+		bundle.candidates.length, bundle.evidence.length, bundle.reused_intelligence_ids.length,
+		bundle.refreshed_intelligence_ids.length, bundle.ignored_intelligence_ids.length,
+		JSON.stringify(bundle.warnings), bundle.completed_at,
+	));
+	await batchD1(env, statements);
+	return { evidenceCount: bundle.evidence.length, candidateCount: bundle.candidates.length };
+}
+
 export class SourcingContainer extends Container {
 	defaultPort = 8000;
 	// Keep idle Python instances short-lived; active HTTP requests keep them awake.
@@ -152,30 +624,50 @@ export class SourcingContainer extends Container {
 
 export class SourcingWorkflow extends WorkflowEntrypoint<Env, RunRequest> {
 	async run(event: WorkflowEvent<RunRequest>, step: WorkflowStep) {
-		const { runId, durationSeconds } = event.payload;
+		const { runId, projectId, durationSeconds, mode } = event.payload;
 
 		try {
+			// Public research has billable in-memory budgets. Do not silently replay
+			// a sourcing task and reset its search/model counters after a container
+			// failure; M0 spike execution keeps its existing bounded retries.
 			const result = await step.do(
 				"execute-container-task",
-				{ retries: { limit: 2, delay: "10 seconds", backoff: "exponential" }, timeout: "10 minutes" },
+				{
+					retries: { limit: mode === "SOURCING" ? 0 : 2, delay: "10 seconds", backoff: "exponential" },
+					timeout: "10 minutes",
+				},
 				async () => {
-					const container = getContainer(this.env.SOURCING_CONTAINER, runId);
+					const container = getContainer(this.env.SOURCING_CONTAINER, "m1-intake");
+					const runtimeConfig = {
+						GENESIS_BASE_URL: this.env.GENESIS_BASE_URL,
+						GENESIS_ACCESS_TOKEN: this.env.GENESIS_ACCESS_TOKEN,
+						GENESIS_MODEL_ID: this.env.GENESIS_MODEL_ID,
+						TAVILY_API_KEY: this.env.TAVILY_API_KEY,
+						...(this.env.LANGSMITH_API_KEY ? { LANGSMITH_API_KEY: this.env.LANGSMITH_API_KEY } : {}),
+						...(this.env.LANGSMITH_TRACING ? { LANGSMITH_TRACING: this.env.LANGSMITH_TRACING } : {}),
+						...(this.env.LANGSMITH_PROJECT ? { LANGSMITH_PROJECT: this.env.LANGSMITH_PROJECT } : {}),
+					};
+					const isSourcing = mode === "SOURCING";
 					const response = await container.fetch(
-						new Request("http://container/internal/execute", {
+						new Request(`http://container/internal/${isSourcing ? "research" : "execute"}`, {
 							method: "POST",
 							headers: { "content-type": "application/json" },
-							body: JSON.stringify({
-								run_id: runId,
-								gateway_url: this.env.CONTAINER_GATEWAY_URL,
-								token: this.env.INTERNAL_GATEWAY_TOKEN,
-								duration_seconds: durationSeconds,
-								runtime_config: {
-									GENESIS_BASE_URL: this.env.GENESIS_BASE_URL,
-									GENESIS_ACCESS_TOKEN: this.env.GENESIS_ACCESS_TOKEN,
-									GENESIS_MODEL_ID: this.env.GENESIS_MODEL_ID,
-									TAVILY_API_KEY: this.env.TAVILY_API_KEY,
-								},
-							}),
+							body: JSON.stringify(isSourcing
+								? {
+									project_id: projectId,
+									run_id: runId,
+									gateway_url: this.env.CONTAINER_GATEWAY_URL,
+									token: this.env.INTERNAL_GATEWAY_TOKEN,
+									runtime_config: runtimeConfig,
+									research_budget: event.payload.researchBudget ?? { max_search_calls: 4, max_fetches: 4, max_tasks: 2, max_rounds: 2, max_model_calls: 15 },
+								}
+								: {
+									run_id: runId,
+									gateway_url: this.env.CONTAINER_GATEWAY_URL,
+									token: this.env.INTERNAL_GATEWAY_TOKEN,
+									duration_seconds: durationSeconds,
+									runtime_config: runtimeConfig,
+								}),
 						}),
 					);
 					if (!response.ok) {
@@ -184,16 +676,29 @@ export class SourcingWorkflow extends WorkflowEntrypoint<Env, RunRequest> {
 							`container task failed with status ${response.status}: ${body.slice(0, 500)}`,
 						);
 					}
-					return (await response.json()) as { artifact?: { key?: string } };
+					return (await response.json()) as {
+						artifact?: { key?: string };
+					status?: string;
+					stop_reason_code?: string | null;
+					};
 				},
 			);
 
 			const artifactKey = result.artifact?.key ?? null;
+			const finalStatus = result.status === "FAILED" ? "FAILED" : result.status === "PARTIAL" ? "PARTIAL" : "COMPLETED";
+			const finalStage = finalStatus === "FAILED" ? "FAILED" : finalStatus === "PARTIAL" ? "PARTIAL" : mode === "SOURCING" ? "WEB_RESEARCH" : "REPORTING";
 			await step.do("finalize-run", async () => {
-				await updateRun(this.env, runId, "COMPLETED", "REPORTING", artifactKey);
+				await updateRun(this.env, runId, finalStatus, finalStage, artifactKey);
+				if (finalStatus === "FAILED") {
+					const reason = result.stop_reason_code ?? "RESEARCH_FAILED";
+					await this.env.DB.prepare(`UPDATE runs SET last_error = ?2 WHERE id = ?1`)
+						.bind(runId, reason)
+						.run();
+					await appendEvent(this.env, runId, "FAILED", reason);
+				}
 			});
 
-			return { status: "COMPLETED", artifactKey };
+			return { status: finalStatus, artifactKey };
 		} catch (error) {
 			// A run must never stay QUEUED forever: record the failure so the
 			// client can see a terminal state and retry explicitly.
@@ -223,6 +728,147 @@ export default {
 		if (url.pathname.startsWith("/internal/")) {
 			const unauthorized = await requireInternal(request, env);
 			if (unauthorized) return unauthorized;
+
+			const sourcingContextMatch = url.pathname.match(/^\/internal\/projects\/([^/]+)\/sourcing-context$/);
+			if (sourcingContextMatch && request.method === "GET") {
+				const projectId = decodeURIComponent(sourcingContextMatch[1]);
+				const runId = url.searchParams.get("run_id");
+				const project = await env.DB.prepare(
+					`SELECT id, history_availability FROM projects WHERE id = ?1`,
+				).bind(projectId).first<{ id: string; history_availability: string }>();
+				if (!project || !runId) return json({ error: "project_or_run_not_found" }, 404);
+				const run = await env.DB.prepare(
+					`SELECT id FROM runs WHERE id = ?1 AND project_id = ?2`,
+				).bind(runId, projectId).first<{ id: string }>();
+				if (!run) return json({ error: "run_not_found" }, 404);
+				const compilationRow = await env.DB.prepare(
+					`SELECT compilation_json FROM demand_compilations WHERE project_id = ?1 ORDER BY demand_revision DESC LIMIT 1`,
+				).bind(projectId).first<{ compilation_json: string }>();
+				if (!compilationRow) return json({ error: "demand_not_compiled" }, 404);
+				const compilation = JSON.parse(compilationRow.compilation_json) as { requirements?: unknown[] };
+				if (!Array.isArray(compilation.requirements) || compilation.requirements.length === 0) {
+					return json({ error: "structured_requirement_required_for_m2" }, 422);
+				}
+
+				const { results: intelligenceRows } = await env.DB.prepare(
+					`SELECT p.id AS product_id, p.product_name, p.brand, p.model, p.product_category,
+					        p.last_observed_at AS product_observed_at,
+					        s.id AS supplier_id, s.display_name AS supplier_name, s.website_domain,
+					        e.id AS evidence_id, e.source_url, e.retrieved_at, e.excerpt, e.content_date_hints_json,
+					        o.relationship_status
+					 FROM intelligence_products p
+					 JOIN supplier_product_offerings o ON o.workspace_id = p.workspace_id AND o.product_id = p.id
+					 JOIN intelligence_suppliers s ON s.workspace_id = o.workspace_id AND s.id = o.supplier_id
+					 LEFT JOIN intelligence_entity_evidence ie ON ie.workspace_id = p.workspace_id
+					      AND ie.entity_type = 'PRODUCT' AND ie.entity_id = p.id
+					 LEFT JOIN research_evidence e ON e.workspace_id = ie.workspace_id AND e.id = ie.evidence_id
+				 WHERE p.workspace_id = 'default'
+				 ORDER BY p.last_observed_at DESC LIMIT 300`,
+				).all<{
+					product_id: string; product_name: string; brand: string | null; model: string | null;
+					product_category: string | null; product_observed_at: string; supplier_id: string;
+					supplier_name: string; website_domain: string | null; evidence_id: string | null;
+					source_url: string | null; retrieved_at: string | null; excerpt: string | null;
+					content_date_hints_json: string | null; relationship_status: string;
+				}>();
+				const grouped = new Map<string, {
+					type: string; intelligence_id: string; product_id: string; product_name: string;
+					brand: string | null; model: string | null; product_category: string | null;
+					last_observed_at: string; supplier_ids: string[]; supplier_names: string[];
+					website_domains: string[]; evidence_ids: string[];
+					evidence: { evidence_id: string; source_url: string; retrieved_at: string; excerpt: string; content_date_hints: string[] }[];
+					date_hints: string[]; freshness: string;
+				}>();
+				for (const row of intelligenceRows) {
+					let item = grouped.get(row.product_id);
+					if (!item) {
+						item = {
+							type: "PRODUCT", intelligence_id: row.product_id, product_id: row.product_id,
+							product_name: row.product_name, brand: row.brand, model: row.model,
+							product_category: row.product_category, last_observed_at: row.product_observed_at,
+							supplier_ids: [], supplier_names: [], website_domains: [], evidence_ids: [], evidence: [], date_hints: [], freshness: "UNKNOWN",
+						};
+						grouped.set(row.product_id, item);
+					}
+					if (!item.supplier_ids.includes(row.supplier_id)) item.supplier_ids.push(row.supplier_id);
+					if (!item.supplier_names.includes(row.supplier_name)) item.supplier_names.push(row.supplier_name);
+					if (row.website_domain && !item.website_domains.includes(row.website_domain)) item.website_domains.push(row.website_domain);
+					if (row.evidence_id && row.source_url && row.retrieved_at && !item.evidence_ids.includes(row.evidence_id)) {
+						item.evidence_ids.push(row.evidence_id);
+						const dateHints = JSON.parse(row.content_date_hints_json ?? "[]") as string[];
+						item.date_hints.push(...dateHints.filter(hint => !item.date_hints.includes(hint)));
+						item.evidence.push({ evidence_id: row.evidence_id, source_url: row.source_url, retrieved_at: row.retrieved_at, excerpt: (row.excerpt ?? "").slice(0, 1200), content_date_hints: dateHints });
+					}
+				}
+				const requirementTerms = compilation.requirements.map(value => {
+					const row = value && typeof value === "object" ? value as Record<string, unknown> : {};
+					return [row.product_name, row.product_category].filter((part): part is string => typeof part === "string").join(" ").toLowerCase();
+				});
+				const priorIntelligence = [...grouped.values()].map(item => {
+					const productText = `${item.product_name} ${item.product_category ?? ""} ${item.model ?? ""}`.toLowerCase();
+					const score = requirementTerms.reduce((best, term) => {
+						const normalizedTerm = term.replace(/[\s\p{P}\p{S}]/gu, "");
+						const normalizedProduct = productText.replace(/[\s\p{P}\p{S}]/gu, "");
+						return Math.max(best, normalizedTerm.length > 2 && normalizedProduct.includes(normalizedTerm) ? 3 : 0,
+							normalizedTerm.length > 2 && normalizedTerm.includes(normalizedProduct) ? 2 : 0);
+					}, 0);
+					const observed = Date.parse(item.last_observed_at);
+					const hasOldDateMention = item.date_hints.some(hint => {
+						const year = hint.match(/(?:19|20)\d{2}/)?.[0];
+						return year !== undefined && Number(year) <= new Date().getUTCFullYear() - 5;
+					});
+					item.freshness = hasOldDateMention
+						? "OLD_DATE_MENTION"
+						: Number.isFinite(observed) && Date.now() - observed <= 180 * 24 * 60 * 60 * 1000 ? "RECENT_LEAD" : "STALE_LEAD";
+					return { ...item, score };
+				}).sort((a, b) => b.score - a.score || b.last_observed_at.localeCompare(a.last_observed_at)).slice(0, 20)
+					.map(({ score: _score, ...item }) => item);
+				return json({
+					project_id: projectId,
+					run_id: runId,
+					history_availability: project.history_availability,
+					compilation,
+					existing_intelligence: priorIntelligence,
+				});
+			}
+
+			const researchResultsMatch = url.pathname.match(/^\/internal\/runs\/([^/]+)\/research-results$/);
+			if (researchResultsMatch && request.method === "POST") {
+				const contentLength = Number(request.headers.get("content-length") ?? 0);
+				if (contentLength > 5 * 1024 * 1024) return json({ error: "research_bundle_too_large" }, 413);
+				const raw = await request.json().catch(() => null);
+				if (!raw || typeof raw !== "object") return json({ error: "invalid_research_bundle" }, 422);
+				const bundle = raw as M2BundlePayload;
+				const runId = decodeURIComponent(researchResultsMatch[1]);
+				if (bundle.run_id !== runId || !bundle.project_id || !Array.isArray(bundle.evidence) || !Array.isArray(bundle.candidates)) {
+					return json({ error: "invalid_research_bundle_scope" }, 422);
+				}
+				const run = await env.DB.prepare(
+					`SELECT id FROM runs WHERE id = ?1 AND project_id = ?2`,
+				).bind(runId, bundle.project_id).first<{ id: string }>();
+				if (!run) return json({ error: "run_not_found" }, 404);
+				const compilationRow = await env.DB.prepare(
+					`SELECT compilation_json FROM demand_compilations WHERE project_id = ?1 ORDER BY demand_revision DESC LIMIT 1`,
+				).bind(bundle.project_id).first<{ compilation_json: string }>();
+				if (!compilationRow) return json({ error: "demand_not_compiled" }, 422);
+				const compiled = JSON.parse(compilationRow.compilation_json) as { requirements?: unknown[] };
+				const requirementIds = new Set((compiled.requirements ?? []).flatMap(item => {
+					if (!item || typeof item !== "object") return [];
+					const id = (item as Record<string, unknown>).requirement_id;
+					return typeof id === "string" ? [id] : [];
+				}));
+				if (bundle.candidates.some(candidate => !requirementIds.has(stringField(candidate, "requirement_id")))) {
+					return json({ error: "candidate_requirement_out_of_scope" }, 422);
+				}
+				try {
+					const saved = await persistM2ResearchBundle(env, bundle);
+					return json({ ok: true, ...saved }, 201);
+				} catch (error) {
+					const detail = error instanceof Error ? error.message : "research persistence failed";
+					console.error(JSON.stringify({ message: "M2 research persistence failed", run_id: runId, detail }));
+					return json({ error: "research_persistence_failed", detail: detail.slice(0, 300) }, 422);
+				}
+			}
 
 			const inputMatch = url.pathname.match(/^\/internal\/projects\/([^/]+)\/inputs\/([^/]+)$/);
 			if (inputMatch && request.method === "GET") {
@@ -582,14 +1228,143 @@ export default {
 			return json({ ...summary, normalized_r2_key: normalizedKey, analysis_version: analysisVersion?.analysis_version });
 		}
 
+		const sourcingPlanMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/sourcing-plan$/);
+		if (sourcingPlanMatch && request.method === "GET") {
+			const projectId = decodeURIComponent(sourcingPlanMatch[1]);
+			const runId = url.searchParams.get("run_id");
+			const query = runId
+				? `SELECT plan_json FROM sourcing_plans WHERE workspace_id = 'default' AND project_id = ?1 AND run_id = ?2 ORDER BY plan_revision DESC LIMIT 1`
+				: `SELECT plan_json FROM sourcing_plans WHERE workspace_id = 'default' AND project_id = ?1 ORDER BY created_at DESC, plan_revision DESC LIMIT 1`;
+			const statement = runId ? env.DB.prepare(query).bind(projectId, runId) : env.DB.prepare(query).bind(projectId);
+			const row = await statement.first<{ plan_json: string }>();
+			if (!row) return json({ error: "sourcing_plan_not_found" }, 404);
+			return json({ plan: JSON.parse(row.plan_json) });
+		}
+
+		const candidateMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/candidates$/);
+		if (candidateMatch && request.method === "GET") {
+			const projectId = decodeURIComponent(candidateMatch[1]);
+			const stage = url.searchParams.get("stage");
+			const runId = url.searchParams.get("run_id");
+			const project = await env.DB.prepare(`SELECT id FROM projects WHERE id = ?1`).bind(projectId).first<{ id: string }>();
+			if (!project) return json({ error: "not_found" }, 404);
+			const { results } = await env.DB.prepare(
+				`SELECT c.id AS candidate_id, c.requirement_id, c.stage, c.rationale, c.open_questions_json,
+				        c.first_seen_run_id, c.last_seen_run_id, c.updated_at,
+				        s.id AS supplier_id, s.display_name AS supplier_name, s.website_domain, s.identity_status, s.role,
+				        p.id AS product_id, p.product_name, p.brand, p.model, p.product_category,
+				        e.id AS evidence_id, e.source_url, e.title AS evidence_title, e.retrieved_at, e.excerpt, e.content_date_hints_json
+				 FROM project_candidates c
+				 JOIN intelligence_suppliers s ON s.workspace_id = c.workspace_id AND s.id = c.supplier_id
+				 LEFT JOIN intelligence_products p ON p.workspace_id = c.workspace_id AND p.id = c.product_id
+				 LEFT JOIN project_candidate_evidence ce ON ce.workspace_id = c.workspace_id AND ce.candidate_id = c.id
+				 LEFT JOIN research_evidence e ON e.workspace_id = ce.workspace_id AND e.id = ce.evidence_id
+				 WHERE c.workspace_id = 'default' AND c.project_id = ?1
+				   AND (?2 IS NULL OR c.stage = ?2) AND (?3 IS NULL OR c.last_seen_run_id = ?3)
+				 ORDER BY c.updated_at DESC LIMIT 600`,
+			).bind(projectId, stage, runId).all<Record<string, unknown>>();
+			const grouped = new Map<string, Record<string, unknown> & { evidence: Record<string, unknown>[] }>();
+			for (const row of results) {
+				const id = String(row.candidate_id);
+				let item = grouped.get(id);
+				if (!item) {
+					item = {
+						candidate_id: id,
+						requirement_id: row.requirement_id,
+						stage: row.stage,
+						rationale: row.rationale,
+						open_questions: JSON.parse(String(row.open_questions_json || "[]")),
+						first_seen_run_id: row.first_seen_run_id,
+						last_seen_run_id: row.last_seen_run_id,
+						updated_at: row.updated_at,
+						supplier: {
+							supplier_id: row.supplier_id, display_name: row.supplier_name,
+							website_domain: row.website_domain, identity_status: row.identity_status, role: row.role,
+						},
+						product: row.product_id ? {
+							product_id: row.product_id, product_name: row.product_name,
+							brand: row.brand, model: row.model, product_category: row.product_category,
+						} : null,
+						evidence: [],
+					};
+					grouped.set(id, item);
+				}
+				if (row.evidence_id && !item.evidence.some(evidence => evidence.evidence_id === row.evidence_id)) {
+					item.evidence.push({
+						evidence_id: row.evidence_id, source_url: row.source_url,
+						title: row.evidence_title, retrieved_at: row.retrieved_at, excerpt: row.excerpt,
+						content_date_hints: JSON.parse(String(row.content_date_hints_json ?? "[]")),
+					});
+				}
+			}
+			return json({ candidates: [...grouped.values()] });
+		}
+
+		const workspaceSuppliersMatch = url.pathname.match(/^\/api\/workspaces\/default\/suppliers$/);
+		if (workspaceSuppliersMatch && request.method === "GET") {
+			const search = (url.searchParams.get("q") ?? "").trim().slice(0, 100);
+			const requestedLimit = Number(url.searchParams.get("limit") ?? "50");
+			const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(100, Math.floor(requestedLimit))) : 50;
+			const like = `%${search.replace(/[\\%_]/g, "\\$&")}%`;
+			const { results } = await env.DB.prepare(
+				`SELECT s.id AS supplier_id, s.display_name, s.website_domain, s.identity_status, s.role,
+				        s.first_observed_at, s.last_observed_at, COUNT(DISTINCT o.product_id) AS product_count
+				 FROM intelligence_suppliers s
+				 LEFT JOIN supplier_product_offerings o ON o.workspace_id = s.workspace_id AND o.supplier_id = s.id
+				 WHERE s.workspace_id = 'default' AND (?1 = '%%' OR s.display_name LIKE ?1 ESCAPE '\\' OR s.website_domain LIKE ?1 ESCAPE '\\')
+				 GROUP BY s.id ORDER BY s.last_observed_at DESC LIMIT ?2`,
+			).bind(like, limit).all();
+			return json({ suppliers: results });
+		}
+
+		const supplierDetailMatch = url.pathname.match(/^\/api\/workspaces\/default\/suppliers\/([^/]+)$/);
+		if (supplierDetailMatch && request.method === "GET") {
+			const supplierId = decodeURIComponent(supplierDetailMatch[1]);
+			const supplier = await env.DB.prepare(
+				`SELECT id AS supplier_id, display_name, website_domain, identity_status, role, first_observed_at, last_observed_at
+				 FROM intelligence_suppliers WHERE workspace_id = 'default' AND id = ?1`,
+			).bind(supplierId).first<Record<string, unknown>>();
+			if (!supplier) return json({ error: "not_found" }, 404);
+			const { results: products } = await env.DB.prepare(
+				`SELECT p.id AS product_id, p.product_name, p.brand, p.model, p.product_category,
+				        o.relationship_status, o.last_observed_at
+				 FROM supplier_product_offerings o JOIN intelligence_products p
+				   ON p.workspace_id = o.workspace_id AND p.id = o.product_id
+				 WHERE o.workspace_id = 'default' AND o.supplier_id = ?1 ORDER BY o.last_observed_at DESC LIMIT 100`,
+			).bind(supplierId).all();
+			const { results: evidence } = await env.DB.prepare(
+				`SELECT e.id AS evidence_id, e.source_url, e.title, e.retrieved_at, e.excerpt, e.content_date_hints_json
+				 FROM intelligence_entity_evidence l JOIN research_evidence e
+				   ON e.workspace_id = l.workspace_id AND e.id = l.evidence_id
+				 WHERE l.workspace_id = 'default' AND l.entity_type = 'SUPPLIER' AND l.entity_id = ?1
+				 ORDER BY e.retrieved_at DESC LIMIT 50`,
+			).bind(supplierId).all();
+			return json({ supplier, products, evidence });
+		}
+
 		const runsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/runs$/);
 		if (runsMatch && request.method === "POST") {
 			const projectId = runsMatch[1];
 			const body = (await request.json().catch(() => ({}))) as {
 				duration_seconds?: number;
 				idempotency_key?: string;
+				mode?: "SPIKE" | "SOURCING";
+				research_budget?: ResearchBudgetConfig;
 			};
 			const durationSeconds = body.duration_seconds ?? 150;
+			const mode = body.mode ?? "SOURCING";
+			const researchBudget = body.research_budget ?? { max_search_calls: 4, max_fetches: 4, max_tasks: 2, max_rounds: 2, max_model_calls: 15 };
+			if (!["SPIKE", "SOURCING"].includes(mode)) return json({ error: "invalid_run_mode" }, 422);
+			if (
+				!Number.isInteger(researchBudget.max_search_calls) || researchBudget.max_search_calls < 1 || researchBudget.max_search_calls > 12 ||
+				!Number.isInteger(researchBudget.max_fetches) || researchBudget.max_fetches < 1 || researchBudget.max_fetches > 24 ||
+				!Number.isInteger(researchBudget.max_tasks) || researchBudget.max_tasks < 1 || researchBudget.max_tasks > 3 ||
+				!Number.isInteger(researchBudget.max_rounds) || researchBudget.max_rounds < 1 || researchBudget.max_rounds > 3 ||
+				!Number.isInteger(researchBudget.max_model_calls) || researchBudget.max_model_calls < 1 || researchBudget.max_model_calls > 30
+			) return json({ error: "research_budget_out_of_range" }, 422);
+			if (!Number.isInteger(durationSeconds) || durationSeconds < 1 || durationSeconds > 600) {
+				return json({ error: "duration_seconds_out_of_range" }, 422);
+			}
 			const project = await env.DB.prepare(
 				`SELECT id, demand_revision FROM projects WHERE id = ?1`,
 			)
@@ -609,6 +1384,9 @@ export default {
 			if (!demandData.requirements?.length && !demandData.unstructured_requirements?.length) {
 				return json({ error: "no_recognizable_demand" }, 422);
 			}
+			if (mode === "SOURCING" && !demandData.requirements?.length) {
+				return json({ error: "structured_requirement_required_for_m2" }, 422);
+			}
 
 			// An idempotency key makes a repeated request return the same run
 			// instead of starting a second research task and paying for it.
@@ -624,21 +1402,105 @@ export default {
 			}
 
 			const runId = crypto.randomUUID();
-			await upsertRun(env, { runId, projectId, durationSeconds }, body.idempotency_key);
-			await env.WORKFLOW.create({ params: { runId, projectId, durationSeconds } });
-			return json({ run_id: runId, status: "QUEUED" }, 202);
+			await upsertRun(env, { runId, projectId, durationSeconds, mode, researchBudget }, body.idempotency_key);
+			await env.WORKFLOW.create({ params: { runId, projectId, durationSeconds, mode, researchBudget } });
+			return json({ run_id: runId, status: "QUEUED", mode, research_budget: researchBudget }, 202);
 		}
 
 		const runMatch = url.pathname.match(/^\/api\/runs\/([^/]+)$/);
 		if (runMatch && request.method === "GET") {
 			const run = await env.DB.prepare(
-				`SELECT id, project_id, status, current_stage, artifact_key, created_at, updated_at
+				`SELECT id, project_id, status, current_stage, artifact_key, last_error, created_at, updated_at
 				 FROM runs WHERE id = ?1`,
 			)
 				.bind(runMatch[1])
 				.first<RunRow>();
 			if (!run) return json({ error: "not_found" }, 404);
 			return json(run);
+		}
+
+		const researchRunMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/research$/);
+		if (researchRunMatch && request.method === "GET") {
+			const runId = decodeURIComponent(researchRunMatch[1]);
+			const run = await env.DB.prepare(`SELECT id, project_id, status, current_stage FROM runs WHERE id = ?1`)
+				.bind(runId).first<{ id: string; project_id: string; status: string; current_stage: string }>();
+			if (!run) return json({ error: "not_found" }, 404);
+			const planRow = await env.DB.prepare(
+				`SELECT plan_json FROM sourcing_plans WHERE workspace_id = 'default' AND run_id = ?1 ORDER BY plan_revision DESC LIMIT 1`,
+			).bind(runId).first<{ plan_json: string }>();
+			const { results: tasks } = await env.DB.prepare(
+				`SELECT id AS task_id, research_question, channel, status, findings_json, created_at
+				 FROM research_tasks WHERE workspace_id = 'default' AND run_id = ?1 ORDER BY created_at, id`,
+			).bind(runId).all<Record<string, unknown>>();
+			const { results: actions } = await env.DB.prepare(
+				`SELECT id AS action_id, task_id, research_question, channel, tool_name, query,
+				        result_refs_json, remaining_gaps_json, decision, cost_search_calls, cost_fetch_calls, occurred_at
+				 FROM research_actions WHERE workspace_id = 'default' AND run_id = ?1 ORDER BY occurred_at, id`,
+			).bind(runId).all<Record<string, unknown>>();
+			const costs = await env.DB.prepare(
+				`SELECT status, stop_reason_code, search_calls, fetch_calls, model_calls, prompt_tokens, completion_tokens,
+				        token_usage_observed, model_call_details_json, trace_run_ids_json, langsmith_tracing_enabled, candidate_count, evidence_count, reused_intelligence_count,
+				        refreshed_intelligence_count, ignored_intelligence_count, warnings_json
+				 FROM research_run_costs WHERE workspace_id = 'default' AND run_id = ?1`,
+			).bind(runId).first<{
+				status: string; stop_reason_code: string | null; search_calls: number; fetch_calls: number;
+				model_calls: number; prompt_tokens: number; completion_tokens: number;
+				token_usage_observed: number; model_call_details_json: string; trace_run_ids_json: string;
+				langsmith_tracing_enabled: number; candidate_count: number;
+				evidence_count: number; reused_intelligence_count: number; refreshed_intelligence_count: number;
+				ignored_intelligence_count: number; warnings_json: string;
+			}>();
+			return json({
+				run,
+				plan: planRow ? JSON.parse(planRow.plan_json) : null,
+				tasks: tasks.map(task => ({ ...task, findings: task.findings_json ? JSON.parse(String(task.findings_json)) : null })),
+				actions: actions.map(action => ({
+					...action,
+					result_refs: JSON.parse(String(action.result_refs_json || "[]")),
+					remaining_gaps: JSON.parse(String(action.remaining_gaps_json || "[]")),
+				})),
+				metrics: {
+					status: costs?.status ?? run.status,
+					stop_reason_code: costs?.stop_reason_code ?? null,
+					search_calls: costs?.search_calls ?? actions.reduce((sum, action) => sum + Number(action.cost_search_calls ?? 0), 0),
+					fetch_calls: costs?.fetch_calls ?? actions.reduce((sum, action) => sum + Number(action.cost_fetch_calls ?? 0), 0),
+					model_calls: costs?.model_calls ?? 0,
+					prompt_tokens: costs?.prompt_tokens ?? 0,
+					completion_tokens: costs?.completion_tokens ?? 0,
+					token_usage_observed: Boolean(costs?.token_usage_observed ?? 0),
+					model_call_details: JSON.parse(costs?.model_call_details_json ?? "[]"),
+					trace_run_ids: JSON.parse(costs?.trace_run_ids_json ?? "{}"),
+					langsmith_tracing_enabled: Boolean(costs?.langsmith_tracing_enabled ?? 0),
+					researcher_tasks: tasks.length,
+					candidate_count: costs?.candidate_count ?? 0,
+					evidence_count: costs?.evidence_count ?? 0,
+					reused_intelligence_count: costs?.reused_intelligence_count ?? 0,
+					refreshed_intelligence_count: costs?.refreshed_intelligence_count ?? 0,
+					ignored_intelligence_count: costs?.ignored_intelligence_count ?? 0,
+					warnings: JSON.parse(costs?.warnings_json ?? "[]"),
+				},
+			});
+		}
+
+		const evidenceMatch = url.pathname.match(/^\/api\/evidence\/([^/]+)$/);
+		if (evidenceMatch && request.method === "GET") {
+			const evidenceId = decodeURIComponent(evidenceMatch[1]);
+			const evidence = await env.DB.prepare(
+				`SELECT id AS evidence_id, source_type, source_url, normalized_url, title, publisher,
+				        retrieved_at, locator, excerpt, content_sha256, content_date_hints_json,
+				        snapshot_r2_key, trust_notes
+				 FROM research_evidence WHERE workspace_id = 'default' AND id = ?1`,
+			).bind(evidenceId).first<Record<string, unknown>>();
+			if (!evidence) return json({ error: "not_found" }, 404);
+			const snapshot = await env.BUCKET.get(String(evidence.snapshot_r2_key));
+			if (!snapshot) return json({ error: "evidence_snapshot_missing" }, 404);
+			return json({
+				evidence: {
+					...evidence,
+					content_date_hints: JSON.parse(String(evidence.content_date_hints_json ?? "[]")),
+					snapshot_text: await snapshot.text(),
+				},
+			});
 		}
 
 		const eventsMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/events$/);

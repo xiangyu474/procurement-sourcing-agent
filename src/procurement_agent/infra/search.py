@@ -31,6 +31,7 @@ class SearchProvider(Protocol):
         *,
         purpose: str,
         max_results: int = 5,
+        channel_hint: str | None = None,
     ) -> list[SearchResult]:
         """Return candidate sources for one research question."""
         ...
@@ -48,6 +49,7 @@ class TavilySearchProvider:
         *,
         purpose: str,
         max_results: int = 5,
+        channel_hint: str | None = None,
     ) -> list[SearchResult]:
         """Return candidate sources. Snippets are discovery hints, not evidence."""
         from tavily import TavilyClient
@@ -71,6 +73,77 @@ class TavilySearchProvider:
         ]
 
 
+@dataclass(frozen=True)
+class FetchedPage:
+    """Text extracted from a public source; it is untrusted evidence, not instructions."""
+
+    url: str
+    title: str
+    content: str
+    publisher: str | None = None
+    locator: str = "tavily-extract:document"
+
+
+class PublicContentProvider(Protocol):
+    """Provider contract for extracting page content from a search result URL."""
+
+    def fetch(self, url: str, *, query: str, max_chars: int = 80_000) -> FetchedPage:
+        """Return source text for an already-discovered URL."""
+        ...
+
+
+class TavilyContentProvider:
+    """Use Tavily Extract to retrieve readable public content, not snippets."""
+
+    def __init__(self, api_key: str) -> None:
+        self._api_key = api_key
+
+    def fetch(self, url: str, *, query: str, max_chars: int = 80_000) -> FetchedPage:
+        from tavily import TavilyClient
+
+        response = TavilyClient(api_key=self._api_key).extract(
+            urls=[url],
+            extract_depth="basic",
+            format="markdown",
+            timeout=30,
+            query=query[:500],
+        )
+        results = response.get("results", [])
+        if not results:
+            raise RuntimeError("Tavily Extract returned no source content")
+        result = results[0]
+        content = str(result.get("raw_content") or result.get("content") or "").strip()
+        if not content:
+            raise RuntimeError("Tavily Extract returned an empty source")
+        return FetchedPage(
+            url=str(result.get("url") or url),
+            title=str(result.get("title") or ""),
+            content=content[:max_chars],
+            publisher=None,
+        )
+
+
+class FakeContentProvider:
+    """Deterministic page extractor used by tests and offline runs."""
+
+    def __init__(self, pages: dict[str, FetchedPage] | None = None) -> None:
+        self._pages = pages or {}
+        self.calls: list[tuple[str, str]] = []
+
+    def fetch(self, url: str, *, query: str, max_chars: int = 80_000) -> FetchedPage:
+        self.calls.append((url, query))
+        page = self._pages.get(url)
+        if page is None:
+            raise RuntimeError("source page is not configured in the fake provider")
+        return FetchedPage(
+            url=page.url,
+            title=page.title,
+            content=page.content[:max_chars],
+            publisher=page.publisher,
+            locator=page.locator,
+        )
+
+
 class FakeSearchProvider:
     """Deterministic provider used by tests and offline runs."""
 
@@ -84,6 +157,7 @@ class FakeSearchProvider:
         *,
         purpose: str,
         max_results: int = 5,
+        channel_hint: str | None = None,
     ) -> list[SearchResult]:
         """Record the call and return the configured fixture results."""
         self.calls.append((query, purpose))

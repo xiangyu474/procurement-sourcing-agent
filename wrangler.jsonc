@@ -51,6 +51,8 @@
 		}
 	],
 	"vars": {
-		"CONTAINER_GATEWAY_URL": "https://procurement-sourcing-gateway.xiangyu474.workers.dev"
+		"CONTAINER_GATEWAY_URL": "https://procurement-sourcing-gateway.xiangyu474.workers.dev",
+		"LANGSMITH_TRACING": "true",
+		"LANGSMITH_PROJECT": "procurement-sourcing-m2"
 	}
 }
