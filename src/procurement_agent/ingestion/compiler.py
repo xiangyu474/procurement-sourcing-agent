@@ -137,6 +137,7 @@ def compile_requirement_fragments(
 
         for constraint in requirement.constraints:
             _ground_constraint(constraint, allowed, issues)
+            _mark_ambiguous_resolution_basis(constraint, issues)
             expected_origin = _origin_for_source(constraint.source_ref, allowed)
             if expected_origin is None:
                 constraint.importance = (
@@ -385,6 +386,11 @@ def _validated_compilation_payload(response: object) -> RequirementCompilation:
     normalized["unstructured_requirements"] = valid_unstructured
     normalized["conflicts"] = valid_conflicts
     _normalize_list_fields(normalized, ("issues", "source_refs", "open_questions"))
+    root_fields = set(RequirementCompilation.model_fields)
+    unknown_root_fields = sorted(set(normalized) - root_fields)
+    for field_name in unknown_root_fields:
+        issues.append(f"Discarded unsupported top-level compiler field: {field_name}")
+        normalized.pop(field_name, None)
     normalized["issues"] = list(normalized.get("issues", [])) + issues
     return RequirementCompilation.model_validate(normalized)
 
@@ -410,6 +416,46 @@ def _sanitize_model_payload(payload: Any, model: type, label: str, issues: list[
     if discarded:
         issues.append(f"Discarded unsupported {label} fields: {', '.join(discarded)}")
     return {key: value for key, value in payload.items() if key in allowed}
+
+
+def _mark_ambiguous_resolution_basis(
+    constraint: RequirementConstraint,
+    issues: list[str],
+) -> None:
+    """Keep megapixel constraints UNKNOWN when the measured pixel basis is unstated.
+
+    Camera resolution may mean sensor effective pixels or video-output pixels.
+    The DSL spec explicitly requires this distinction to remain ambiguous unless
+    the source states the measurement basis.
+    """
+    attribute = constraint.attribute_key.casefold()
+    context = " ".join(
+        [constraint.attribute_definition, constraint.source_quote or "", constraint.unit or ""]
+        + [str(value) for value in constraint.qualifiers.values()]
+    ).casefold()
+    resolution_like = (
+        "resolution" in attribute
+        or "pixel" in attribute
+        or "分辨率" in context
+        or "像素" in context
+        or (constraint.unit or "").casefold() == "mp"
+    )
+    if not resolution_like or constraint.parse_status != ParseStatus.RESOLVED:
+        return
+    explicit_bases = (
+        "输出分辨率", "视频输出", "视频分辨率", "视频输出像素",
+        "传感器有效像素", "有效像素", "sensor effective", "image sensor", "video output",
+    )
+    if any(term in context for term in explicit_bases):
+        return
+    constraint.attribute_key = "resolution_unspecified"
+    constraint.parse_status = ParseStatus.AMBIGUOUS
+    constraint.validation_issues.append(
+        "Pixel/resolution measurement basis is unspecified (sensor effective pixels vs video output)."
+    )
+    issues.append(
+        f"Constraint {constraint.constraint_id}: resolution measurement basis unspecified; kept AMBIGUOUS."
+    )
 
 
 def _ground_constraint(

@@ -150,6 +150,46 @@ def test_grounded_conflict_is_preserved_and_ungrounded_conflict_is_discarded():
     assert [v.value for v in result.compilation.conflicts[0].values_with_source] == ["58万台", "63万台"]
 
 
+def test_megapixel_basis_remains_ambiguous_without_sensor_or_output_qualifier():
+    fragment = SourceFragment(
+        source_id="text-1",
+        source_type=RequirementSourceType.USER_TEXT,
+        locator="user_text:p1:rev_1:span_0_15",
+        text="摄像头分辨率至少500万像素",
+    )
+    requirement = Requirement(
+        requirement_id="r1",
+        project_id="p1",
+        product_name="摄像头",
+        source_refs=[fragment.locator],
+        constraints=[
+            RequirementConstraint(
+                constraint_id="c-resolution",
+                requirement_id="r1",
+                attribute_key="image_resolution",
+                attribute_definition="摄像头分辨率",
+                value_type=ValueType.NUMBER,
+                operator=ConstraintOperator.GTE,
+                value="5",
+                unit="MP",
+                importance=Importance.HARD,
+                origin=ConstraintOrigin.USER_EXPLICIT,
+                source_ref=fragment.locator,
+                source_quote="分辨率至少500万像素",
+            )
+        ],
+    )
+    result = compile_requirement_fragments(
+        project_id="p1",
+        fragments=[fragment],
+        model=FakeChatModel(RequirementCompilation(requirements=[requirement])),
+    )
+    constraint = result.compilation.requirements[0].constraints[0]
+    assert constraint.attribute_key == "resolution_unspecified"
+    assert constraint.parse_status.value == "AMBIGUOUS"
+    assert result.compilation.requirements[0].parse_status.value == "AMBIGUOUS"
+
+
 def test_incomplete_model_requirement_is_demoted_to_unstructured():
     payload = {
         "project_id": "p1",

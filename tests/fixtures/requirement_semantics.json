@@ -1,0 +1,67 @@
+[
+  {
+    "case_id": "hard_minimum_numeric",
+    "input": "采购工业摄像机5套，视频输出分辨率至少5MP。",
+    "gold": {
+      "expect": "constraint",
+      "attribute_aliases": ["resolution", "image_output_resolution", "video_output_resolution"],
+      "operator": "GTE",
+      "value": "5",
+      "unit": "MP",
+      "importance": "HARD",
+      "parse_status": "RESOLVED"
+    }
+  },
+  {
+    "case_id": "hard_maximum_numeric",
+    "input": "采购储能设备，输出功率不得超过100kW。",
+    "gold": {
+      "expect": "constraint",
+      "attribute_aliases": ["output_power", "output_power_max", "rated_output_power", "power_output"],
+      "operator": "LTE",
+      "value": "100",
+      "unit": "kW",
+      "importance": "HARD",
+      "parse_status": "RESOLVED"
+    }
+  },
+  {
+    "case_id": "preference_is_not_hard",
+    "input": "采购监控摄像机，优选支持ONVIF协议，但不是硬性要求。",
+    "gold": {
+      "expect": "constraint",
+      "attribute_aliases": ["supported_protocols", "onvif_support", "onvif_protocol_support", "protocol_support"],
+      "importance": "PREFERENCE",
+      "not_importance": "HARD",
+      "parse_status": "RESOLVED"
+    }
+  },
+  {
+    "case_id": "must_boolean_hard",
+    "input": "采购网络设备，必须支持PoE供电。",
+    "gold": {
+      "expect": "constraint",
+      "attribute_aliases": ["poe_support", "supports_poe", "power_over_ethernet_support"],
+      "importance": "HARD",
+      "parse_status": "RESOLVED"
+    }
+  },
+  {
+    "case_id": "ambiguous_measurement_basis",
+    "input": "采购摄像头，分辨率至少500万像素。",
+    "gold": {
+      "expect": "ambiguous",
+      "reason_contains": "AMBIGUOUS",
+      "must_not_have_resolved_hard_pass": true
+    }
+  },
+  {
+    "case_id": "unsupported_vague_quality_standard",
+    "input": "采购工业级设备，可靠性要好并符合相关国家标准。",
+    "gold": {
+      "expect": "unsupported",
+      "must_not_invent_numeric_constraint": true,
+      "must_not_have_resolved_hard_pass": true
+    }
+  }
+]

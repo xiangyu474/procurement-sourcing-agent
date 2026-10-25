@@ -97,16 +97,18 @@
 - `src/procurement_agent/api/app.py`：Container 内部 demand compile、PPTX 加载、历史 XLSX 导入 API；历史未提供
   不阻断编译，内部数据不发送到外部搜索。
 - `cloudflare/gateway/src/index.ts` + `migrations/0004_m1_demand_intake.sql`：文字建项目/追加 revision、
-  独立 PPTX/XLSX 上传到私有 R2、编译结构化需求、单独导入历史、hash 去重、analysis_version/demand_revision。
-  运行请求要求当前 demand revision 已有编译结果；无历史仍可创建 run。
-- `tests/`：DSL、原文引用、文本/PPT 冲突、PPT 表头/行定位、XLSX 模拟数据隔离、API intake、migration schema、
-  两组本地官方素材回归。新增 `scripts/live_demand_compile.py` 与 `scripts/live_official_demand_compile.py`。
+  独立 PPTX/XLSX 上传到私有 R2、编译结构化需求、单独导入历史、hash 去重、analysis_version/demand_revision；
+  公共项目 API 加 `DEMO_ACCESS_TOKEN` Bearer 门禁，内部容器回调仍使用独立 token。运行请求要求当前 demand revision
+  已有编译结果；无历史仍可创建 run。
+- `tests/`：DSL 合同、原文引用、语义标签 Fixture、文本/PPT 冲突、PPT 表头/行定位、XLSX 模拟数据隔离、
+  FastAPI intake、migration schema、两组本地官方素材回归。新增 `scripts/live_demand_compile.py`、
+  `scripts/live_official_demand_compile.py` 与 `scripts/eval_requirement_semantics.py`。
 
 ### 验收命令与结果
 
 ```bash
 uv run --python 3.11 python -m pytest -q
-# 32 passed
+# 34 passed
 npx tsc --noEmit
 # pass
 uv run --python 3.11 python -m compileall -q src scripts tests
@@ -117,6 +119,8 @@ uv run --python 3.11 python scripts/live_official_demand_compile.py --case 1
 # PASS：7 页、14 条采购行、数量/计划价格来源坐标；保留 58万台 vs 63万台未解决摘要冲突
 uv run --python 3.11 python scripts/live_official_demand_compile.py --case 2
 # PASS：7 页、14 条采购行、来源坐标；没有硬编码出假规格
+uv run --python 3.11 python scripts/eval_requirement_semantics.py
+# live semantics suite: 6/6 PASS（minimum/maximum、must/preference、pixel-basis ambiguity、vague standard）
 ```
 
 官方 XLSX 两组：各 **1000 条非空交易行、38 列、第 8 行表头**；检测到“模拟数据/供应商名称、合同、交易状态均为虚构”，
@@ -124,7 +128,14 @@ uv run --python 3.11 python scripts/live_official_demand_compile.py --case 2
 
 LangSmith trace：
 - M1 live 文本需求 DSL 编译：`01a16f55-4b22-77d5-82c0-ea22d29dfb63`（通过）。
-- 官方 A PPT 叙述补充编译：`01a16f4e-6abd-76ba-9286-0315c8fcaf48`（通过；无足够来源支撑的叙述保持 UNSTRUCTURED）。
+- 语义标签评估 6 个 live trace：`01a170fc-1b2a-72e8-b00f-d19afeac2ff3`, `01a170fa-f34a-768d-87df-99feee6fa9e8`,
+  `01a170fa-c18c-70d8-a739-75cdc61bb743`, `01a170fa-7d4b-734c-a10f-6c5d05b5220f`,
+  `01a170fa-431b-7469-a84c-81e76f0ed9ad`, `01a170fa-0f88-7432-9d40-707a7583f7c8`（6/6 PASS）。
+- 官方 A PPT narrative compile：`01a16f4e-6abd-76ba-9286-0315c8fcaf48`（通过；无足够来源支撑的叙述保持 UNSTRUCTURED）。
+
+### M1 语义标签用例
+
+`tests/fixtures/requirement_semantics.json` 有 6 个标注 gold 的最小案例：硬性 >=、硬性 <=、偏好不升格为 HARD、必须布尔条件、未说明测量口径的 500 万像素保持 AMBIGUOUS、模糊“工业级/相关国家标准”保持 UNSUPPORTED。Live evaluator 除检查 Pydantic 格式，还对 operator/value/unit/importance/parse status 和“不得生成确定硬约束”逐项比对。首轮发现测试把未指定像素口径的 5MP 错标为可直接 RESOLVED；按 DSL Spec 改成明确“视频输出分辨率至少 5MP”，并保留独立 AMBIGUOUS 用例；最终 `uv run --python 3.11 python scripts/eval_requirement_semantics.py` **6/6 PASS**。
 
 ### 未解决 / 边界
 

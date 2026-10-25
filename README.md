@@ -88,6 +88,7 @@ uv sync --python 3.11 --extra dev
 uv run --python 3.11 python -m pytest -q
 uv run --python 3.11 python scripts/live_demand_compile.py
 uv run --python 3.11 python scripts/live_official_demand_compile.py --case all
+uv run --python 3.11 python scripts/eval_requirement_semantics.py
 npx tsc --noEmit
 ```
 
