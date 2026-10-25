@@ -25,7 +25,6 @@ from procurement_agent.infra.llm import build_chat_model
 from procurement_agent.ingestion.compiler import compile_requirement_fragments
 from procurement_agent.ingestion.pptx import (
     extract_pptx_fragments,
-    select_pptx_demand_fragments,
     select_pptx_narrative_fragments,
 )
 from procurement_agent.ingestion.pptx_tables import extract_requirement_rows_from_pptx
@@ -140,7 +139,10 @@ async def compile_demand(payload: CompileDemandRequest, x_internal_token: str | 
             filename=pptx_source.filename,
             revision=pptx_source.revision,
         )
-        fragments.extend(select_pptx_demand_fragments(pptx_fragments))
+        # Keep all extracted fragments for conflict detection and provenance.
+        # Context selection happens inside the service/compiler; do not discard
+        # summary values such as PPT overview quantities here.
+        fragments.extend(pptx_fragments)
 
     if not fragments:
         raise HTTPException(status_code=422, detail="at least one non-empty text/PPTX demand source is required")

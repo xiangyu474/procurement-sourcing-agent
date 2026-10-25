@@ -61,6 +61,28 @@ def make_requirement_pptx() -> bytes:
     return output.getvalue()
 
 
+def make_pptx_with_overview_conflict() -> bytes:
+    presentation = Presentation()
+    detail = presentation.slides.add_slide(presentation.slide_layouts[6])
+    table = detail.shapes.add_table(2, 3, Inches(1), Inches(1), Inches(6), Inches(2)).table
+    table.cell(0, 0).text = "产品名称"
+    table.cell(0, 1).text = "预估/框架数量（套）"
+    table.cell(0, 2).text = "预估采购单价（元/套）"
+    table.cell(1, 0).text = "通用摄像头"
+    table.cell(1, 1).text = "100"
+    table.cell(1, 2).text = "125"
+    for value, label in (("58万台", "采购数量"), ("63万台", "本次短名单采购计划")):
+        slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+        summary = slide.shapes.add_table(2, 2, Inches(1), Inches(1), Inches(4), Inches(2)).table
+        summary.cell(0, 0).text = value
+        summary.cell(0, 1).text = ""
+        summary.cell(1, 0).text = label
+        summary.cell(1, 1).text = ""
+    output = BytesIO()
+    presentation.save(output)
+    return output.getvalue()
+
+
 def test_internal_text_compilation_returns_requirement_and_not_provided_history(monkeypatch):
     api = importlib.import_module("procurement_agent.api.app")
     fragment = extract_text_fragments("p1", 1, "电源模块额定功率至少7.5kW", source_id="text-1")[0]
@@ -144,6 +166,39 @@ def test_internal_pptx_table_intake_does_not_require_history_or_llm(monkeypatch)
     assert requirement["quantity"] == "100"
     assert requirement["planned_unit_price"]["kind"] == "PLANNED_PRICE"
     assert requirement["planned_unit_price"]["tax_basis"] == "UNKNOWN"
+
+
+def test_internal_pptx_api_preserves_overview_conflict_sources(monkeypatch):
+    api = importlib.import_module("procurement_agent.api.app")
+    payload = make_pptx_with_overview_conflict()
+
+    async def fetch(_payload, _source_id):
+        return payload
+
+    monkeypatch.setattr(api, "_fetch_input", fetch)
+    # The PPT has a structured SKU table and no narrative technical constraint;
+    # table parsing and summary conflict detection are deterministic.
+    monkeypatch.setattr(api, "build_chat_model", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("model should not run")))
+    client = TestClient(api.app)
+    response = client.post(
+        "/internal/compile-demand",
+        headers={"x-internal-token": "internal"},
+        json={
+            "project_id": "p3",
+            "analysis_version": 1,
+            "gateway_url": "https://gateway.invalid",
+            "token": "internal",
+            "pptx_sources": [{"source_id": "ppt-conflict", "filename": "conflict.pptx", "revision": 1}],
+        },
+    )
+
+    assert response.status_code == 200
+    compilation = response.json()
+    conflicts = compilation["conflicts"]
+    assert len(compilation["requirements"]) == 1
+    assert len(conflicts) == 1
+    assert {item["value"] for item in conflicts[0]["values_with_source"]} == {"58万台", "63万台"}
+    assert all(item["source_ref"] and item["source_quote"] for item in conflicts[0]["values_with_source"])
 
 
 def test_internal_history_import_keeps_simulated_supplier_namespace(monkeypatch):
