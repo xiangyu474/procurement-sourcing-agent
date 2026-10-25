@@ -31,6 +31,7 @@ logs/
 tmp/
 
 # Local credential material created during setup (never committed)
+.demo_access_token
 .cf_api_token_id
 .cf_api_token_secret
 .cf_secrets.json

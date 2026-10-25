@@ -143,7 +143,8 @@ async function appendEvent(env: Env, runId: string, stage: string, detail: strin
 
 export class SourcingContainer extends Container {
 	defaultPort = 8000;
-	sleepAfter = "10m";
+	// Keep idle Python instances short-lived; active HTTP requests keep them awake.
+	sleepAfter = "2m";
 	// Probe the application's own health route so readiness reflects the
 	// Python process, not just an open TCP port.
 	pingEndpoint = "localhost/health";
@@ -437,7 +438,7 @@ export default {
 				return json({ error: "at least one demand source (text or PPTX) is required" }, 422);
 			}
 
-			const container = getContainer(env.SOURCING_CONTAINER, `compile:${projectId}:${project.analysis_version}`);
+			const container = getContainer(env.SOURCING_CONTAINER, "m1-intake");
 			const response = await container.fetch(
 				new Request("http://container/internal/compile-demand", {
 					method: "POST",
@@ -509,9 +510,19 @@ export default {
 			)
 				.bind(projectId, source.sha256)
 				.first<Record<string, unknown>>();
-			if (existing) return json({ ...existing, duplicate_import: true });
+			if (existing) {
+				return json({
+					dataset_id: existing.id,
+					row_count: existing.row_count,
+					column_count: existing.column_count,
+					header_row: existing.header_row,
+					is_synthetic: Boolean(existing.is_synthetic),
+					analysis_version: existing.analysis_version,
+					duplicate_import: true,
+				});
+			}
 
-			const container = getContainer(env.SOURCING_CONTAINER, `import:${projectId}:${source.sha256}`);
+			const container = getContainer(env.SOURCING_CONTAINER, "m1-intake");
 			const response = await container.fetch(
 				new Request("http://container/internal/import-history", {
 					method: "POST",
