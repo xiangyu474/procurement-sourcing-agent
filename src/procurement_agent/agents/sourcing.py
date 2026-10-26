@@ -117,6 +117,14 @@ The `stage` field exists only at the top level of your answer. Do not put a `sta
 """
 
 
+def _structured_output_error(exc: Exception) -> str:
+    """Tell the researcher to correct its structured answer instead of writing prose."""
+    return (
+        "The ResearchFindings tool call was rejected. Call the ResearchFindings tool again with the "
+        "corrected fields. Do not answer in prose. Validation error: " + str(exc)[:800]
+    )
+
+
 def create_sourcing_agent(model: BaseChatModel) -> Any:
     """Create the original M0 smoke-test agent (not used for M2 research)."""
     return create_deep_agent(
@@ -159,7 +167,7 @@ def create_sourcing_supervisor(
                 "tools": researcher_tools,
                 "model": model,
                 "system_prompt": RESEARCHER_SYSTEM_PROMPT,
-                "response_format": ToolStrategy(ResearchFindings, handle_errors=True),
+                "response_format": ToolStrategy(ResearchFindings, handle_errors=_structured_output_error),
             }
         ],
         system_prompt=SUPERVISOR_SYSTEM_PROMPT,

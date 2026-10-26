@@ -344,7 +344,9 @@ class ClaimProposal(BaseModel):
 
 
 class CandidateClaim(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    """Model-facing claim. Unknown fields are ignored so one stray key does not void the answer."""
+
+    model_config = ConfigDict(extra="ignore")
 
     supplier_name: str = Field(min_length=1, max_length=300, description="Exact supplier/brand name as shown in the cited source.")
     supplier_name_quote: str = Field(min_length=4, max_length=500, description="Verbatim substring of supplier_evidence_id content that contains supplier_name.")
@@ -384,7 +386,9 @@ class CandidateClaim(BaseModel):
 
 
 class ResearchFindings(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    """Model-facing findings. Unknown fields are ignored so one stray key does not void the answer."""
+
+    model_config = ConfigDict(extra="ignore")
 
     task_id: str = Field(description="Copy the exact question_id of the delegated SourcingPlan task.")
     research_question: str = Field(description="Copy the exact approved question text from the plan.")

@@ -23,8 +23,8 @@ from pptx.util import Inches
 DEFAULT_BASE_URL = "https://procurement-sourcing-gateway.xiangyu474.workers.dev"
 PRODUCT_NAME = "5MP 工业网络摄像机"
 BUDGET = {
-    "max_search_calls": 4,
-    "max_fetches": 4,
+    "max_search_calls": 8,
+    "max_fetches": 8,
     "max_tasks": 2,
     "max_rounds": 2,
     "max_model_calls": 20,
