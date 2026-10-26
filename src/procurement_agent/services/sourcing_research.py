@@ -589,13 +589,13 @@ class ResearchLedger:
                 question=question,
                 channel=channel,
                 expected_evidence=expected_evidence[:8] or ["supplier or product evidence"],
-                rationale=rationale,
+                rationale=rationale[:600],
             )
             revised = self.plan.model_copy(
                 update={
                     "plan_id": stable_id("plan", self.project_id, self.run_id, str(next_revision)),
                     "plan_revision": next_revision,
-                    "revision_reason": rationale,
+                    "revision_reason": rationale[:1500],
                     "research_questions": [*self.plan.research_questions, new_question],
                     "proposed_channels": list(dict.fromkeys([*self.plan.proposed_channels, channel])),
                 }
@@ -889,10 +889,10 @@ def build_research_tools(ledger: ResearchLedger) -> tuple[list[Any], list[Any]]:
     @tool
     def revise_sourcing_plan(
         requirement_id: Annotated[str, Field(description="Copy an existing prioritized Requirement ID from the current SourcingPlan exactly.")],
-        question: Annotated[str, Field(description="A distinct, evidence-gap-driven follow-up question. Do not repeat an existing question.")],
+        question: Annotated[str, Field(description="A distinct, evidence-gap-driven follow-up question. Do not repeat an existing question. Keep it under 500 characters.")],
         channel: Annotated[ChannelHint, Field(description="Choose one supported ChannelHint enum value appropriate to the evidence gap.")],
-        expected_evidence: Annotated[list[str], Field(description="Evidence types that would resolve this specific gap.")],
-        rationale: Annotated[str, Field(description="Why the first findings make this follow-up useful; recorded as the revision reason.")],
+        expected_evidence: Annotated[list[str], Field(description="At most 8 short phrases naming the evidence types that would resolve this specific gap.")],
+        rationale: Annotated[str, Field(description="Why the first findings make this follow-up useful; recorded as the revision reason. Keep it under 600 characters.")],
     ) -> dict[str, str]:
         """Record a non-duplicate follow-up question and its reason in the plan."""
         question_id = ledger.revise_plan(

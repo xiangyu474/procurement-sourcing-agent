@@ -54,7 +54,9 @@ and `requirement_id` from the SourcingPlan into the task description. Never inve
 a task ID or change a channel. Example (schema illustration only):
 `task_id=q_0123456789abcdef01234567; requirement_id=req_abc; channel=MANUFACTURER_DIRECT; question=Find official product pages for the requested camera model.`
 If the result leaves a new gap, call revise_sourcing_plan first; then delegate the
-returned new question_id exactly.
+returned new question_id exactly. Keep the revision question under 500 characters,
+the revision rationale under 600 characters, and the expected evidence list to at
+most 8 short phrases.
 """
 
 RESEARCHER_SYSTEM_PROMPT = """You are the supplier_researcher for one specific bounded task.
