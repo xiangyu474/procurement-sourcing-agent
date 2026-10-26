@@ -110,6 +110,8 @@ schema; each nested ClaimProposal has `attribute`, `value`, `unit`,
 One-shot Claim extraction example (fictional; never reuse names/values):
 Source text: `Example Imaging lists Model EX-123. Model EX-123: 5 MP image sensor.`
 Return supplier_name_quote `Example Imaging`, product_name_quote `Model EX-123: 5 MP image sensor.`, model `EX-123`, model_quote `EX-123`, and one resolution Claim with short exact source_quote `5 MP image sensor`. Keep rationale and coverage_notes to one concise sentence. If no code is shown, keep model=null and explain the gap.
+
+The `stage` field exists only at the top level of your answer. Do not put a `stage` field inside a candidate_claim. Use only the fields the schema lists for each object.
 """
 
 
@@ -155,7 +157,7 @@ def create_sourcing_supervisor(
                 "tools": researcher_tools,
                 "model": model,
                 "system_prompt": RESEARCHER_SYSTEM_PROMPT,
-                "response_format": ToolStrategy(ResearchFindings, handle_errors=False),
+                "response_format": ToolStrategy(ResearchFindings, handle_errors=True),
             }
         ],
         system_prompt=SUPERVISOR_SYSTEM_PROMPT,
