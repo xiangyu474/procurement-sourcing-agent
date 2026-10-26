@@ -338,7 +338,7 @@ class CandidateClaim(BaseModel):
     product_evidence_id: str
     product_claims: list[ClaimProposal] = Field(default_factory=list, max_length=2)
     supplier_claims: list[ClaimProposal] = Field(default_factory=list, max_length=1)
-    rationale: str = Field(min_length=8, max_length=300)
+    rationale: str = Field(min_length=8, max_length=800, description="Keep concise, ideally under 200 characters; state only what the cited sources establish.")
     unresolved_gaps: list[str] = Field(default_factory=list, max_length=6)
 
     @model_validator(mode="after")
@@ -371,7 +371,7 @@ class ResearchFindings(BaseModel):
     unresolved_gaps: list[str] = Field(default_factory=list, max_length=8)
     search_cost: int = Field(default=0, ge=0)
     fetch_cost: int = Field(default=0, ge=0)
-    coverage_notes: str = Field(max_length=300)
+    coverage_notes: str = Field(max_length=1200, description="Keep concise, ideally under 200 characters; mention evidence coverage and key gaps only.")
     stage: CandidateStage = CandidateStage.DISCOVERED_LONG_LIST
 
 
