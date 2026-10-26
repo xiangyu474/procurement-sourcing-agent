@@ -26,6 +26,7 @@ from procurement_agent.domain.sourcing import (
     ResearchFindings,
     ResearchQuestion,
     ResearchQuestionProposal,
+    ResearchRunStatus,
     ReuseDecisionProposal,
     SourcingGoal,
     SourcingPlan,
@@ -156,13 +157,14 @@ def make_proposal(question_count: int = 1) -> SourcingPlanProposal:
 
 
 class _ResearcherHarness:
-    def __init__(self, researcher_tools, supervisor_tools, question_count: int, source_quote: str, follow_up: bool = False, model_quote: str = "AX-500"):
+    def __init__(self, researcher_tools, supervisor_tools, question_count: int, source_quote: str, follow_up: bool = False, model_quote: str = "AX-500", prose_answer: bool = False):
         self.researcher_tools = {item.name: item for item in researcher_tools}
         self.supervisor_tools = {item.name: item for item in supervisor_tools}
         self.question_count = question_count
         self.source_quote = source_quote
         self.follow_up = follow_up
         self.model_quote = model_quote
+        self.prose_answer = prose_answer
 
     async def ainvoke(self, _payload, config=None):
         plan = self.supervisor_tools["get_sourcing_plan"].invoke({})
@@ -229,6 +231,9 @@ class _ResearcherHarness:
                 fetch_cost=1,
                 coverage_notes="One fetched source supports a product lead; it does not establish qualification.",
             )
+            if self.prose_answer:
+                payload = "Here are the verified findings.\n\n```json\n" + finding.model_dump_json() + "\n```\n"
+                return ToolMessage(content=payload, tool_call_id=f"tool-{task_id}")
             return ToolMessage(content=finding.model_dump_json(), tool_call_id=f"tool-{task_id}")
 
         messages = list(await asyncio.gather(*(run_one(question) for question in questions)))
@@ -793,3 +798,41 @@ def test_model_label_without_verbatim_source_quote_is_removed(monkeypatch):
     assert bundle.products[0].model is None
     assert bundle.claims == []
     assert any("model label" in warning.lower() for warning in bundle.warnings)
+
+
+def test_researcher_answer_in_prose_with_a_json_block_is_still_read(monkeypatch):
+    import procurement_agent.services.sourcing_research as service
+
+    page_url = "https://acme.example/products/ax-500"
+    search_provider = FakeSearchProvider([
+        SearchResult(url=page_url, title="AX-500 product", snippet="search hint", rank=1, provider="fake")
+    ])
+    content_provider = FakeContentProvider({
+        page_url: FetchedPage(
+            url=page_url,
+            title="AX-500 product",
+            content="Acme Imaging lists model AX-500. The AX-500 sensor has 5 MP resolution.",
+        )
+    })
+    monkeypatch.setattr(
+        service,
+        "create_sourcing_supervisor",
+        lambda _model, researcher_tools, supervisor_tools: _ResearcherHarness(
+            researcher_tools, supervisor_tools, 1,
+            "The AX-500 sensor has 5 MP resolution.",
+            prose_answer=True,
+        ),
+    )
+    bundle = asyncio.run(run_sourcing_research(
+        model=_FixedStructuredModel(make_proposal(1)),
+        compilation=make_compilation(),
+        project_id="p-1",
+        run_id="run-prose-answer",
+        settings=load_settings(),
+        search_provider=search_provider,
+        content_provider=content_provider,
+    ))
+
+    assert bundle.status == ResearchRunStatus.COMPLETED
+    assert len(bundle.candidates) == 1
+    assert bundle.products[0].model == "AX-500"

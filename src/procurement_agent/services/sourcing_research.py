@@ -1071,6 +1071,30 @@ def _validated_sourcing_plan_proposal(response: object) -> tuple[SourcingPlanPro
         raise ResearchInputError(f"SourcingPlan model output did not satisfy its schema ({type(exc).__name__})") from exc
 
 
+def _structured_payload(content: str) -> dict[str, Any] | None:
+    """Return the JSON object in a message, whether it stands alone or sits in a code block.
+
+    The model sometimes answers with prose and a JSON block instead of calling the
+    structured output tool. The findings are still there, so they are read.
+    """
+    text = content.strip()
+    if text.startswith("{"):
+        try:
+            value = json.loads(text)
+        except json.JSONDecodeError:
+            value = None
+        if isinstance(value, dict):
+            return value
+    for block in re.findall(r"```(?:json)?\s*(.*?)```", text, re.DOTALL):
+        try:
+            value = json.loads(block.strip())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return value
+    return None
+
+
 def _parse_findings(messages: list[Any], ledger: ResearchLedger) -> list[ResearchFindings]:
     parsed: list[ResearchFindings] = []
     for message in messages:
@@ -1081,8 +1105,11 @@ def _parse_findings(messages: list[Any], ledger: ResearchLedger) -> list[Researc
             content = "".join(item.get("text", "") for item in content if isinstance(item, dict))
         if not isinstance(content, str):
             continue
+        value = _structured_payload(content)
+        if value is None:
+            ledger.warnings.append("Discarded a researcher answer that carried no JSON object.")
+            continue
         try:
-            value = json.loads(content)
             finding = ResearchFindings.model_validate(value)
         except Exception as exc:
             ledger.warnings.append(f"Discarded invalid structured ResearchFindings ({type(exc).__name__}).")
