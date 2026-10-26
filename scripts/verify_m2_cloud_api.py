@@ -32,7 +32,11 @@ BUDGET = {
 
 
 def _request(client: httpx.Client, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-    response = client.request(method, path, **kwargs)
+    try:
+        response = client.request(method, path, **kwargs)
+    except httpx.TransportError:
+        # The edge closes idle pooled connections; one fresh attempt is enough.
+        response = client.request(method, path, **kwargs)
     if not response.is_success:
         raise RuntimeError(f"M2 API {method} {path} returned HTTP {response.status_code}")
     if response.headers.get("content-type", "").startswith("application/json"):
@@ -212,7 +216,12 @@ def main() -> None:
     base_url = os.getenv("PROCUREMENT_AGENT_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
     headers = {"authorization": f"Bearer {token}"}
 
-    with httpx.Client(base_url=base_url, headers=headers, timeout=httpx.Timeout(300)) as client:
+    with httpx.Client(
+        base_url=base_url,
+        headers=headers,
+        timeout=httpx.Timeout(300),
+        limits=httpx.Limits(max_keepalive_connections=0, keepalive_expiry=0),
+    ) as client:
         # 1. Cold-start public research and exact evidence/source-snapshot checks.
         cold_project = _create_compiled_project(client, "M2 cold-start acceptance")
         cold = _run_project(client, cold_project, "cold")
