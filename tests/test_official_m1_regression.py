@@ -3,23 +3,18 @@
 The files remain outside this repository and are never uploaded by these
 tests. If the user has not placed the local source package beside the repo,
 pytest skips these checks; CI uses synthetic fixtures instead.
+
+These checks cover the deterministic layer only: that the extractor reads the
+whole document without dropping a row. What the model derives from that
+content is asserted by ``scripts/live_official_demand_compile.py``.
 """
 
 from pathlib import Path
 
 import pytest
 
-from procurement_agent.ingestion.pptx import (
-    extract_pptx_fragments,
-    select_pptx_demand_fragments,
-    select_pptx_narrative_fragments,
-)
-from procurement_agent.ingestion.pptx_tables import (
-    extract_requirement_rows_from_pptx,
-    extract_summary_quantity_conflicts,
-)
+from procurement_agent.ingestion.pptx import extract_pptx_fragments
 from procurement_agent.ingestion.xlsx import import_historical_xlsx
-
 
 SOURCE_ROOT = (
     Path(__file__).resolve().parents[2]
@@ -62,30 +57,22 @@ def test_official_case_pptx_and_xlsx(case, pptx_name, xlsx_name, expected_start,
         source_id=f"official-pptx-{case}",
         filename=pptx_name,
     )
-    slide_six = [f for f in fragments if ":slide=6:" in f.locator]
-    demand_fragments = select_pptx_demand_fragments(fragments)
-    narrative_fragments = select_pptx_narrative_fragments(fragments)
-    requirements = extract_requirement_rows_from_pptx(
-        fragments, project_id=f"official-case-{case}"
-    )
-    assert len(fragments) > 0
-    assert any(":table=1:row=1:cell=1" in f.locator for f in slide_six)
-    assert any(":table=1:row=15:cell=7" in f.locator for f in slide_six)
-    assert sum(1 for f in demand_fragments if ":slide=6:table=1:row=" in f.locator and ":cell=2" in f.locator and ":row=1:" not in f.locator) == 14
-    assert len(requirements) == 14
-    assert not any("市场预测" in f.text or "客户痛点" in f.text for f in narrative_fragments)
-    assert all(requirement.quantity is not None for requirement in requirements)
-    assert all(requirement.planned_unit_price is not None for requirement in requirements)
-    assert all(requirement.planned_unit_price.tax_basis.value == "UNKNOWN" for requirement in requirements)
+    assert fragments
+    assert any(":slide=1:" in fragment.locator for fragment in fragments)
+    assert any(":slide=6:table=1:row=1" in fragment.locator for fragment in fragments)
+    assert any(":slide=6:table=1:row=15" in fragment.locator for fragment in fragments)
 
-    if case == "1":
-        summary_conflicts = extract_summary_quantity_conflicts(fragments, project_id="official-case-1")
-        assert any(
-            conflict.field == "summary_procurement_quantity_claims"
-            and {value.value for value in conflict.values_with_source} == {"58万台", "63万台"}
-            and all(value.source_ref and value.source_quote for value in conflict.values_with_source)
-            for conflict in summary_conflicts
-        )
+    procurement_rows = [
+        fragment
+        for fragment in fragments
+        if ":slide=6:table=1:row=" in fragment.locator
+        and not fragment.locator.endswith(":row=1")
+    ]
+    assert len(procurement_rows) == 14
+    assert all("|" in fragment.text for fragment in procurement_rows)
+    assert all(fragment.text.split(" | ")[0].strip() for fragment in procurement_rows)
+    # Nothing is filtered out of the document before the model reads it.
+    assert any("市场预测" in fragment.text for fragment in fragments)
 
     result = import_historical_xlsx(
         xlsx_path.read_bytes(),

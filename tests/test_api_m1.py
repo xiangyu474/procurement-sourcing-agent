@@ -10,26 +10,35 @@ from pptx import Presentation
 from pptx.util import Inches
 
 from procurement_agent.domain.requirements import (
-    ConstraintOrigin,
-    ConstraintOperator,
-    Importance,
-    Requirement,
     RequirementCompilation,
-    RequirementConstraint,
-    ValueType,
 )
 from procurement_agent.ingestion.text import extract_text_fragments
 
 
+class _ToolCallChunk:
+    def __init__(self, arguments):
+        self.tool_calls = [{"name": "RequirementCompilation", "args": arguments}]
+
+    def __add__(self, _other):
+        return self
+
+
 class _FixedModel:
+    """Streams one tool call, the way the real compiler consumes the endpoint."""
+
     def __init__(self, payload):
         self.payload = payload
 
-    def with_structured_output(self, _schema, **_kwargs):
+    def bind_tools(self, tools, tool_choice=None):
         return self
 
-    def invoke(self, _messages):
-        return self.payload
+    def stream(self, _messages, config=None):
+        payload = (
+            self.payload.model_dump(mode="json", exclude_none=True)
+            if isinstance(self.payload, RequirementCompilation)
+            else self.payload
+        )
+        yield _ToolCallChunk(payload)
 
 
 def make_xlsx() -> bytes:
@@ -135,15 +144,37 @@ def test_internal_text_compilation_returns_requirement_and_not_provided_history(
     assert body["history_availability"] == "NOT_PROVIDED"
 
 
-def test_internal_pptx_table_intake_does_not_require_history_or_llm(monkeypatch):
+def test_internal_pptx_intake_returns_what_the_model_read(monkeypatch):
     api = importlib.import_module("procurement_agent.api.app")
     payload = make_requirement_pptx()
 
     async def fetch(_payload, _source_id):
         return payload
 
+    compiled = RequirementCompilation.model_validate(
+        {
+            "requirements": [
+                {
+                    "requirement_id": "r1",
+                    "project_id": "p2",
+                    "product_name": "通用摄像头",
+                    "quantity": "100",
+                    "quantity_unit": "套",
+                    "source_refs": ["pptx:project=p2:source=ppt-1:file=req.pptx:slide=1:table=1:row=2"],
+                    "planned_unit_price": {
+                        "kind": "PLANNED_PRICE",
+                        "value": "125",
+                        "currency": "CNY",
+                        "tax_basis": "UNKNOWN",
+                        "source_ref": "pptx:project=p2:source=ppt-1:file=req.pptx:slide=1:table=1:row=2",
+                        "source_quote": "125",
+                    },
+                }
+            ]
+        }
+    )
     monkeypatch.setattr(api, "_fetch_input", fetch)
-    monkeypatch.setattr(api, "build_chat_model", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no narrative constraints to compile")))
+    monkeypatch.setattr(api, "build_chat_model", lambda settings, **kwargs: _FixedModel(compiled))
     client = TestClient(api.app)
     response = client.post(
         "/internal/compile-demand",
@@ -168,17 +199,47 @@ def test_internal_pptx_table_intake_does_not_require_history_or_llm(monkeypatch)
     assert requirement["planned_unit_price"]["tax_basis"] == "UNKNOWN"
 
 
-def test_internal_pptx_api_preserves_overview_conflict_sources(monkeypatch):
+def test_internal_pptx_api_returns_the_conflict_the_model_reported(monkeypatch):
     api = importlib.import_module("procurement_agent.api.app")
     payload = make_pptx_with_overview_conflict()
 
     async def fetch(_payload, _source_id):
         return payload
 
+    compiled = RequirementCompilation.model_validate(
+        {
+            "requirements": [
+                {
+                    "requirement_id": "r1",
+                    "project_id": "p3",
+                    "product_name": "通用摄像头",
+                    "quantity": "100",
+                    "source_refs": ["pptx:project=p3:source=ppt-conflict:file=conflict.pptx:slide=1:table=1:row=2"],
+                }
+            ],
+            "conflicts": [
+                {
+                    "conflict_id": "c-summary-quantity",
+                    "project_id": "p3",
+                    "field": "summary_procurement_quantity_claims",
+                    "values_with_source": [
+                        {
+                            "value": "58万台",
+                            "source_ref": "pptx:project=p3:source=ppt-conflict:file=conflict.pptx:slide=2:table=1:row=1",
+                            "source_quote": "58万台",
+                        },
+                        {
+                            "value": "63万台",
+                            "source_ref": "pptx:project=p3:source=ppt-conflict:file=conflict.pptx:slide=3:table=1:row=1",
+                            "source_quote": "63万台",
+                        },
+                    ],
+                }
+            ],
+        }
+    )
     monkeypatch.setattr(api, "_fetch_input", fetch)
-    # The PPT has a structured SKU table and no narrative technical constraint;
-    # table parsing and summary conflict detection are deterministic.
-    monkeypatch.setattr(api, "build_chat_model", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("model should not run")))
+    monkeypatch.setattr(api, "build_chat_model", lambda settings, **kwargs: _FixedModel(compiled))
     client = TestClient(api.app)
     response = client.post(
         "/internal/compile-demand",

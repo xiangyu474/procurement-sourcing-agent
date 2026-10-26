@@ -17,18 +17,13 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from procurement_agent.domain.requirements import (
-    RequirementSourceType,
     SourceFragment,
 )
 from procurement_agent.domain.sourcing import ResearchBudget
 from procurement_agent.infra import load_settings
 from procurement_agent.infra.llm import build_chat_model
 from procurement_agent.infra.search import TavilyContentProvider, TavilySearchProvider
-from procurement_agent.ingestion.pptx import (
-    extract_pptx_fragments,
-    select_pptx_narrative_fragments,
-)
-from procurement_agent.ingestion.pptx_tables import extract_requirement_rows_from_pptx
+from procurement_agent.ingestion.pptx import extract_pptx_fragments
 from procurement_agent.ingestion.text import extract_text_fragments
 from procurement_agent.ingestion.xlsx import import_historical_xlsx
 from procurement_agent.services.demand_intake import build_demand_intake
@@ -169,22 +164,7 @@ async def compile_demand(payload: CompileDemandRequest, x_internal_token: str | 
     if not fragments:
         raise HTTPException(status_code=422, detail="at least one non-empty text/PPTX demand source is required")
 
-    groups: dict[str, list[SourceFragment]] = {}
-    for fragment in fragments:
-        groups.setdefault(fragment.source_id, []).append(fragment)
-    needs_compiler = any(
-        fragment.source_type == RequirementSourceType.USER_TEXT for fragment in fragments
-    )
-    for source_fragments in groups.values():
-        if source_fragments[0].source_type != RequirementSourceType.INTERNAL_PPTX:
-            continue
-        has_structured_lines = bool(
-            extract_requirement_rows_from_pptx(source_fragments, project_id=payload.project_id)
-        )
-        if not has_structured_lines or select_pptx_narrative_fragments(source_fragments):
-            needs_compiler = True
-            break
-    model = build_chat_model(load_settings(), timeout=180) if needs_compiler else None
+    model = build_chat_model(load_settings(), timeout=600)
     result = await run_in_threadpool(
         build_demand_intake,
         project_id=payload.project_id,

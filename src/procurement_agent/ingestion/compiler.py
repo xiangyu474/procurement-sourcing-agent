@@ -1,9 +1,9 @@
-"""LLM-backed demand-to-DSL compiler with deterministic provenance checks.
+"""LLM-backed demand-to-DSL compiler.
 
-The LLM may interpret natural language, but it cannot invent source
-coordinates. Every resolved constraint must cite an exact extracted fragment
-and quote a substring of that fragment. Unsupported or ambiguous clauses stay
-visible but do not become executable constraints.
+The model receives the complete verbatim content of one source file and
+produces the structured Requirement DSL. The compiler does not re-check the
+model's reading against the source: it normalizes the payload shape and
+records what it had to adjust.
 """
 
 from __future__ import annotations
@@ -11,63 +11,70 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from dataclasses import dataclass
+from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.utils.function_calling import convert_to_openai_function
 
 from procurement_agent.domain.requirements import (
     ConflictValue,
-    ConstraintOrigin,
     DataConflict,
-    Importance,
-    ParseStatus,
     PlannedAmount,
     Requirement,
     RequirementCompilation,
     RequirementConstraint,
-    RequirementSourceType,
     SourceFragment,
     UnstructuredRequirement,
 )
 
-SYSTEM_PROMPT = """You compile purchasing demand into a small, restricted Requirement DSL.
+SYSTEM_PROMPT = """You extract procurement demand from a source document into a restricted Requirement DSL.
+
+The input is the COMPLETE verbatim content of one source file, as an ordered list of fragments.
+Each fragment has a `locator` (its exact address inside the file) and `text` (the original wording).
+A table appears as one fragment per row, with its cells joined by " | " in column order.
+The first row of a table is its header row. Paragraphs appear as their own fragments.
+Fragments are in document order, so a table's header row is immediately followed by its data rows.
+
+Extract:
+- Every purchase line item. One line item is one row of a purchase table, or one explicitly described purchase object. Do not merge rows. Do not drop rows.
+- For each line item: product_name, quantity, quantity_unit, planned_unit_price (kind PLANNED_PRICE), planned_total_budget (kind PLANNED_BUDGET), product_category, source_product_code, and the source_refs of the fragments you read it from.
+- Every technical constraint of each line item, nested inside that line item. Give each one attribute_key, attribute_definition, value_type, operator, value, unit, importance, source_ref and source_quote.
+- Disagreements inside the document itself, such as a project total that contradicts the sum of its own line items, as conflicts. Quote each value you are comparing.
+- Statements that are meaningful but not convertible, as unstructured_requirements.
 
 Rules:
-- Extract only requirements explicitly present in the supplied text fragments.
-- Every structured Requirement MUST include a non-empty product_name copied verbatim or closely normalized from its cited source. If a procurement object cannot be identified, return an UnstructuredRequirement instead of an incomplete Requirement.
-- Put procurement quantity and quantity_unit in the Requirement top-level fields; do not duplicate quantity as a technical constraint.
-- Never infer a hard requirement, quantity, target market, delivery date, tax basis,
-  product model, or threshold that the source does not state.
-- Keep vague statements such as 'industrial grade', 'good reputation', or 'meet
-  relevant standards' as unstructured requirements with status UNSUPPORTED or
-  AMBIGUOUS; do not invent numeric limits.
-- Use HARD only for explicit mandatory language (must, at least, no more than,
-  shall, required). 'Prefer', 'ideally', and '最好' are PREFERENCE.
-- Set parse_status=AMBIGUOUS if the measured quantity or comparison direction is
-  unclear; set UNSUPPORTED if the statement cannot safely fit this DSL.
-- Every Requirement and every constraint must cite the exact source locator and
-  an exact verbatim source_quote from one supplied fragment. Do not make up page,
-  slide, table, row, cell, or character offsets.
-- Requirement source refs must use the supplied locators. Preserve the wording,
-  quantities, units, comparison operators, and qualifiers faithfully.
-- The DSL permits only NUMBER, BOOLEAN, STRING, SET, RANGE and the listed
-  operators. Do not emit executable expressions or formulas.
-- If an existing requirement/product list is included in the input, attach narrative constraints only to an exact matching product; do not create a new SKU from a project-wide summary quantity.
-- Return requirements in the source language. Do not resolve conflicts between
-  separate source fragments. If values refer to the same item, measure and scope,
-  preserve all exact source quotes/locators as a DataConflict.
-- When a PPTX has a detailed procurement table and overview totals, extract every
-  table line item and report overview-vs-overview disagreements as conflicts;
-  never silently replace detailed per-item entries with a summary total.
+- Copy values from the source. Never infer a quantity, price, model, threshold, tax basis, date, or unit the source does not state.
+- Quantity, unit, prices, budget, tax rate and category belong in the requirement's own fields. They are never constraints. A constraint is a technical property of the product, not a commercial field of the purchase row.
+- When a table cell is empty because the cell above is merged into it, carry the value down from the nearest non-empty cell above in the same column.
+- Every requirement cites the `locator` of the fragment it came from. Every constraint and every amount cites its own `source_ref` and a short exact `source_quote` taken from that fragment's text.
+- A product family or series name is not an exact model. Do not emit a model code the source does not print.
+- "工业级", "口碑好", "符合相关标准" are not constraints. Keep them as unstructured requirements.
+- A technical requirement that the document states for the whole project applies to every product of that project. Attach it as a constraint to each product it applies to. Attach it only to the products it actually covers, not to all of them.
+- A statement about payment terms, naming policy, delivery process, market size, or competitor pricing is not a product constraint. Keep those as unstructured requirements.
+- Use importance HARD only for mandatory wording such as 必须, 至少, 不低于, 不得超过, 应达到, required, must. Use PREFERENCE for 最好, 优先, preferably. Use UNKNOWN when the wording is neutral.
+- Set parse_status AMBIGUOUS when a value or a comparison direction is unclear, and say what is unclear in open_questions. Set UNSUPPORTED when the statement does not fit the DSL.
+- A market size, market forecast, competitor description, customer pain point, or business model statement is never a purchase requirement. Leave it out.
+- Do not create a line item out of a project-wide total. Totals belong in conflicts.
+- Leave `issues` and `open_questions` empty unless something is genuinely unclear. Do not narrate what you did.
+- Return only the fields the schema defines. Do not add extra keys.
+
+One-shot example with illustrative values:
+Fragment: {"locator": "doc:slide=6:table=1:row=2", "text": "5MP 工业网络摄像机 | 10 | 1250.00"}
+Requirement: {"requirement_id": "r1", "product_name": "5MP 工业网络摄像机", "quantity": "10", "quantity_unit": "", "source_refs": ["doc:slide=6:table=1:row=2"], "planned_unit_price": {"kind": "PLANNED_PRICE", "value": "1250.00", "currency": "CNY", "tax_basis": "UNKNOWN", "source_ref": "doc:slide=6:table=1:row=2", "source_quote": "1250.00"}, "constraints": [], "parse_status": "RESOLVED", "open_questions": []}
+
+One-shot constraint example:
+Fragment: {"locator": "doc:slide=3:shape=7:paragraph=1", "text": "接入 OneNET | 是"}
+Constraint: {"constraint_id": "c1", "requirement_id": "r1", "attribute_key": "onenet_access", "attribute_definition": "接入 OneNET 平台", "value_type": "BOOLEAN", "operator": "EQ", "value": true, "importance": "HARD", "origin": "PPT_EXPLICIT", "source_ref": "doc:slide=3:shape=7:paragraph=1", "source_quote": "接入 OneNET", "parse_status": "RESOLVED"}
 """
 
 
 @dataclass(frozen=True)
 class CompilerResult:
-    """Compiled requirements plus nonfatal grounding issues."""
+    """Compiled requirements plus nonfatal shaping issues."""
 
     compilation: RequirementCompilation
-    grounding_issues: tuple[str, ...] = ()
+    shaping_issues: tuple[str, ...] = ()
 
 
 def compile_requirement_fragments(
@@ -76,9 +83,8 @@ def compile_requirement_fragments(
     fragments: list[SourceFragment],
     model: BaseChatModel,
     revision: int = 1,
-    context_requirements: list[dict[str, str]] | None = None,
 ) -> CompilerResult:
-    """Compile fragments to the constrained DSL and enforce source grounding."""
+    """Compile the complete source content into the restricted DSL."""
     if not fragments:
         return CompilerResult(
             compilation=RequirementCompilation(
@@ -88,108 +94,65 @@ def compile_requirement_fragments(
             )
         )
 
-    allowed = {fragment.locator: fragment for fragment in fragments}
     prompt = {
         "project_id": project_id,
         "revision": revision,
-        "known_requirement_items": context_requirements or [],
         "fragments": [
             {
-                "source_id": f.source_id,
-                "source_type": f.source_type.value,
-                "locator": f.locator,
-                "text": f.text,
+                "source_id": fragment.source_id,
+                "source_type": fragment.source_type.value,
+                "locator": fragment.locator,
+                "text": fragment.text,
             }
-            for f in fragments
+            for fragment in fragments
         ],
     }
-    structured_model = model.with_structured_output(
-        RequirementCompilation,
-        method="function_calling",
-        include_raw=True,
+    raw = _validated_compilation_payload(
+        _stream_tool_arguments(
+            model,
+            [
+                SystemMessage(content=SYSTEM_PROMPT),
+                HumanMessage(content=json.dumps(prompt, ensure_ascii=False)),
+            ],
+        )
     )
-    response = structured_model.invoke(
-        [
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=json.dumps(prompt, ensure_ascii=False)),
-        ]
-    )
-    raw = _validated_compilation_payload(response)
 
     raw.project_id = project_id
     raw.revision = revision
     raw.compiler_version = "req-dsl-1.0"
-    issues: list[str] = list(raw.issues)
-    root_source_refs = [ref for ref in raw.source_refs if ref in allowed]
-    if len(root_source_refs) != len(raw.source_refs):
-        issues.append("Compiler returned one or more unknown top-level source locators.")
-    raw.source_refs = root_source_refs
     for requirement in raw.requirements:
         requirement.project_id = project_id
         requirement.revision = revision
-        source_refs = [ref for ref in requirement.source_refs if ref in allowed]
-        if len(source_refs) != len(requirement.source_refs):
-            issues.append(f"Requirement {requirement.requirement_id}: discarded unknown source locator.")
-        requirement.source_refs = source_refs
-        if not source_refs:
-            requirement.parse_status = ParseStatus.AMBIGUOUS
-            requirement.open_questions.append("No verifiable source locator was returned by the compiler.")
+    return CompilerResult(compilation=raw, shaping_issues=tuple(raw.issues))
 
-        for constraint in requirement.constraints:
-            _ground_constraint(constraint, allowed, issues)
-            _mark_ambiguous_resolution_basis(constraint, issues)
-            expected_origin = _origin_for_source(constraint.source_ref, allowed)
-            if expected_origin is None:
-                constraint.importance = (
-                    constraint.importance
-                    if constraint.origin != ConstraintOrigin.INFERRED_FOR_REVIEW
-                    else constraint.importance
-                )
-                constraint.parse_status = ParseStatus.AMBIGUOUS
-            elif constraint.origin != ConstraintOrigin.INFERRED_FOR_REVIEW:
-                # Source type is deterministic; do not let a model label a PPT
-                # statement as user-entered text or vice versa.
-                constraint.origin = expected_origin
-            if constraint.origin == ConstraintOrigin.INFERRED_FOR_REVIEW and constraint.importance == Importance.HARD:
-                constraint.importance = Importance.UNKNOWN
-                constraint.parse_status = ParseStatus.AMBIGUOUS
-                constraint.validation_issues.append("Inferred constraints cannot be upgraded to HARD.")
-                issues.append(
-                    f"Constraint {constraint.constraint_id}: inferred HARD downgraded to UNKNOWN."
-                )
 
-        if any(c.parse_status != ParseStatus.RESOLVED for c in requirement.constraints):
-            if requirement.parse_status == ParseStatus.RESOLVED:
-                requirement.parse_status = ParseStatus.AMBIGUOUS
+def _stream_tool_arguments(
+    model: BaseChatModel,
+    messages: list[Any],
+    *,
+    max_tokens: int = 32_000,
+) -> dict[str, Any]:
+    """Collect one tool call's arguments from a streamed response.
 
-    for item in raw.unstructured_requirements:
-        if item.source_ref not in allowed or not _quote_is_grounded(item.source_quote, allowed.get(item.source_ref)):
-            item.source_ref = None
-            item.source_quote = None
-            item.parse_status = ParseStatus.AMBIGUOUS
-            item.reason = "Compiler citation did not match any supplied source fragment. " + item.reason
-            issues.append("An unstructured requirement had a non-verifiable citation.")
-
-    grounded_conflicts = []
-    for conflict in raw.conflicts:
-        grounded_values = [
-            value
-            for value in conflict.values_with_source
-            if value.source_ref in allowed
-            and _quote_is_grounded(value.source_quote, allowed.get(value.source_ref))
-            and all(ref in allowed for ref in (value.source_refs or [value.source_ref]))
-        ]
-        if len(grounded_values) < 2:
-            issues.append(
-                f"Conflict {conflict.conflict_id}: fewer than two source-grounded values; discarded."
-            )
-            continue
-        conflict.project_id = project_id
-        conflict.values_with_source = grounded_values
-        grounded_conflicts.append(conflict)
-    raw.conflicts = grounded_conflicts
-    raw.issues = issues
-    return CompilerResult(compilation=raw, grounding_issues=tuple(issues))
+    The gateway drops long non-streaming requests, so the compiler streams and
+    accumulates the tool call arguments.
+    """
+    tool = convert_to_openai_function(RequirementCompilation)
+    bound = model.bind_tools([tool], tool_choice=tool["name"])
+    aggregated: Any = None
+    for chunk in bound.stream(messages, config={"max_tokens": max_tokens}):
+        aggregated = chunk if aggregated is None else aggregated + chunk
+    if aggregated is None:
+        raise ValueError("Requirement compiler returned no response")
+    calls = getattr(aggregated, "tool_calls", None) or []
+    if not calls:
+        raise ValueError("Requirement compiler did not call the compilation tool")
+    arguments = calls[0].get("args")
+    if isinstance(arguments, str):
+        arguments = json.loads(arguments)
+    if not isinstance(arguments, dict):
+        raise ValueError("Requirement compiler tool arguments must be a JSON object")
+    return arguments
 
 
 def _validated_compilation_payload(response: object) -> RequirementCompilation:
@@ -207,6 +170,7 @@ def _validated_compilation_payload(response: object) -> RequirementCompilation:
     if isinstance(response, dict) and "raw" in response and "parsed" in response:
         if isinstance(response.get("parsed"), RequirementCompilation):
             return response["parsed"]
+
         raw_message = response.get("raw")
         calls = getattr(raw_message, "tool_calls", None) or []
         if calls:
@@ -246,8 +210,7 @@ def _validated_compilation_payload(response: object) -> RequirementCompilation:
     elif normalized.get("requirements") and isinstance(normalized["requirements"], list):
         # Some providers duplicate the single-item requirement at the root and
         # in the requirements array. Merge only when the association is
-        # unambiguous (exactly one nested item); otherwise discard the flattened
-        # copies with an audit issue rather than attaching them to the wrong SKU.
+        # unambiguous (exactly one nested item).
         root_fields_present = root_requirement_fields.intersection(normalized)
         if root_fields_present and len(normalized["requirements"]) == 1:
             nested = normalized["requirements"][0]
@@ -336,10 +299,6 @@ def _validated_compilation_payload(response: object) -> RequirementCompilation:
                     }
                 )
             else:
-                # Preserve each source-grounded clause even if the model
-                # omitted the item name or emitted an incomplete constraint.
-                # Do not upgrade it to a Requirement/SKU without an explicit
-                # procurement object.
                 for raw_constraint in raw_requirement.get("constraints", []):
                     ref = raw_constraint.get("source_ref")
                     quote = raw_constraint.get("source_quote")
@@ -350,12 +309,15 @@ def _validated_compilation_payload(response: object) -> RequirementCompilation:
                                 "source_ref": ref,
                                 "source_quote": quote,
                                 "parse_status": "AMBIGUOUS",
-                                "reason": "Source-grounded clause retained because product_name was missing or the Requirement schema was incomplete.",
+                                "reason": "Source-grounded clause retained because the Requirement schema was incomplete.",
                             }
                         )
 
     valid_unstructured: list[dict[str, Any]] = []
     for index, raw_item in enumerate(normalized.get("unstructured_requirements", []) + recovered_unstructured):
+        if not isinstance(raw_item, dict):
+            issues.append(f"UnstructuredRequirement[{index}] was not an object; discarded.")
+            continue
         item = _sanitize_model_payload(raw_item, UnstructuredRequirement, "UnstructuredRequirement", issues)
         try:
             UnstructuredRequirement.model_validate(item)
@@ -369,6 +331,9 @@ def _validated_compilation_payload(response: object) -> RequirementCompilation:
         _normalize_list_fields(conflict, ("values_with_source",))
         values = []
         for raw_value in conflict.get("values_with_source", []):
+            if not isinstance(raw_value, dict):
+                issues.append(f"Conflict[{index}] contained a non-object value citation; discarded.")
+                continue
             value = _sanitize_model_payload(raw_value, ConflictValue, "ConflictValue", issues)
             try:
                 ConflictValue.model_validate(value)
@@ -416,76 +381,3 @@ def _sanitize_model_payload(payload: Any, model: type, label: str, issues: list[
     if discarded:
         issues.append(f"Discarded unsupported {label} fields: {', '.join(discarded)}")
     return {key: value for key, value in payload.items() if key in allowed}
-
-
-def _mark_ambiguous_resolution_basis(
-    constraint: RequirementConstraint,
-    issues: list[str],
-) -> None:
-    """Keep megapixel constraints UNKNOWN when the measured pixel basis is unstated.
-
-    Camera resolution may mean sensor effective pixels or video-output pixels.
-    The DSL spec explicitly requires this distinction to remain ambiguous unless
-    the source states the measurement basis.
-    """
-    attribute = constraint.attribute_key.casefold()
-    context = " ".join(
-        [constraint.attribute_definition, constraint.source_quote or "", constraint.unit or ""]
-        + [str(value) for value in constraint.qualifiers.values()]
-    ).casefold()
-    resolution_like = (
-        "resolution" in attribute
-        or "pixel" in attribute
-        or "分辨率" in context
-        or "像素" in context
-        or (constraint.unit or "").casefold() == "mp"
-    )
-    if not resolution_like or constraint.parse_status != ParseStatus.RESOLVED:
-        return
-    explicit_bases = (
-        "输出分辨率", "视频输出", "视频分辨率", "视频输出像素",
-        "传感器有效像素", "有效像素", "sensor effective", "image sensor", "video output",
-    )
-    if any(term in context for term in explicit_bases):
-        return
-    constraint.attribute_key = "resolution_unspecified"
-    constraint.parse_status = ParseStatus.AMBIGUOUS
-    constraint.validation_issues.append(
-        "Pixel/resolution measurement basis is unspecified (sensor effective pixels vs video output)."
-    )
-    issues.append(
-        f"Constraint {constraint.constraint_id}: resolution measurement basis unspecified; kept AMBIGUOUS."
-    )
-
-
-def _ground_constraint(
-    constraint: RequirementConstraint,
-    allowed: dict[str, SourceFragment],
-    issues: list[str],
-) -> None:
-    """Remove unverifiable citations and downgrade the constraint safely."""
-    fragment = allowed.get(constraint.source_ref or "")
-    if fragment is None or not _quote_is_grounded(constraint.source_quote, fragment):
-        constraint.source_ref = None
-        constraint.source_quote = None
-        constraint.parse_status = ParseStatus.AMBIGUOUS
-        constraint.validation_issues.append("Compiler citation did not match source text.")
-        issues.append(f"Constraint {constraint.constraint_id}: citation failed source-grounding check.")
-
-
-def _quote_is_grounded(quote: str | None, fragment: SourceFragment | None) -> bool:
-    return bool(quote and fragment and quote in fragment.text)
-
-
-def _origin_for_source(
-    locator: str | None,
-    allowed: dict[str, SourceFragment],
-) -> ConstraintOrigin | None:
-    fragment = allowed.get(locator or "")
-    if not fragment:
-        return None
-    if fragment.source_type == RequirementSourceType.USER_TEXT:
-        return ConstraintOrigin.USER_EXPLICIT
-    if fragment.source_type == RequirementSourceType.INTERNAL_PPTX:
-        return ConstraintOrigin.PPT_EXPLICIT
-    return None

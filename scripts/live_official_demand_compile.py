@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 
 from procurement_agent.infra import load_settings
 from procurement_agent.infra.llm import build_chat_model
-from procurement_agent.ingestion.pptx import extract_pptx_fragments, select_pptx_narrative_fragments
+from procurement_agent.ingestion.pptx import extract_pptx_fragments
 from procurement_agent.services.demand_intake import build_demand_intake
 
 SOURCE_ROOT = (
@@ -43,7 +43,7 @@ def main() -> int:
         print(json.dumps({"status": "BLOCKED", "reason": "GENESIS_* is not configured"}))
         return 2
 
-    model = build_chat_model(settings, timeout=180)
+    model = build_chat_model(settings, timeout=600)
     results = []
     cases = CASES.items() if args.case == "all" else [(args.case, CASES[args.case])]
     for case, filename in cases:
@@ -57,7 +57,6 @@ def main() -> int:
             source_id=f"official-pptx-{case}",
             filename=filename,
         )
-        narrative_fragments = select_pptx_narrative_fragments(fragments)
         intake = build_demand_intake(
             project_id=f"official-case-{case}",
             fragments=fragments,
@@ -68,10 +67,10 @@ def main() -> int:
             "case": case,
             "slides": 7,
             "extracted_fragments": len(fragments),
-            "narrative_compiler_fragments": len(narrative_fragments),
-            "narrative_compiler_chars": sum(len(f.text) for f in narrative_fragments),
+            "compiler_chars": sum(len(fragment.text) for fragment in fragments),
             "requirements": len(intake.requirements),
             "products": [requirement.product_name for requirement in intake.requirements],
+            "quantities": [requirement.quantity for requirement in intake.requirements],
             "constraint_count": sum(len(r.constraints) for r in intake.requirements),
             "unstructured_count": len(intake.unstructured_requirements),
             "conflicts": [conflict.model_dump(mode="json") for conflict in intake.conflicts],

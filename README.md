@@ -73,14 +73,15 @@ npx wrangler deploy
 Container 镜像由 Cloudflare 托管构建环境构建（`Dockerfile`），本地不需要安装 Docker。
 镜像构建与首次部署耗时较长，部署后需要等待实例预���绪。
 
-## 当前状态（M0/M1 已验收；M2 本地实现进行中）
+## 当前状态（M0/M1 已验收；M2 云端验收进行中）
 
 - **M0 已实测部署**：Cloudflare Worker + Python Container + Workflow + D1/R2；验证任务在浏览器断连后继续、阶段事件、幂等、失败状态和 DOCX 写入/下载。Container 由 Cloudflare Workers Builds 构建，不需本地 Docker。当前仍未完成 SIGTERM 恢复和精确费用观测；已验证断连时长不等于完整的 2–5 分钟门槛证明。
-- **M1 本地与云端验收通过**：纯文本、PPTX 需求与受限 Requirement DSL；历史 XLSX 独立可选导入。官方每组 PPTX 解析 14 条采购行；每组 XLSX 1000 行、38 列、第 8 行表头；模拟供应商隔离。Case A 的 58/63 万台差异保留为有来源的冲突。
-- 云端 `scripts/verify_m1_cloud_api.py` 实测通过：匿名请求 401、文本/PPT 编译与读回、Case A 冲突、历史导入及重复导入去重。最近 M1 Worker 代码提交为 `7fd1570`；仓库保持 private。
-- **M2 本地垂直切片已实现；云端验收仍阻塞**：版本化 SourcingPlan；一个 Deep Agents Supervisor 和同类型 Supplier Researcher；工具仅接受计划中的精确 question ID，渠道从计划读取；Tavily Search/Extract；共享 search/fetch/task/model-call 预算；Claim 引文与 Evidence/R2 快照校验；D1 情报账本、R2 快照、项目 Longlist 和运行状态/成本/每次模型耗时指标。D1 migrations `0005`/`0006` 已远端应用。首次云端运行发现并本地修复了 M1 结果信封适配错误；下一次云端运行搜索遭 Tavily HTTP 403，即使刷新 Cloudflare Tavily secret 仍未解决。相同本地 key 的 Tavily smoke 通过；尚未确认是 Cloudflare 出站策略还是 Tavily 账户授权问题。
+- **M1 需求抽取已改为模型主导**：PPTX 原文全量按行切分后一次交给模型，模型产出采购行、技术约束、冲突和非结构化需求。原先按固定表头词表抽取 14 条采购行的确定性解析器，以及按引文复核模型读数的校验层，已删除。每组 XLSX 1000 行、38 列、第 8 行表头，模拟供应商隔离不变。代价是需求条数、数量和金额不再由代码保证，结论出处是模型。
+- `scripts/live_official_demand_compile.py` 实测 **PASS**：官方两组 PPTX 各抽到 14 条采购行。Case 1 保留 58 万台与 63 万台的冲突，Case 2 由模型自行算出 5888.66 万元与表格合计 5888.64 万元的差额并报为冲突。单次编译耗时约 3 分 40 秒。编译器改用流式工具调用，因为网关会中断超过约 5 分钟的非流式请求。
+- 历史 XLSX 导入、纯文本需求和 Demand DSL 本身未变。历史 XLSX 仍为每组 1000 行、38 列、第 8 行表头，模拟供应商隔离不变。
+- **M2 已部署，云端端到端验收未通过**：版本化 SourcingPlan；一个 Deep Agents Supervisor 和同类型 Supplier Researcher；精确 question ID/渠道边界；Tavily Search/Extract；共享预算；Claim 引文与 Evidence/R2 快照校验；D1 情报账本、R2 快照、项目 Longlist 和成本/模型调用指标。D1 migrations `0005`/`0006` 已远端应用；Cloudflare LangSmith secret 已配置。最新云端验收运行 `9731f038-5afd-4acd-9392-139b9534202e` 为 `PARTIAL / RESEARCH_INPUT_REJECTED`：研究器试图直接抓取未由该任务搜索返回的 URL（search/fetch 计数均为 0）。该运行的 LangSmith root trace `01a1767f-ed30-72e9-9c3e-a8eae7f008b2` 已从云端实际读回。当前本地修复改为向研究器返回可恢复的拒绝结果，提示其先搜索再按原文 URL 抓取；若最终未恢复，仍以确定性校验拒绝并保留明确停止原因。修复尚未部署或重新验收。
 - 一次严格计划映射的 live 本地研究返回 `PARTIAL / BUDGET_EXHAUSTED`：**2 个 Researcher tasks、4 次搜索、4 次抓取、3 个候选、6 条来源支持 Claims、15 次模型调用**；找到了精确型号 `IPC501-5M-B` 与 `T-BC-IP5M-Z-2` 的公开资料。候选仍是未核实 Longlist，像素口径、身份和现售情况都未作采购结论。其他 live 尝试也曾出现模型超时或没有精确型号；均据实标为 PARTIAL。
-- 最新本地 M2 验收：`pytest` **62 passed**，`npx tsc --noEmit`、Python `compileall` 和本阶段修改文件的 Ruff 检查通过。Container 现在显式适配 M1 持久化的 `DemandIntakeResult` 信封，并有回归测试。最终 review 修复未推送；部署新版 Worker/Container 后再运行 `scripts/verify_m2_cloud_api.py`。
+- 最新本地验证：`pytest` **64 passed**，`npx tsc --noEmit`、Python `compileall` 和本轮修改文件的 Ruff 检查均通过。新回归测试覆盖多需求下无 Requirement ID 的复用决策不猜关联，以及未授权抓取 URL 的安全拒绝。云端验收脚本现在会拒绝 `PARTIAL` 结果，并通过 `LANGSMITH_API_KEY` 读回与 sourcing run ID 绑定的真实 trace。上述本地修复尚未提交/部署；先按用户授权推进 Git/Workers Build，再重复云端验收。
 
 本地验证命令：
 
@@ -91,4 +92,4 @@ uv run --python 3.11 python -m compileall -q src scripts tests
 uv run --python 3.11 python scripts/live_m2_research.py --product "industrial IP camera" --minimum-resolution-mp 5
 ```
 
-live 脚本需要本地 `.env`；它只打印经来源定位的公开结果，不打印密钥，且**不写 Cloudflare D1/R2**。云端 M2 验收脚本读取忽略文件 `.demo_access_token`，不输出 token；migrations `0005`/`0006` 已应用，待最终 Worker/Container 镜像部署后运行。当前没有 Web UI；M3 规格门禁、比价、Data Fusion 和最终报告仍未开始。详细记录见 `docs/implementation_log.md`。
+live 脚本需要本地 `.env`；它只打印经来源定位的公开结果，不打印密钥，且**不写 Cloudflare D1/R2**。云端 M2 验收脚本读取忽略文件 `.demo_access_token`，不输出 token；除访问 token 外还需要本地 `.env` 中的 LangSmith API key 来验证云端真实 trace。最新本地变更尚未推送/部署，M2 云端验收完成前不进入 M3。当前没有 Web UI；M3 规格门禁、比价、Data Fusion 和最终报告仍未开始。详细记录见 `docs/implementation_log.md`；全部数据模型的说明见 `docs/data_model.md`。

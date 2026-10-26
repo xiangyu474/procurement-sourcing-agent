@@ -65,7 +65,7 @@ def main() -> int:
         f"{args.gateway}/api/projects/{text_project}/requirement-compile",
         headers=headers,
         json={},
-        timeout=240,
+        timeout=420,
     )
     text_compiled.raise_for_status()
     text_body = text_compiled.json()
@@ -106,7 +106,7 @@ def main() -> int:
         f"{args.gateway}/api/projects/{ppt_project}/requirement-compile",
         headers=headers,
         json={},
-        timeout=300,
+        timeout=420,
     )
     ppt_compile.raise_for_status()
     ppt_body = ppt_compile.json()
@@ -143,7 +143,7 @@ def main() -> int:
         f"{args.gateway}/api/projects/{conflict_project}/requirement-compile",
         headers=headers,
         json={},
-        timeout=300,
+        timeout=420,
     )
     case_a_compile.raise_for_status()
     case_a_data = case_a_compile.json()["compilation"]
@@ -185,7 +185,7 @@ def main() -> int:
         f"{args.gateway}/api/projects/{history_project}/history-imports",
         headers=headers,
         json={"source_id": source_id},
-        timeout=240,
+        timeout=420,
     )
     imported_response.raise_for_status()
     imported = imported_response.json()

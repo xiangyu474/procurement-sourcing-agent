@@ -1,6 +1,7 @@
+import json
+
 from procurement_agent.domain.requirements import (
     ConflictValue,
-    ConstraintOrigin,
     ConstraintOperator,
     DataConflict,
     Importance,
@@ -17,31 +18,46 @@ from procurement_agent.ingestion.compiler import (
 )
 
 
-class FakeStructuredRunnable:
-    def __init__(self, result):
-        self.result = result
+class _FakeToolCallChunk:
+    def __init__(self, arguments):
+        self.tool_calls = [{"name": "RequirementCompilation", "args": arguments}]
 
-    def invoke(self, _messages):
-        return self.result
+    def __add__(self, _other):
+        return self
 
 
 class FakeChatModel:
+    """Streams one tool call, the way the real compiler consumes the endpoint."""
+
     def __init__(self, result):
         self.result = result
+        self.captured = []
 
-    def with_structured_output(self, _schema, method=None, include_raw=False):
-        assert method == "function_calling"
-        assert include_raw is True
-        return FakeStructuredRunnable(self.result)
+    def bind_tools(self, tools, tool_choice=None):
+        assert tools and tool_choice == tools[0]["name"]
+        return self
+
+    def stream(self, messages, config=None):
+        self.captured.extend(messages)
+        arguments = (
+            self.result.model_dump(mode="json", exclude_none=True)
+            if isinstance(self.result, RequirementCompilation)
+            else self.result
+        )
+        yield _FakeToolCallChunk(arguments)
 
 
-def test_compiler_preserves_grounded_quote_and_source_origin():
-    fragment = SourceFragment(
-        source_id="user_text:p1:rev_1",
-        source_type=RequirementSourceType.USER_TEXT,
-        locator="user_text:p1:rev_1:line_1:span_0_20",
-        text="电源模块额定功率至少7.5kW",
+def _fragment(locator: str, text: str, source_type=RequirementSourceType.USER_TEXT) -> SourceFragment:
+    return SourceFragment(
+        source_id="source-1",
+        source_type=source_type,
+        locator=locator,
+        text=text,
     )
+
+
+def test_compiler_keeps_the_model_reading_and_assigns_project_scope():
+    fragment = _fragment("user_text:p1:rev_1:line_1:span_0_20", "电源模块额定功率至少7.5kW")
     requirement = Requirement(
         requirement_id="req1",
         project_id="placeholder",
@@ -58,7 +74,7 @@ def test_compiler_preserves_grounded_quote_and_source_origin():
                 value="7.5",
                 unit="kW",
                 importance=Importance.HARD,
-                origin=ConstraintOrigin.PPT_EXPLICIT,
+                origin="PPT_EXPLICIT",
                 source_ref=fragment.locator,
                 source_quote="额定功率至少7.5kW",
             )
@@ -68,23 +84,18 @@ def test_compiler_preserves_grounded_quote_and_source_origin():
         project_id="p1",
         fragments=[fragment],
         model=FakeChatModel(RequirementCompilation(requirements=[requirement])),
-        revision=1,
+        revision=2,
     )
 
     compiled = result.compilation.requirements[0]
     assert compiled.project_id == "p1"
-    assert compiled.constraints[0].origin == ConstraintOrigin.USER_EXPLICIT
+    assert compiled.revision == 2
+    assert compiled.constraints[0].source_quote == "额定功率至少7.5kW"
     assert compiled.constraints[0].parse_status.value == "RESOLVED"
-    assert not result.grounding_issues
 
 
-def test_compiler_downgrades_hallucinated_source_quote_to_ambiguous():
-    fragment = SourceFragment(
-        source_id="ppt-source",
-        source_type=RequirementSourceType.INTERNAL_PPTX,
-        locator="pptx:f1:slide=6:table=1:row=2:cell=2",
-        text="电源模块",
-    )
+def test_compiler_does_not_rewrite_the_model_citation():
+    fragment = _fragment("pptx:f1:slide=6:table=1:row=2", "电源模块")
     requirement = Requirement(
         requirement_id="req1",
         project_id="p1",
@@ -101,7 +112,7 @@ def test_compiler_downgrades_hallucinated_source_quote_to_ambiguous():
                 value="7.5",
                 unit="kW",
                 importance=Importance.HARD,
-                origin=ConstraintOrigin.PPT_EXPLICIT,
+                origin="PPT_EXPLICIT",
                 source_ref=fragment.locator,
                 source_quote="额定功率至少7.5kW",
                 parse_status="AMBIGUOUS",
@@ -114,24 +125,14 @@ def test_compiler_downgrades_hallucinated_source_quote_to_ambiguous():
         model=FakeChatModel(RequirementCompilation(requirements=[requirement])),
     )
     constraint = result.compilation.requirements[0].constraints[0]
+    assert constraint.source_ref == fragment.locator
+    assert constraint.source_quote == "额定功率至少7.5kW"
     assert constraint.parse_status.value == "AMBIGUOUS"
-    assert constraint.source_ref is None
-    assert any("citation failed" in issue for issue in result.grounding_issues)
 
 
-def test_grounded_conflict_is_preserved_and_ungrounded_conflict_is_discarded():
-    first = SourceFragment(
-        source_id="ppt-source",
-        source_type=RequirementSourceType.INTERNAL_PPTX,
-        locator="pptx:file=brief:slide=2:shape=1",
-        text="年度预计采购58万台",
-    )
-    second = SourceFragment(
-        source_id="ppt-source",
-        source_type=RequirementSourceType.INTERNAL_PPTX,
-        locator="pptx:file=brief:slide=3:shape=1",
-        text="年度预计采购63万台",
-    )
+def test_compiler_keeps_every_conflict_the_model_reports():
+    first = _fragment("pptx:file=brief:slide=2:shape=1", "年度预计采购58万台", RequirementSourceType.INTERNAL_PPTX)
+    second = _fragment("pptx:file=brief:slide=3:shape=1", "年度预计采购63万台", RequirementSourceType.INTERNAL_PPTX)
     conflict = DataConflict(
         conflict_id="c-summary-quantity",
         project_id="p1",
@@ -150,44 +151,18 @@ def test_grounded_conflict_is_preserved_and_ungrounded_conflict_is_discarded():
     assert [v.value for v in result.compilation.conflicts[0].values_with_source] == ["58万台", "63万台"]
 
 
-def test_megapixel_basis_remains_ambiguous_without_sensor_or_output_qualifier():
-    fragment = SourceFragment(
-        source_id="text-1",
-        source_type=RequirementSourceType.USER_TEXT,
-        locator="user_text:p1:rev_1:span_0_15",
-        text="摄像头分辨率至少500万像素",
-    )
-    requirement = Requirement(
-        requirement_id="r1",
-        project_id="p1",
-        product_name="摄像头",
-        source_refs=[fragment.locator],
-        constraints=[
-            RequirementConstraint(
-                constraint_id="c-resolution",
-                requirement_id="r1",
-                attribute_key="image_resolution",
-                attribute_definition="摄像头分辨率",
-                value_type=ValueType.NUMBER,
-                operator=ConstraintOperator.GTE,
-                value="5",
-                unit="MP",
-                importance=Importance.HARD,
-                origin=ConstraintOrigin.USER_EXPLICIT,
-                source_ref=fragment.locator,
-                source_quote="分辨率至少500万像素",
-            )
-        ],
-    )
-    result = compile_requirement_fragments(
-        project_id="p1",
-        fragments=[fragment],
-        model=FakeChatModel(RequirementCompilation(requirements=[requirement])),
-    )
-    constraint = result.compilation.requirements[0].constraints[0]
-    assert constraint.attribute_key == "resolution_unspecified"
-    assert constraint.parse_status.value == "AMBIGUOUS"
-    assert result.compilation.requirements[0].parse_status.value == "AMBIGUOUS"
+def test_compiler_sends_every_fragment_to_the_model():
+    fragments = [
+        _fragment("doc:slide=1:table=1:row=1", "产品名称 | 数量"),
+        _fragment("doc:slide=1:table=1:row=2", "工业摄像机 | 10"),
+        _fragment("doc:slide=2:shape=1:paragraph=1", "至少支持CAN协议"),
+    ]
+    model = FakeChatModel(RequirementCompilation(requirements=[]))
+    compile_requirement_fragments(project_id="p1", fragments=fragments, model=model)
+
+    payload = json.loads(model.captured[-1].content)
+    assert [item["locator"] for item in payload["fragments"]] == [f.locator for f in fragments]
+    assert [item["text"] for item in payload["fragments"]] == [f.text for f in fragments]
 
 
 def test_incomplete_model_requirement_is_demoted_to_unstructured():
