@@ -620,6 +620,18 @@ export class SourcingContainer extends Container {
 	// Probe the application's own health route so readiness reflects the
 	// Python process, not just an open TCP port.
 	pingEndpoint = "localhost/health";
+
+	constructor(ctx: DurableObjectState<{}>, env: Env) {
+		super(ctx, env);
+		// The Python process reads its tracing configuration once, at import
+		// time, and the reader caches that lookup. Passing the values when the
+		// instance starts is the only way they are seen.
+		this.envVars = {
+			...(env.LANGSMITH_TRACING ? { LANGSMITH_TRACING: env.LANGSMITH_TRACING } : {}),
+			...(env.LANGSMITH_PROJECT ? { LANGSMITH_PROJECT: env.LANGSMITH_PROJECT } : {}),
+			...(env.LANGSMITH_API_KEY ? { LANGSMITH_API_KEY: env.LANGSMITH_API_KEY } : {}),
+		};
+	}
 }
 
 export class SourcingWorkflow extends WorkflowEntrypoint<Env, RunRequest> {
