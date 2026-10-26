@@ -45,6 +45,7 @@ from procurement_agent.services.sourcing_research import (
     _date_hint_is_old,
     _extract_date_hints,
     _validated_sourcing_plan_proposal,
+    build_research_tools,
     build_sourcing_plan,
     run_sourcing_research,
 )
@@ -435,6 +436,21 @@ def test_source_date_hints_are_review_flags_not_verified_publication_dates():
     assert "2023-04-12" in hints
     assert _date_hint_is_old("09/2016") is True
     assert _date_hint_is_old("2023-04-12") is False
+
+
+def test_research_tools_cannot_override_plan_question_or_channel():
+    search = FakeSearchProvider()
+    content = FakeContentProvider()
+    ledger = ResearchLedger(
+        project_id="p-1", run_id="run-1", plan=make_plan(),
+        search_provider=search, content_provider=content, private_terms=[],
+    )
+    researcher_tools, _supervisor_tools = build_research_tools(ledger)
+    search_tool = next(item for item in researcher_tools if item.name == "search_public_web")
+    fetch_tool = next(item for item in researcher_tools if item.name == "fetch_public_source")
+    assert set(search_tool.args) == {"task_id", "query", "purpose"}
+    assert set(fetch_tool.args) == {"task_id", "url"}
+    assert "exactly" in search_tool.args["task_id"]["description"].lower()
 
 
 def test_ledger_blocks_internal_values_and_private_or_unlisted_urls():

@@ -611,10 +611,12 @@ class ResearchLedger:
                 )
             return filtered
         except Exception as exc:
+            failure = _public_provider_failure_code(exc)
             with self.condition:
                 self.search_cache[key] = []
-                self.warnings.append(f"Search failed for task {task_id}: {type(exc).__name__}.")
-                self._record_action(task_id, task, "tavily.search", query, [], "SEARCH_FAILED", 1, 0)
+                detail = _safe_provider_error_detail(exc)
+                self.warnings.append(f"Public search failed for task {task_id}: {failure}; {detail}" if detail else f"Public search failed for task {task_id}: {failure}.")
+                self._record_action(task_id, task, "tavily.search", query, [], failure, 1, 0)
             return []
         finally:
             with self.condition:
@@ -685,9 +687,11 @@ class ResearchLedger:
                 self._record_action(task_id, task, "tavily.extract", task.question, [evidence_id], "SOURCE_CAPTURED", 0, 1)
             return evidence, page.content[:6_000]
         except Exception as exc:
+            failure = _public_provider_failure_code(exc)
             with self.condition:
-                self.warnings.append(f"Source fetch failed for task {task_id}: {type(exc).__name__}.")
-                self._record_action(task_id, task, "tavily.extract", task.question, [url], "FETCH_FAILED", 0, 1)
+                detail = _safe_provider_error_detail(exc)
+                self.warnings.append(f"Source fetch failed for task {task_id}: {failure}; {detail}" if detail else f"Source fetch failed for task {task_id}: {failure}.")
+                self._record_action(task_id, task, "tavily.extract", task.question, [url], failure, 0, 1)
             raise
         finally:
             with self.condition:
@@ -1043,7 +1047,15 @@ def _research_completion_status(
         return ResearchRunStatus.PARTIAL, "SUPERVISOR_NO_RESEARCHER_TASK"
     if any("budget exhausted" in warning.casefold() for warning in ledger.warnings):
         return ResearchRunStatus.PARTIAL, "BUDGET_EXHAUSTED"
-    if any(action.decision in {"SEARCH_FAILED", "FETCH_FAILED"} for action in ledger.actions):
+    if any(action.decision == "SEARCH_PROVIDER_FORBIDDEN" for action in ledger.actions):
+        return ResearchRunStatus.PARTIAL, "SEARCH_PROVIDER_FORBIDDEN"
+    if any(action.decision == "SEARCH_PROVIDER_AUTH_FAILED" for action in ledger.actions):
+        return ResearchRunStatus.PARTIAL, "SEARCH_PROVIDER_AUTH_FAILED"
+    if any(action.decision == "SEARCH_RATE_LIMITED" for action in ledger.actions):
+        return ResearchRunStatus.PARTIAL, "SEARCH_PROVIDER_RATE_LIMITED"
+    if any(action.decision == "SEARCH_PROVIDER_TIMEOUT" for action in ledger.actions):
+        return ResearchRunStatus.PARTIAL, "SEARCH_PROVIDER_TIMEOUT"
+    if any(action.decision in {"SEARCH_FAILED", "FETCH_FAILED", "SOURCE_FETCH_FAILED"} for action in ledger.actions):
         return ResearchRunStatus.PARTIAL, "SOURCE_FETCH_FAILED"
     if not bundle.evidence:
         return ResearchRunStatus.PARTIAL, "NO_FETCHED_EVIDENCE"
@@ -1383,6 +1395,29 @@ def _ground_claim_proposals(
             )
         )
     return grounded
+
+
+def _safe_provider_error_detail(exc: Exception) -> str:
+    """Keep short upstream error detail for diagnosis while removing known provider credentials."""
+    detail = re.sub(r"[\x00-\x1f\x7f]+", " ", str(exc)).strip()
+    provider_key = os.getenv("TAVILY_API_KEY", "")
+    if provider_key:
+        detail = detail.replace(provider_key, "[REDACTED]")
+    return detail[:160]
+
+
+def _public_provider_failure_code(exc: Exception) -> str:
+    """Return a non-sensitive provider error class without logging response bodies or keys."""
+    name = type(exc).__name__.casefold()
+    if "forbidden" in name:
+        return "SEARCH_PROVIDER_FORBIDDEN"
+    if "invalidapikey" in name or "authentication" in name:
+        return "SEARCH_PROVIDER_AUTH_FAILED"
+    if "ratelimit" in name or "usagelimit" in name:
+        return "SEARCH_RATE_LIMITED"
+    if "timeout" in name:
+        return "SEARCH_PROVIDER_TIMEOUT"
+    return "SEARCH_FAILED"
 
 
 def _source_supported_role(claims: list[ClaimDraft]) -> str | None:
