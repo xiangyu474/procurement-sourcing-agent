@@ -15,7 +15,6 @@ from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.utils.function_calling import convert_to_openai_function
 
 from procurement_agent.domain.requirements import (
     ConflictValue,
@@ -27,6 +26,7 @@ from procurement_agent.domain.requirements import (
     SourceFragment,
     UnstructuredRequirement,
 )
+from procurement_agent.infra.llm import stream_tool_arguments
 
 SYSTEM_PROMPT = """You extract procurement demand from a source document into a restricted Requirement DSL.
 
@@ -108,12 +108,13 @@ def compile_requirement_fragments(
         ],
     }
     raw = _validated_compilation_payload(
-        _stream_tool_arguments(
+        stream_tool_arguments(
             model,
             [
                 SystemMessage(content=SYSTEM_PROMPT),
                 HumanMessage(content=json.dumps(prompt, ensure_ascii=False)),
             ],
+            RequirementCompilation,
         )
     )
 
@@ -124,35 +125,6 @@ def compile_requirement_fragments(
         requirement.project_id = project_id
         requirement.revision = revision
     return CompilerResult(compilation=raw, shaping_issues=tuple(raw.issues))
-
-
-def _stream_tool_arguments(
-    model: BaseChatModel,
-    messages: list[Any],
-    *,
-    max_tokens: int = 32_000,
-) -> dict[str, Any]:
-    """Collect one tool call's arguments from a streamed response.
-
-    The gateway drops long non-streaming requests, so the compiler streams and
-    accumulates the tool call arguments.
-    """
-    tool = convert_to_openai_function(RequirementCompilation)
-    bound = model.bind_tools([tool], tool_choice=tool["name"])
-    aggregated: Any = None
-    for chunk in bound.stream(messages, config={"max_tokens": max_tokens}):
-        aggregated = chunk if aggregated is None else aggregated + chunk
-    if aggregated is None:
-        raise ValueError("Requirement compiler returned no response")
-    calls = getattr(aggregated, "tool_calls", None) or []
-    if not calls:
-        raise ValueError("Requirement compiler did not call the compilation tool")
-    arguments = calls[0].get("args")
-    if isinstance(arguments, str):
-        arguments = json.loads(arguments)
-    if not isinstance(arguments, dict):
-        raise ValueError("Requirement compiler tool arguments must be a JSON object")
-    return arguments
 
 
 def _validated_compilation_payload(response: object) -> RequirementCompilation:

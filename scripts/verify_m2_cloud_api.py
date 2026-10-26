@@ -38,7 +38,8 @@ def _request(client: httpx.Client, method: str, path: str, **kwargs: Any) -> dic
         # The edge closes idle pooled connections; one fresh attempt is enough.
         response = client.request(method, path, **kwargs)
     if not response.is_success:
-        raise RuntimeError(f"M2 API {method} {path} returned HTTP {response.status_code}")
+        body = response.text[:400]
+        raise RuntimeError(f"M2 API {method} {path} returned HTTP {response.status_code}: {body}")
     if response.headers.get("content-type", "").startswith("application/json"):
         return response.json()
     raise RuntimeError(f"M2 API {method} {path} did not return JSON")

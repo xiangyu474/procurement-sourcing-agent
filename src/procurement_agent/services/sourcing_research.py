@@ -57,6 +57,7 @@ from procurement_agent.domain.sourcing import (
     stable_id,
 )
 from procurement_agent.infra import Settings
+from procurement_agent.infra.llm import stream_tool_arguments
 from procurement_agent.infra.search import (
     PublicContentProvider,
     SearchProvider,
@@ -1016,6 +1017,14 @@ async def run_sourcing_research(
             ledger.warnings.append("Shared research budget exhausted.")
         output = {}
     findings = _parse_findings(output.get("messages", []), ledger)
+    findings = await _complete_missing_findings(
+        model=model,
+        ledger=ledger,
+        findings=findings,
+        model_budget=model_budget,
+        run_id=run_id,
+        project_id=project_id,
+    )
     if not ledger.registered_tasks and supervisor_error is None:
         ledger.warnings.append("Supervisor did not delegate a researcher task; no external research was completed.")
     bundle = _build_run_bundle(
@@ -1127,6 +1136,80 @@ def _parse_findings(messages: list[Any], ledger: ResearchLedger) -> list[Researc
         if finding.task_id not in seen_task_ids:
             parsed.append(finding)
     return parsed
+
+
+FINDINGS_REQUEST_PROMPT = """You are the supplier_researcher finishing one bounded task.
+The tool calls for this task are already done. Read the fetched source text below
+and return the structured findings for exactly this task.
+
+Task ID: {task_id}
+Research question: {question}
+
+Fetched sources:
+{sources}
+
+Return the ResearchFindings tool call. Use only the source text above. A
+supplier or product that the sources do not support does not appear. A model
+code that the sources do not print stays null.
+"""
+
+
+async def _complete_missing_findings(
+    *,
+    model: BaseChatModel,
+    ledger: ResearchLedger,
+    findings: list[ResearchFindings],
+    model_budget: RunModelBudget | None,
+    run_id: str,
+    project_id: str,
+) -> list[ResearchFindings]:
+    """Ask for the findings of a task that ended without a structured answer.
+
+    The provider sometimes answers in prose instead of calling the structured
+    output tool. The same schema is then requested with the tool call required,
+    which is the form this endpoint answers reliably.
+    """
+    answered = {finding.task_id for finding in findings}
+    for task_id in sorted(ledger.registered_tasks - answered):
+        evidence_ids = sorted(ledger.task_evidence_ids.get(task_id, set()))
+        sources = []
+        for evidence_id in evidence_ids:
+            record = ledger.evidence.get(evidence_id)
+            if record is None:
+                continue
+            sources.append(
+                f"evidence_id: {evidence_id}\nurl: {record.source_url}\n"
+                f"text:\n{ledger.evidence_content.get(evidence_id, '')[:6000]}"
+            )
+        if not sources:
+            continue
+        task = ledger.tasks[task_id]
+        try:
+            arguments = stream_tool_arguments(
+                model,
+                [
+                    SystemMessage(content=FINDINGS_REQUEST_PROMPT.format(
+                        task_id=task_id,
+                        question=task.question,
+                        sources="\n\n".join(sources),
+                    ))
+                ],
+                ResearchFindings,
+                config={"callbacks": [model_budget]} if model_budget else None,
+            )
+            finding = ResearchFindings.model_validate(arguments)
+        except Exception as exc:
+            ledger.warnings.append(
+                f"Task {task_id} did not return structured findings ({type(exc).__name__})."
+            )
+            continue
+        if finding.task_id not in ledger.registered_tasks:
+            ledger.warnings.append("Discarded findings whose task_id did not match an executed plan question.")
+            continue
+        if _normalize_words(finding.research_question) != _normalize_words(task.question):
+            finding = finding.model_copy(update={"research_question": task.question})
+        findings.append(finding)
+    return findings
 
 
 def _research_completion_status(

@@ -7,8 +7,11 @@ fenced JSON in its default mode, which Pydantic cannot parse.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
+from langchain_core.language_models import BaseChatModel
+from langchain_core.utils.function_calling import convert_to_openai_function
 from langchain_openai import ChatOpenAI
 
 from procurement_agent.infra import Settings
@@ -32,3 +35,35 @@ def build_chat_model(settings: Settings, *, timeout: int = 45) -> ChatOpenAI:
 def structured(model: ChatOpenAI, schema: Any) -> Any:
     """Bind a Pydantic schema using function-calling structured output."""
     return model.with_structured_output(schema, method="function_calling")
+
+
+def stream_tool_arguments(
+    model: BaseChatModel,
+    messages: list[Any],
+    schema: Any,
+    *,
+    max_tokens: int = 32_000,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Collect one tool call's arguments from a streamed response.
+
+    The gateway drops long non-streaming requests, so the call is streamed and
+    the tool call arguments are accumulated. The tool call is required, which
+    is the form this endpoint answers in a schema.
+    """
+    tool = convert_to_openai_function(schema)
+    bound = model.bind_tools([tool], tool_choice=tool["name"])
+    aggregated: Any = None
+    for chunk in bound.stream(messages, config={"max_tokens": max_tokens, **(config or {})}):
+        aggregated = chunk if aggregated is None else aggregated + chunk
+    if aggregated is None:
+        raise ValueError("The model returned no response")
+    calls = getattr(aggregated, "tool_calls", None) or []
+    if not calls:
+        raise ValueError("The model did not call the required tool")
+    arguments = calls[0].get("args")
+    if isinstance(arguments, str):
+        arguments = json.loads(arguments)
+    if not isinstance(arguments, dict):
+        raise ValueError("The tool call arguments must be a JSON object")
+    return arguments
