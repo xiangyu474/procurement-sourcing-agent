@@ -224,6 +224,24 @@ class ResearchInputError(ValueError):
     """The demand or source data cannot support public research safely."""
 
 
+def _as_requirement_compilation(
+    compilation: RequirementCompilation | dict[str, Any],
+) -> RequirementCompilation:
+    """Accept the M1 compiler object or its persisted DemandIntakeResult envelope.
+
+    The Worker stores analysis/history metadata alongside requirements. Only
+    RequirementCompilation fields cross into sourcing planning; optional
+    history metadata is passed separately and never placed in web prompts.
+    """
+    if isinstance(compilation, RequirementCompilation):
+        return compilation
+    if not isinstance(compilation, dict):
+        raise ResearchInputError("M2 input must be a RequirementCompilation or persisted demand result")
+    allowed_fields = set(RequirementCompilation.model_fields)
+    canonical_payload = {key: value for key, value in compilation.items() if key in allowed_fields}
+    return RequirementCompilation.model_validate(canonical_payload)
+
+
 def build_sourcing_plan(
     *,
     model: BaseChatModel,
@@ -237,11 +255,7 @@ def build_sourcing_plan(
     now: datetime | None = None,
 ) -> SourcingPlan:
     """Ask the model for a structured strategy, then enforce source/budget rules."""
-    demand = (
-        compilation
-        if isinstance(compilation, RequirementCompilation)
-        else RequirementCompilation.model_validate(compilation)
-    )
+    demand = _as_requirement_compilation(compilation)
     requirements = demand.requirements
     if not requirements:
         raise ResearchInputError("M2 public research requires at least one structured Requirement")
@@ -830,11 +844,7 @@ async def run_sourcing_research(
     history_availability: str = "NOT_PROVIDED",
 ) -> ResearchRunBundle:
     """Create a plan, run the Deep Agents Supervisor/Researcher loop, normalize evidence."""
-    demand = (
-        compilation
-        if isinstance(compilation, RequirementCompilation)
-        else RequirementCompilation.model_validate(compilation)
-    )
+    demand = _as_requirement_compilation(compilation)
     now = datetime.now(UTC)
     model_budget = RunModelBudget(max_model_calls=min(settings.max_model_calls, 30))
     plan = build_sourcing_plan(

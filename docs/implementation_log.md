@@ -66,7 +66,7 @@ Both official XLSX files parse as 1,000 non-empty rows, 38 columns, header row 8
 
 ## M2 — SourcingPlan, Tavily research and Supplier Intelligence
 
-**Status: local vertical slice implemented; migration 0005 applied remotely; Worker/Container deployment and cloud acceptance pending. Do not call M2 complete yet.**
+**Status: local vertical slice implemented; migrations 0005/0006 and LangSmith secret are configured remotely; final Worker/Container review fixes and cloud acceptance pending. Do not call M2 complete yet.**
 
 ### Local implementation
 
@@ -79,17 +79,17 @@ Both official XLSX files parse as 1,000 non-empty rows, 38 columns, header row 8
 
 ### M2 tests and live signal
 
-- Latest local unit/API/migration suite after the review fixes: **60 passed**.
+- Latest local unit/API/migration suite after the review fixes: **61 passed**.
 - `npx tsc --noEmit`: **PASS**; `uv run --python 3.11 python -m compileall -q src scripts tests`: **PASS**; Ruff checks for changed M2 code/tests/scripts: **PASS**.
 - Live trials produced both successful research artifacts and correctly reported partials. One earlier bounded trial collected **2 researcher tasks, 4 searches, 3 extracts, 2 suppliers, 3 products and 12 source-supported Claims**, with a plan revision. The latest strict-plan trial returned **PARTIAL / BUDGET_EXHAUSTED** at 15 model calls, with 2 tasks, 4 searches, 4 extracts, 3 candidates and 6 source-supported Claims; two candidates had exact model codes (`IPC501-5M-B`, `T-BC-IP5M-Z-2`) with locatable public datasheet/catalog evidence. It did not claim qualification; source-specific UNKNOWNs remain.
 - A separate live attempt timed out at the Genesis endpoint. Partial evidence capture and distinctions between `PARTIAL`, `FAILED`, `MODEL_TIMEOUT`, `RESEARCH_INPUT_REJECTED` and `BUDGET_EXHAUSTED` now have deterministic tests. Per-call model durations, token usage (when returned) and trace run IDs are included in run metrics.
 
 ### Deployment still required
 
-- **Not deployed:** migrations 0005 and 0006 are applied, but Worker/gateway M2 code and the updated Container image have not been pushed/deployed. No claim of cloud D1/R2 persistence or cloud reuse is made yet.
-- After code review and Workers Builds deployment, run `uv run --python 3.11 python scripts/verify_m2_cloud_api.py` using ignored `.demo_access_token`. It caps each run at 4 searches, 4 fetches, 2 tasks, 2 plan revisions and 15 model calls; it verifies cold start, same-project rerun, cross-project reuse, D1 associations, R2 snapshot/hash/quote readback and project-candidate scope.
-- M2 hard-caps model calls and records prompt/completion tokens, per-call duration and trace IDs; the provider does not always report token usage, and exact currency cost remains unverified. Per official Cloudflare Workflows retry guidance, the M2 research step is configured with zero automatic retries so a container failure cannot silently reset its in-memory provider budget; M0 SPIKE keeps its prior bounded retries. Mid-research termination still produces a visible failure, but the cloud partial-output path must be verified.
-- At the last read-only secret-name check, Cloudflare did not have a `LANGSMITH_API_KEY` secret. The Worker forwards it only when configured; set the secret without displaying its value before cloud trace acceptance.
+- **Migrations 0005 and 0006 are applied remotely; the final Worker/Container fix is not yet deployed.** A first cloud M2 run exposed that the Container treated the persisted M1 `DemandIntakeResult` envelope as a bare `RequirementCompilation` and failed with `ValidationError`. `_as_requirement_compilation` now keeps only the canonical Requirement DSL fields, and a regression test covers the persisted envelope. This fix is local and must be pushed/rebuilt before cloud acceptance; no successful cloud D1/R2 write or reuse result is claimed.
+- After the final commit is deployed, run `uv run --python 3.11 python scripts/verify_m2_cloud_api.py` using ignored `.demo_access_token`. It caps each run at 4 searches, 4 fetches, 2 tasks, 2 plan revisions and 15 model calls; it verifies cold start, exact-model candidates, same-project rerun, cross-project reuse, D1 associations, R2 snapshot/hash/quote readback, project-candidate scope and LangSmith trace metadata.
+- M2 hard-caps model calls and records prompt/completion tokens, per-call duration and trace IDs; the provider does not always report token usage, and exact currency cost remains unverified. Per the [Cloudflare Workflows retry guidance](https://developers.cloudflare.com/workflows/build/sleeping-and-retrying/), the M2 research step is configured with zero automatic retries so a container failure cannot silently reset its in-memory provider budget; M0 SPIKE keeps its prior bounded retries. Mid-research termination still produces a visible failure, but the cloud partial-output path must be verified.
+- `LANGSMITH_API_KEY` is now configured as a Cloudflare Secret without exposing its value. Cloud M2 trace emission still needs verification after the final Worker/Container rebuild.
 
 ### Not implemented (later scope)
 

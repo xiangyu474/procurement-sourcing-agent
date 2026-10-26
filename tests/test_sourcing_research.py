@@ -244,6 +244,24 @@ class _ResearcherHarness:
         return {"messages": messages}
 
 
+def test_planner_accepts_the_persisted_m1_demand_result_envelope():
+    envelope = make_compilation().model_dump(mode="json")
+    envelope.update({
+        "analysis_version": 1,
+        "history_availability": "NOT_PROVIDED",
+        "history_dataset_id": None,
+        "issues": ["history remains optional"],
+    })
+    plan = build_sourcing_plan(
+        model=_FixedStructuredModel(make_proposal(1)),
+        compilation=envelope,
+        project_id="p-1",
+        run_id="persisted-m1-envelope",
+        settings=load_settings(),
+    )
+    assert plan.prioritized_requirement_ids == ["req-1"]
+
+
 def test_plan_guard_removes_unsupported_geo_and_goal_assumptions(monkeypatch):
     proposal = SourcingPlanProposal(
         goal=SourcingGoal.ALTERNATE_SOURCE,
@@ -380,6 +398,8 @@ def test_model_calls_share_a_hard_run_budget():
     from uuid import uuid4
 
     budget = RunModelBudget(max_model_calls=1)
+    trace_id = uuid4()
+    budget.on_chain_start({}, {}, run_id=trace_id, parent_run_id=None, metadata={"sourcing_run_id": "run-1", "research_phase": "SUPERVISOR"})
     call_id = uuid4()
     budget.on_chat_model_start({}, [], run_id=call_id, metadata={"research_phase": "PLAN"})
     from langchain_core.outputs import LLMResult
@@ -395,7 +415,7 @@ def test_model_calls_share_a_hard_run_budget():
         "prompt_tokens": 123,
         "completion_tokens": 45,
         "token_usage_observed": True,
-        "trace_run_ids": {},
+        "trace_run_ids": {"SUPERVISOR": str(trace_id)},
         "model_call_details": [{
             "call_id": str(call_id),
             "stage": "PLAN",
