@@ -26,6 +26,7 @@ from procurement_agent.domain.sourcing import (
     ResearchFindings,
     ResearchQuestion,
     ResearchQuestionProposal,
+    ReuseDecisionProposal,
     SourcingGoal,
     SourcingPlan,
     SourcingPlanProposal,
@@ -354,6 +355,33 @@ def test_missing_requirement_association_is_not_guessed_for_multiple_requirement
         )
 
 
+def test_reuse_decision_without_requirement_id_is_ignored_for_multisku_project():
+    compilation = make_compilation()
+    second_requirement = compilation.requirements[0].model_copy(
+        update={"requirement_id": "req-2", "product_name": "network access point"}
+    )
+    multi = compilation.model_copy(update={"requirements": [compilation.requirements[0], second_requirement]})
+    proposal = make_proposal(1).model_copy(update={
+        "reuse_decisions": [ReuseDecisionProposal(
+            intelligence_id="prod-1",
+            decision="REUSE",
+            rationale="The cached product could be a useful lead for the project.",
+        )]
+    })
+    plan = build_sourcing_plan(
+        model=_FixedStructuredModel(proposal),
+        compilation=multi,
+        project_id="p-1",
+        run_id="multisku-reuse",
+        settings=load_settings(),
+        existing_intelligence=[{"product_id": "prod-1", "last_observed_at": "2026-10-01T00:00:00+00:00"}],
+        now=datetime(2026, 10, 25, tzinfo=UTC),
+    )
+    assert plan.reuse_intelligence_ids == []
+    assert plan.ignored_intelligence_ids == ["prod-1"]
+    assert plan.reuse_decisions[0].association_origin == RequirementAssociationOrigin.UNASSOCIATED_IGNORED
+
+
 def test_plan_explains_recent_reuse_but_forces_stale_intelligence_refresh():
     proposal = SourcingPlanProposal(
         goal=SourcingGoal.UNKNOWN,
@@ -451,6 +479,23 @@ def test_research_tools_cannot_override_plan_question_or_channel():
     assert set(search_tool.args) == {"task_id", "query", "purpose"}
     assert set(fetch_tool.args) == {"task_id", "url"}
     assert "exactly" in search_tool.args["task_id"]["description"].lower()
+
+
+def test_fetch_tool_returns_recoverable_rejection_for_guessed_url_without_fetching_it():
+    content = FakeContentProvider()
+    ledger = ResearchLedger(
+        project_id="p-1", run_id="run-1", plan=make_plan(),
+        search_provider=FakeSearchProvider(), content_provider=content, private_terms=[],
+    )
+    researcher_tools, _ = build_research_tools(ledger)
+    fetch_tool = next(item for item in researcher_tools if item.name == "fetch_public_source")
+    response = fetch_tool.invoke({"task_id": "q-1", "url": "https://manufacturer.example/product"})
+    assert response["error_code"] == "RESEARCH_INPUT_REJECTED"
+    assert "call search_public_web first" in response["message"]
+    assert ledger.fetch_calls == 0
+    assert content.calls == []
+    assert ledger.actions[-1].decision == "RESEARCH_INPUT_REJECTED"
+    assert ledger.actions[-1].query is None
 
 
 def test_ledger_blocks_internal_values_and_private_or_unlisted_urls():

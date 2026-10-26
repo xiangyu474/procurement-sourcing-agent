@@ -12,16 +12,16 @@ import hashlib
 import json
 import os
 import time
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 import httpx
+from pptx import Presentation
+from pptx.util import Inches
 
 DEFAULT_BASE_URL = "https://procurement-sourcing-gateway.xiangyu474.workers.dev"
-DEMAND = (
-    "寻找工业网络摄像机，要求图像分辨率至少 5MP；请发现潜在供应商和可追溯的具体产品型号，"
-    "不指定采购区域。"
-)
+PRODUCT_NAME = "5MP 工业网络摄像机"
 BUDGET = {
     "max_search_calls": 4,
     "max_fetches": 4,
@@ -40,19 +40,56 @@ def _request(client: httpx.Client, method: str, path: str, **kwargs: Any) -> dic
     raise RuntimeError(f"M2 API {method} {path} did not return JSON")
 
 
+def _requirement_pptx() -> bytes:
+    """Small deterministic M1 fixture; it contains no real buyer or supplier data."""
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    table = slide.shapes.add_table(2, 3, Inches(1), Inches(1), Inches(6), Inches(2)).table
+    table.cell(0, 0).text = "产品名称"
+    table.cell(0, 1).text = "采购数量（套）"
+    table.cell(0, 2).text = "预计采购单价（元/套）"
+    table.cell(1, 0).text = PRODUCT_NAME
+    table.cell(1, 1).text = "10"
+    table.cell(1, 2).text = "100"
+    output = BytesIO()
+    presentation.save(output)
+    return output.getvalue()
+
+
 def _create_compiled_project(client: httpx.Client, title: str) -> str:
-    created = _request(
+    created = _request(client, "POST", "/api/projects", json={"title": title})
+    project_id = str(created["project_id"])
+    _request(
         client,
         "POST",
-        "/api/projects",
-        json={"title": title, "requirement_text": DEMAND},
+        f"/api/projects/{project_id}/upload-sessions",
+        data={"purpose": "REQUIREMENT"},
+        files={"file": ("m2-test-requirement.pptx", _requirement_pptx(), "application/vnd.openxmlformats-officedocument.presentationml.presentation")},
     )
-    project_id = str(created["project_id"])
     _request(client, "POST", f"/api/projects/{project_id}/requirement-compile")
     readback = _request(client, "GET", f"/api/projects/{project_id}/requirements")
-    if not readback.get("compilation", {}).get("requirements"):
-        raise RuntimeError("text demand did not compile into a structured Requirement")
+    requirements = readback.get("compilation", {}).get("requirements", [])
+    if not requirements or requirements[0].get("product_name") != PRODUCT_NAME:
+        raise RuntimeError("deterministic PPTX input did not compile to the expected Requirement")
     return project_id
+
+
+def _verify_langsmith_trace(run_id: str, research: dict[str, Any]) -> dict[str, str]:
+    metrics = research.get("metrics", {})
+    trace_ids = metrics.get("trace_run_ids", {})
+    trace_id = trace_ids.get("SUPERVISOR")
+    if not metrics.get("langsmith_tracing_enabled") or not trace_id:
+        raise RuntimeError(f"run {run_id} did not record an enabled Supervisor trace")
+    try:
+        from langsmith import Client
+
+        trace = Client().read_run(trace_id)
+    except Exception as exc:
+        raise RuntimeError(f"run {run_id} Supervisor trace is not readable from LangSmith") from exc
+    metadata = (trace.extra or {}).get("metadata", {})
+    if str(trace.id) != str(trace_id) or metadata.get("sourcing_run_id") != run_id:
+        raise RuntimeError(f"run {run_id} trace ID does not resolve to its LangSmith run")
+    return {"trace_id": str(trace.id), "trace_name": str(trace.name or "")}
 
 
 def _run_project(client: httpx.Client, project_id: str, label: str) -> dict[str, Any]:
@@ -81,6 +118,14 @@ def _run_project(client: httpx.Client, project_id: str, label: str) -> dict[str,
             "inspect the associated LangSmith project trace and Cloudflare run events"
         )
     research = _request(client, "GET", f"/api/runs/{run_id}/research")
+    langsmith_trace = _verify_langsmith_trace(run_id, research)
+    research_metrics = research.get("metrics", {})
+    if research_metrics.get("status") != "COMPLETED" or research_metrics.get("stop_reason_code"):
+        raise RuntimeError(
+            f"run {label} ({run_id}) research was partial/incomplete: status={research_metrics.get('status')}, "
+            f"stop_reason={research_metrics.get('stop_reason_code')}, "
+            f"langsmith_trace={langsmith_trace['trace_id']}"
+        )
     candidates_response = _request(client, "GET", f"/api/projects/{project_id}/candidates", params={"run_id": run_id})
     candidates = candidates_response.get("candidates", [])
     return {
@@ -90,6 +135,7 @@ def _run_project(client: httpx.Client, project_id: str, label: str) -> dict[str,
         "status": run.get("status"),
         "research": research,
         "candidates": candidates,
+        "langsmith_trace": langsmith_trace,
     }
 
 
@@ -97,6 +143,11 @@ def _verify_first_run(client: httpx.Client, result: dict[str, Any]) -> None:
     research = result["research"]
     candidates = result["candidates"]
     metrics = research.get("metrics", {})
+    if metrics.get("status") != "COMPLETED" or metrics.get("stop_reason_code"):
+        raise RuntimeError(
+            "cold-start research was not complete; "
+            f"status={metrics.get('status')}, stop_reason={metrics.get('stop_reason_code')}"
+        )
     if not candidates or not metrics.get("candidate_count"):
         raise RuntimeError(
             "cold start produced no persisted Longlist candidate; "
@@ -108,8 +159,8 @@ def _verify_first_run(client: httpx.Client, result: dict[str, Any]) -> None:
         raise RuntimeError("run exceeded the configured researcher task cap")
     if metrics.get("model_calls", 0) > BUDGET["max_model_calls"]:
         raise RuntimeError("run exceeded the shared model-call budget")
-    if not metrics.get("langsmith_tracing_enabled") or not metrics.get("trace_run_ids", {}).get("SUPERVISOR"):
-        raise RuntimeError("LangSmith tracing or the Supervisor trace ID was not recorded")
+    if not result.get("langsmith_trace", {}).get("trace_id"):
+        raise RuntimeError("Supervisor trace was not verified in LangSmith")
     plan = research.get("plan") or {}
     if plan.get("target_markets"):
         raise RuntimeError("research plan invented a target market that was not in the demand")
@@ -146,6 +197,12 @@ def _verify_first_run(client: httpx.Client, result: dict[str, Any]) -> None:
 
 def main() -> None:
     repo = Path(__file__).resolve().parents[1]
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(repo / ".env", override=False)
+    except ImportError:
+        pass
     token_path = Path(os.getenv("DEMO_ACCESS_TOKEN_FILE", str(repo / ".demo_access_token")))
     if not token_path.exists():
         raise SystemExit("Missing ignored local .demo_access_token file; refusing to print or request without it.")
@@ -155,7 +212,7 @@ def main() -> None:
     base_url = os.getenv("PROCUREMENT_AGENT_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
     headers = {"authorization": f"Bearer {token}"}
 
-    with httpx.Client(base_url=base_url, headers=headers, timeout=httpx.Timeout(60)) as client:
+    with httpx.Client(base_url=base_url, headers=headers, timeout=httpx.Timeout(300)) as client:
         # 1. Cold-start public research and exact evidence/source-snapshot checks.
         cold_project = _create_compiled_project(client, "M2 cold-start acceptance")
         cold = _run_project(client, cold_project, "cold")
@@ -206,17 +263,20 @@ def main() -> None:
             "metrics": cold["research"].get("metrics"),
             "langsmith_tracing_enabled": (cold["research"].get("metrics") or {}).get("langsmith_tracing_enabled"),
             "trace_run_ids": (cold["research"].get("metrics") or {}).get("trace_run_ids", {}),
+            "langsmith_trace": cold["langsmith_trace"],
             "model_call_details": (cold["research"].get("metrics") or {}).get("model_call_details", []),
         },
         "same_project_repeat": {
             "run_id": repeat["run_id"],
             "reuse_refresh_ignore": repeat_decisions,
+            "langsmith_trace": repeat["langsmith_trace"],
         },
         "cross_project_reuse": {
             "project_id": cross["project_id"],
             "run_id": cross["run_id"],
             "candidate_count": len(cross["candidates"]),
             "reused_intelligence_ids": cross_decisions.get("reuse_intelligence_ids", []),
+            "langsmith_trace": cross["langsmith_trace"],
         },
         "budgets_per_run": BUDGET,
     }

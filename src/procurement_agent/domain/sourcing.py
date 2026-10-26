@@ -46,6 +46,7 @@ class RequirementAssociationOrigin(StrEnum):
     PLAN_EXPLICIT = "PLAN_EXPLICIT"
     SINGLE_REQUIREMENT_FALLBACK = "SINGLE_REQUIREMENT_FALLBACK"
     SUPERVISOR_FOLLOWUP = "SUPERVISOR_FOLLOWUP"
+    UNASSOCIATED_IGNORED = "UNASSOCIATED_IGNORED"
 
 
 class CandidateStage(StrEnum):
@@ -124,12 +125,27 @@ class ResearchQuestionProposal(BaseModel):
     rationale: str = Field(min_length=8, max_length=600)
 
 
-class IntelligenceReuseDecision(BaseModel):
+class ReuseDecisionProposal(BaseModel):
+    """LLM output describing whether an existing public lead applies to a Requirement."""
+
     model_config = ConfigDict(extra="ignore")
 
     intelligence_id: str
     decision: ReuseDecision
     rationale: str = Field(min_length=8, max_length=500)
+    requirement_id: str | None = None
+
+
+class IntelligenceReuseDecision(BaseModel):
+    """Canonical, persisted reuse/refresh/ignore decision with requirement provenance."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    intelligence_id: str
+    decision: ReuseDecision
+    rationale: str = Field(min_length=8, max_length=500)
+    requirement_id: str | None = None
+    association_origin: RequirementAssociationOrigin
 
 
 class SourcingPlanProposal(BaseModel):
@@ -147,7 +163,7 @@ class SourcingPlanProposal(BaseModel):
     rationale: str = Field(min_length=8, max_length=1500)
     assumptions_for_review: list[str] = Field(default_factory=list, max_length=20)
     missing_material_inputs: list[str] = Field(default_factory=list, max_length=20)
-    reuse_decisions: list[IntelligenceReuseDecision] = Field(default_factory=list, max_length=50)
+    reuse_decisions: list[ReuseDecisionProposal] = Field(default_factory=list, max_length=50)
     stopping_criteria: list[str] = Field(min_length=1, max_length=12)
 
 
@@ -172,6 +188,7 @@ class SourcingPlan(BaseModel):
     reuse_intelligence_ids: list[str] = Field(default_factory=list, max_length=50)
     refresh_intelligence_ids: list[str] = Field(default_factory=list, max_length=50)
     ignored_intelligence_ids: list[str] = Field(default_factory=list, max_length=50)
+    reuse_decisions: list[IntelligenceReuseDecision] = Field(default_factory=list, max_length=100)
     stopping_criteria: list[str] = Field(min_length=1, max_length=12)
     budget: ResearchBudget = Field(default_factory=ResearchBudget)
     created_at: datetime
@@ -188,6 +205,12 @@ class SourcingPlan(BaseModel):
         requirement_ids = set(self.prioritized_requirement_ids)
         if any(question.requirement_id not in requirement_ids for question in self.research_questions):
             raise ValueError("research questions must reference a prioritized requirement")
+        if any(
+            decision.decision != ReuseDecision.IGNORE
+            and (decision.requirement_id is None or decision.requirement_id not in requirement_ids)
+            for decision in self.reuse_decisions
+        ):
+            raise ValueError("REUSE/REFRESH decisions must reference a prioritized Requirement")
         if self.plan_revision > 1 and not (self.revision_reason or "").strip():
             raise ValueError("revised plans require a revision_reason")
         if self.target_markets and self.target_markets_origin is None:

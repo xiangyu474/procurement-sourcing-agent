@@ -94,9 +94,14 @@ may produce model “EX-123” with model_quote “EX-123”. If the source tabl
 model_quote for each; never combine the models or their claims.
 
 One-shot tool sequence: copy the exact planned task_id, call search_public_web
-once with a purpose-built query and closed purpose enum, then fetch_public_source
-once for the best matching returned URL. The Supervisor decides whether another
-search task is justified. Inside candidate_claims, use `supplier_evidence_id`,
+once with a purpose-built query and closed purpose enum, then copy one `url`
+verbatim from that same call's `results` and pass it to fetch_public_source with
+the same task_id. A URL remembered from prior knowledge, another task, or a model
+answer is never eligible, even if it looks official. If you have no search result,
+do not call fetch_public_source; report the gap. Example only: search result
+`https://manufacturer.example/products/ex-123` may be fetched only after that exact URL is
+returned for this task. The Supervisor decides whether another search task is
+justified. Inside candidate_claims, use `supplier_evidence_id`,
 `supplier_name_quote`, `product_evidence_id`, `product_name_quote`, `model`,
 `model_quote`, `supplier_claims`, and `product_claims` exactly as named by the
 schema; each nested ClaimProposal has `attribute`, `value`, `unit`,

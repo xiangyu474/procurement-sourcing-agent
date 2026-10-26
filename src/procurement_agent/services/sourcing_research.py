@@ -29,6 +29,7 @@ from procurement_agent.domain.sourcing import (
     ClaimProposal,
     EvidenceRecord,
     IdentityStatus,
+    IntelligenceReuseDecision,
     ModelCallMetric,
     ProductIntelligenceRecord,
     ProvenanceType,
@@ -42,6 +43,7 @@ from procurement_agent.domain.sourcing import (
     ResearchRunStatus,
     ResearchTask,
     ReuseDecision,
+    ReuseDecisionProposal,
     SourcingGoal,
     SourcingPlan,
     SourcingPlanProposal,
@@ -69,8 +71,12 @@ supplier and exact product/model, not generic market summaries. Each research
 question must target a requirement and identify an expected evidence type and
 channel. Existing intelligence is a reusable lead, not current qualification. For each relevant
 existing intelligence_id choose REUSE (recent lead), REFRESH (stale/critical), or
-IGNORE (not relevant); do not attach unrelated entities to this project. For each
-standardized item, create a product-datasheet question aimed at finding the exact
+IGNORE (not relevant); do not attach unrelated entities to this project. When
+prior entries are supplied, emit one reuse_decision per relevant entry. For
+REUSE/REFRESH, copy the exact Requirement ID that the lead targets; if that
+association is unclear, choose IGNORE rather than guessing. If no relevant entry
+exists, return an empty reuse_decisions list. For each standardized
+item, create a product-datasheet question aimed at finding the exact
 order/model code; a product family/series name is not an exact model. No search
 result count implies market size, capacity, or market share. Do not put
 project IDs, historical supplier names, quantities, planned prices, budgets, or
@@ -384,37 +390,6 @@ def build_sourcing_plan(
         markets_origin = None
         assumptions.append("No target market is an explicit requirement; no geographic restriction was applied.")
 
-    valid_prior_ids = {
-        str(row.get("intelligence_id") or row.get("product_id") or row.get("id"))
-        for row in prior
-        if row.get("intelligence_id") or row.get("product_id") or row.get("id")
-    }
-    decisions = {decision.intelligence_id: decision for decision in proposal.reuse_decisions}
-    current_time = now or datetime.now(UTC)
-    reuse_ids: list[str] = []
-    refresh_ids: list[str] = []
-    ignored_ids: list[str] = []
-    for prior_id in sorted(valid_prior_ids):
-        decision = decisions.get(prior_id)
-        record = next(
-            row for row in prior
-            if str(row.get("intelligence_id") or row.get("product_id") or row.get("id")) == prior_id
-        )
-        stale = _is_stale(
-            record.get("last_observed_at"), current_time,
-            settings.intelligence_stale_after_days, record.get("freshness"),
-        )
-        if decision is None or decision.decision == ReuseDecision.IGNORE:
-            ignored_ids.append(prior_id)
-            continue
-        decision_value = decision.decision
-        if stale and decision_value == ReuseDecision.REUSE:
-            decision_value = ReuseDecision.REFRESH
-        if decision_value == ReuseDecision.REUSE:
-            reuse_ids.append(prior_id)
-        else:
-            refresh_ids.append(prior_id)
-
     prioritized_requirement_ids = list(dict.fromkeys(
         requirement_id for requirement_id in proposal.prioritized_requirement_ids
         if requirement_id in requirement_ids
@@ -424,6 +399,90 @@ def build_sourcing_plan(
             prioritized_requirement_ids.append(question.requirement_id)
     if not prioritized_requirement_ids:
         prioritized_requirement_ids = [requirements[0].requirement_id]
+
+    valid_prior_records = {
+        str(row.get("intelligence_id") or row.get("product_id") or row.get("id")): row
+        for row in prior
+        if row.get("intelligence_id") or row.get("product_id") or row.get("id")
+    }
+    decisions_by_id: dict[str, ReuseDecisionProposal] = {}
+    for decision in proposal.reuse_decisions:
+        if decision.intelligence_id not in valid_prior_records:
+            issues.append("Discarded a reuse decision for an intelligence ID outside the supplied library context.")
+            continue
+        if decision.intelligence_id in decisions_by_id:
+            issues.append("Discarded a duplicate reuse decision for one intelligence ID.")
+            continue
+        decisions_by_id[decision.intelligence_id] = decision
+
+    current_time = now or datetime.now(UTC)
+    reuse_ids: list[str] = []
+    refresh_ids: list[str] = []
+    ignored_ids: list[str] = []
+    final_reuse_decisions: list[IntelligenceReuseDecision] = []
+    for prior_id in sorted(valid_prior_records):
+        decision = decisions_by_id.get(prior_id)
+        record = valid_prior_records[prior_id]
+        if decision is None:
+            ignored_ids.append(prior_id)
+            final_reuse_decisions.append(IntelligenceReuseDecision(
+                intelligence_id=prior_id,
+                decision=ReuseDecision.IGNORE,
+                rationale="The planner did not identify this library entry as relevant; it was not attached to the project.",
+                association_origin=RequirementAssociationOrigin.UNASSOCIATED_IGNORED,
+            ))
+            continue
+
+        requirement_id = decision.requirement_id
+        association_origin = RequirementAssociationOrigin.PLAN_EXPLICIT
+        if requirement_id is None and decision.decision != ReuseDecision.IGNORE:
+            if len(requirements) == 1:
+                requirement_id = requirements[0].requirement_id
+                association_origin = RequirementAssociationOrigin.SINGLE_REQUIREMENT_FALLBACK
+                issues.append("Associated an intelligence reuse decision with the only prioritized Requirement because the model omitted its ID.")
+            else:
+                ignored_ids.append(prior_id)
+                final_reuse_decisions.append(IntelligenceReuseDecision(
+                    intelligence_id=prior_id,
+                    decision=ReuseDecision.IGNORE,
+                    rationale="The planner omitted a Requirement association in a multi-requirement project; no association was guessed.",
+                    association_origin=RequirementAssociationOrigin.UNASSOCIATED_IGNORED,
+                ))
+                issues.append("Ignored a reuse decision that omitted its Requirement association in a multi-requirement project.")
+                continue
+        if requirement_id is not None and requirement_id not in requirement_ids:
+            ignored_ids.append(prior_id)
+            final_reuse_decisions.append(IntelligenceReuseDecision(
+                intelligence_id=prior_id,
+                decision=ReuseDecision.IGNORE,
+                rationale="The referenced Requirement ID is not present in the current project.",
+                association_origin=RequirementAssociationOrigin.UNASSOCIATED_IGNORED,
+            ))
+            issues.append("Ignored a reuse decision with an unknown Requirement ID.")
+            continue
+
+        decision_value = decision.decision
+        rationale = decision.rationale
+        stale = _is_stale(
+            record.get("last_observed_at"), current_time,
+            settings.intelligence_stale_after_days, record.get("freshness"),
+        )
+        if stale and decision_value == ReuseDecision.REUSE:
+            decision_value = ReuseDecision.REFRESH
+            rationale += " Source freshness/date hints require a refresh before reuse."
+        final_reuse_decisions.append(IntelligenceReuseDecision(
+            intelligence_id=prior_id,
+            decision=decision_value,
+            rationale=rationale[:500],
+            requirement_id=requirement_id,
+            association_origin=association_origin,
+        ))
+        if decision_value == ReuseDecision.REUSE:
+            reuse_ids.append(prior_id)
+        elif decision_value == ReuseDecision.REFRESH:
+            refresh_ids.append(prior_id)
+        else:
+            ignored_ids.append(prior_id)
 
     budget = ResearchBudget(
         max_search_calls=min(settings.max_search_calls, 12),
@@ -450,6 +509,7 @@ def build_sourcing_plan(
         reuse_intelligence_ids=reuse_ids,
         refresh_intelligence_ids=refresh_ids,
         ignored_intelligence_ids=ignored_ids,
+        reuse_decisions=final_reuse_decisions,
         stopping_criteria=proposal.stopping_criteria,
         budget=budget,
         created_at=current_time,
@@ -623,6 +683,15 @@ class ResearchLedger:
                 self.search_inflight.discard(key)
                 self.condition.notify_all()
 
+    def record_rejected_fetch(self, *, task_id: str) -> None:
+        """Record a rejected URL attempt without persisting its potentially private value."""
+        task = self.register_task(task_id)
+        with self.condition:
+            self.warnings.append(
+                "A researcher fetch URL was rejected because it was not returned by that task's search; no source was fetched."
+            )
+            self._record_action(task_id, task, "fetch_public_source", None, [], "RESEARCH_INPUT_REJECTED", 0, 0)
+
     def fetch(self, *, task_id: str, url: str) -> tuple[EvidenceRecord, str]:
         task = self.register_task(task_id)
         if not _is_public_web_url(url):
@@ -790,10 +859,22 @@ def build_research_tools(ledger: ResearchLedger) -> tuple[list[Any], list[Any]]:
     @tool
     def fetch_public_source(
         task_id: Annotated[str, Field(description="Use the exact question_id used by search_public_web and present in the approved SourcingPlan.")],
-        url: Annotated[str, Field(description="Must be a URL returned by this task's search_public_web call.")],
+        url: Annotated[str, Field(description="Copy verbatim from this exact task's search_public_web results; never use remembered or cross-task URLs.")],
     ) -> dict[str, Any]:
         """Extract source text for a URL returned by the approved plan task's public search."""
-        evidence, content = ledger.fetch(task_id=task_id, url=url)
+        try:
+            evidence, content = ledger.fetch(task_id=task_id, url=url)
+        except ResearchInputError:
+            if task_id not in ledger.tasks:
+                raise
+            ledger.record_rejected_fetch(task_id=task_id)
+            return {
+                "error_code": "RESEARCH_INPUT_REJECTED",
+                "message": (
+                    "No page was fetched. For this exact task, call search_public_web first and then copy one URL "
+                    "verbatim from that tool result; do not retry a guessed or cross-task URL."
+                ),
+            }
         return {
             "evidence_id": evidence.evidence_id,
             "url": evidence.source_url,
@@ -1057,6 +1138,8 @@ def _research_completion_status(
         return ResearchRunStatus.PARTIAL, "SEARCH_PROVIDER_TIMEOUT"
     if any(action.decision in {"SEARCH_FAILED", "FETCH_FAILED", "SOURCE_FETCH_FAILED"} for action in ledger.actions):
         return ResearchRunStatus.PARTIAL, "SOURCE_FETCH_FAILED"
+    if any(action.decision == "RESEARCH_INPUT_REJECTED" for action in ledger.actions) and not bundle.candidates:
+        return ResearchRunStatus.PARTIAL, "RESEARCH_INPUT_REJECTED"
     if not bundle.evidence:
         return ResearchRunStatus.PARTIAL, "NO_FETCHED_EVIDENCE"
     if not bundle.candidates:
@@ -1207,16 +1290,17 @@ def _build_run_bundle(
         for row in existing_intelligence
         if row.get("intelligence_id") or row.get("product_id") or row.get("id")
     }
-    for intelligence_id in reused_ids:
+    for reuse_decision in ledger.plan.reuse_decisions:
+        if reuse_decision.decision != ReuseDecision.REUSE or not reuse_decision.requirement_id:
+            continue
+        intelligence_id = reuse_decision.intelligence_id
         row = existing_by_id.get(intelligence_id)
         supplier_ids = row.get("supplier_ids", []) if row else []
         if row and row.get("supplier_id"):
             supplier_ids = [*supplier_ids, row["supplier_id"]]
         if not row or row.get("type") != "PRODUCT" or not supplier_ids or not row.get("evidence_ids"):
             continue
-        requirement_id = next(iter(ledger.plan.prioritized_requirement_ids), None)
-        if not requirement_id:
-            continue
+        requirement_id = reuse_decision.requirement_id
         for supplier_id in dict.fromkeys(str(value) for value in supplier_ids):
             candidate_id = stable_id("pc", ledger.project_id, requirement_id, supplier_id, intelligence_id)
             candidates.setdefault(
