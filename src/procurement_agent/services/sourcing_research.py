@@ -541,6 +541,8 @@ class ResearchLedger:
         self.condition = threading.Condition(self.lock)
         self.search_calls = 0
         self.fetch_calls = 0
+        self.task_search_calls: dict[str, int] = {}
+        self.task_fetch_calls: dict[str, int] = {}
         self.tasks: dict[str, ResearchQuestion] = {
             item.question_id: item for item in plan.research_questions
         }
@@ -651,7 +653,13 @@ class ResearchLedger:
             if self.search_calls >= self.plan.budget.max_search_calls:
                 self.warnings.append("Shared search-call budget exhausted.")
                 raise ResearchBudgetExceeded("shared search-call budget exhausted")
+            if self.task_search_calls.get(task_id, 0) >= self.plan.budget.max_search_calls_per_task:
+                self.warnings.append(
+                    f"Task {task_id} used its {self.plan.budget.max_search_calls_per_task} search calls."
+                )
+                raise ResearchBudgetExceeded("per-task search-call budget exhausted")
             self.search_calls += 1
+            self.task_search_calls[task_id] = self.task_search_calls.get(task_id, 0) + 1
             self.search_inflight.add(key)
         try:
             results = self.search_provider.search(
@@ -719,7 +727,13 @@ class ResearchLedger:
             if self.fetch_calls >= self.plan.budget.max_fetches:
                 self.warnings.append("Shared page-fetch budget exhausted.")
                 raise ResearchBudgetExceeded("shared page-fetch budget exhausted")
+            if self.task_fetch_calls.get(task_id, 0) >= self.plan.budget.max_fetch_calls_per_task:
+                self.warnings.append(
+                    f"Task {task_id} used its {self.plan.budget.max_fetch_calls_per_task} fetch calls."
+                )
+                raise ResearchBudgetExceeded("per-task page-fetch budget exhausted")
             self.fetch_calls += 1
+            self.task_fetch_calls[task_id] = self.task_fetch_calls.get(task_id, 0) + 1
             self.fetch_inflight.add(normalized)
         try:
             page = self.content_provider.fetch(url, query=task.question, max_chars=80_000)
@@ -846,7 +860,16 @@ def build_research_tools(ledger: ResearchLedger) -> tuple[list[Any], list[Any]]:
         ] = "DISCOVER_SUPPLIER",
     ) -> dict[str, Any]:
         """Search public web for candidates under one exact approved SourcingPlan question. Snippets are not evidence."""
-        results = ledger.search(task_id=task_id, query=query, purpose=purpose)
+        try:
+            results = ledger.search(task_id=task_id, query=query, purpose=purpose)
+        except ResearchBudgetExceeded as exc:
+            return {
+                "error_code": "BUDGET_EXHAUSTED",
+                "message": (
+                    f"No further search is available for this task ({exc}). Stop searching, report what the "
+                    "fetched sources already support, and list the remaining gap."
+                ),
+            }
         return {
             "results": [
                 {"url": item.url, "title": item.title[:500], "snippet": item.snippet[:1000], "rank": item.rank}
@@ -865,6 +888,14 @@ def build_research_tools(ledger: ResearchLedger) -> tuple[list[Any], list[Any]]:
         """Extract source text for a URL returned by the approved plan task's public search."""
         try:
             evidence, content = ledger.fetch(task_id=task_id, url=url)
+        except ResearchBudgetExceeded as exc:
+            return {
+                "error_code": "BUDGET_EXHAUSTED",
+                "message": (
+                    f"No further page fetch is available for this task ({exc}). Stop fetching, report what the "
+                    "fetched sources already support, and list the remaining gap."
+                ),
+            }
         except ResearchInputError:
             if task_id not in ledger.tasks:
                 raise

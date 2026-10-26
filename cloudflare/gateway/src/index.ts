@@ -646,7 +646,7 @@ export class SourcingWorkflow extends WorkflowEntrypoint<Env, RunRequest> {
 				"execute-container-task",
 				{
 					retries: { limit: mode === "SOURCING" ? 0 : 2, delay: "10 seconds", backoff: "exponential" },
-					timeout: "10 minutes",
+					timeout: "20 minutes",
 				},
 				async () => {
 					const container = getContainer(this.env.SOURCING_CONTAINER, "m1-intake");

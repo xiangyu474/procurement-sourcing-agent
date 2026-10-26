@@ -98,6 +98,8 @@ class ResearchBudget(BaseModel):
     max_tasks: int = Field(default=3, ge=1, le=3)
     max_rounds: int = Field(default=2, ge=1, le=3)
     max_model_calls: int = Field(default=18, ge=1, le=30)
+    max_search_calls_per_task: int = Field(default=2, ge=1, le=6)
+    max_fetch_calls_per_task: int = Field(default=2, ge=1, le=6)
 
 
 class ResearchQuestion(BaseModel):

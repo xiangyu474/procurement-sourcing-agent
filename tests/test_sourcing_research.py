@@ -925,3 +925,23 @@ def test_task_without_structured_findings_is_completed_by_a_forced_tool_call(mon
     assert model.forced == 1
     assert bundle.tasks[0].findings is not None
     assert bundle.tasks[0].status == "COMPLETED"
+
+
+def test_search_tool_reports_a_spent_task_budget_instead_of_ending_the_run():
+    plan = make_plan()
+    plan = plan.model_copy(update={"budget": plan.budget.model_copy(update={"max_search_calls_per_task": 1})})
+    search = FakeSearchProvider([
+        SearchResult(url="https://acme.example/a", title="A", snippet="s", rank=1, provider="fake"),
+        SearchResult(url="https://acme.example/b", title="B", snippet="s", rank=2, provider="fake"),
+    ])
+    ledger = ResearchLedger(
+        project_id="p-1", run_id="run-1", plan=plan,
+        search_provider=search, content_provider=FakeContentProvider(), private_terms=[],
+    )
+    researcher_tools, _ = build_research_tools(ledger)
+    search_tool = next(item for item in researcher_tools if item.name == "search_public_web")
+    first = search_tool.invoke({"task_id": "q-1", "query": "industrial camera model", "purpose": "DISCOVER_SUPPLIER"})
+    assert "results" in first
+    second = search_tool.invoke({"task_id": "q-1", "query": "industrial camera datasheet", "purpose": "FIND_PRODUCT_DATASHEET"})
+    assert second["error_code"] == "BUDGET_EXHAUSTED"
+    assert ledger.search_calls == 1
