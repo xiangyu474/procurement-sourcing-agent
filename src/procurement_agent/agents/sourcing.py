@@ -44,8 +44,10 @@ when channels or questions are meaningfully distinct and the shared run budget
 allows it. After first findings, decide whether another non-duplicate research
 question can materially close a gap; do not repeat a fixed query list. If results
 name only a product family/series and not an exact order/model code, plan a
-PRODUCT_DATASHEET follow-up when budget permits. The researcher returns
-source-attributed leads only. Do not claim technical PASS,
+PRODUCT_DATASHEET follow-up when budget permits. Every researcher task gets at
+most 2 searches and 2 fetches, so two tasks fill the shared search budget. Do
+not record a follow-up question you cannot delegate in the same run. The
+researcher returns source-attributed leads only. Do not claim technical PASS,
 formal supplier qualification, current supply capacity, purchasable price, or
 RFQ award. Explain reuse versus refresh decisions and preserve unknowns.
 
@@ -102,8 +104,13 @@ the same task_id. A URL remembered from prior knowledge, another task, or a mode
 answer is never eligible, even if it looks official. If you have no search result,
 do not call fetch_public_source; report the gap. Example only: search result
 `https://manufacturer.example/products/ex-123` may be fetched only after that exact URL is
-returned for this task. The Supervisor decides whether another search task is
-justified. Inside candidate_claims, use `supplier_evidence_id`,
+returned for this task.
+
+You have at most 2 search calls and 2 fetch calls for the whole task. If the
+second fetched page still does not print an exact order or model code, stop
+there and report the gap in `unresolved_gaps`. Searching a third time is not
+allowed and leaves the run without an answer. The Supervisor decides whether
+another search task is justified. Inside candidate_claims, use `supplier_evidence_id`,
 `supplier_name_quote`, `product_evidence_id`, `product_name_quote`, `model`,
 `model_quote`, `supplier_claims`, and `product_claims` exactly as named by the
 schema; each nested ClaimProposal has `attribute`, `value`, `unit`,
