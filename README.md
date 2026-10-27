@@ -73,15 +73,19 @@ npx wrangler deploy
 Container 镜像由 Cloudflare 托管构建环境构建（`Dockerfile`），本地不需要安装 Docker。
 镜像构建与首次部署耗时较长，部署后需要等待实例预���绪。
 
-## 当前状态（M0/M1 已验收；M2 云端验收进行中）
+## 当前状态（M0/M1/M2 已通过云端验收）
 
 - **M0 已实测部署**：Cloudflare Worker + Python Container + Workflow + D1/R2；验证任务在浏览器断连后继续、阶段事件、幂等、失败状态和 DOCX 写入/下载。Container 由 Cloudflare Workers Builds 构建，不需本地 Docker。当前仍未完成 SIGTERM 恢复和精确费用观测；已验证断连时长不等于完整的 2–5 分钟门槛证明。
 - **M1 需求抽取已改为模型主导**：PPTX 原文全量按行切分后一次交给模型，模型产出采购行、技术约束、冲突和非结构化需求。原先按固定表头词表抽取 14 条采购行的确定性解析器，以及按引文复核模型读数的校验层，已删除。每组 XLSX 1000 行、38 列、第 8 行表头，模拟供应商隔离不变。代价是需求条数、数量和金额不再由代码保证，结论出处是模型。
-- `scripts/live_official_demand_compile.py` 实测 **PASS**：官方两组 PPTX 各抽到 14 条采购行。Case 1 保留 58 万台与 63 万台的冲突，Case 2 由模型自行算出 5888.66 万元与表格合计 5888.64 万元的差额并报为冲突。单次编译耗时约 3 分 40 秒。编译器改用流式工具调用，因为网关会中断超过约 5 分钟的非流式请求。
-- 历史 XLSX 导入、纯文本需求和 Demand DSL 本身未变。历史 XLSX 仍为每组 1000 行、38 列、第 8 行表头，模拟供应商隔离不变。
-- **M2 已部署，云端端到端验收未通过**：版本化 SourcingPlan；一个 Deep Agents Supervisor 和同类型 Supplier Researcher；精确 question ID/渠道边界；Tavily Search/Extract；共享预算；Claim 引文与 Evidence/R2 快照校验；D1 情报账本、R2 快照、项目 Longlist 和成本/模型调用指标。D1 migrations `0005`/`0006` 已远端应用；Cloudflare LangSmith secret 已配置。最新云端验收运行 `9731f038-5afd-4acd-9392-139b9534202e` 为 `PARTIAL / RESEARCH_INPUT_REJECTED`：研究器试图直接抓取未由该任务搜索返回的 URL（search/fetch 计数均为 0）。该运行的 LangSmith root trace `01a1767f-ed30-72e9-9c3e-a8eae7f008b2` 已从云端实际读回。当前本地修复改为向研究器返回可恢复的拒绝结果，提示其先搜索再按原文 URL 抓取；若最终未恢复，仍以确定性校验拒绝并保留明确停止原因。修复尚未部署或重新验收。
+- 编译器读回模型的**全部**工具调用。长文档下模型会一行需求一次调用，只读第一次会丢掉其余行。模型有时把整个编译包在 `result` 字段里当作 JSON 字符串，或把金额写成 JSON 字符串，这两种形状都会被读回。
+- 需求编译改成 **Workflow 异步执行**。模型读完一整份文档需要几分钟，Worker 请求撑不住这么久。客户端发起编译后轮询结果。
+- `scripts/live_official_demand_compile.py` 实测 **PASS**：官方两组 PPTX 各抽到 14 条采购行。Case 1 保留 58 万台与 63 万台的冲突，Case 2 由模型自行算出 5888.66 万元与表格合计 5888.64 万元的差额并报为冲突。`scripts/verify_m1_cloud_api.py` 云端 **PASS**：匿名 401、文本编译读回、官方 PPTX 14 条需求、Case A 冲突、历史导入与重复导入去重。
+- **M2 云端验收通过**：`scripts/verify_m2_cloud_api.py` 返回 **PASS**。冷启动一次寻源产出带来源的候选与精确型号，同项目重跑给出复用/刷新/忽略判断，跨项目复用共享情报但不共享项目候选。三段运行的 LangSmith root trace 都能从云端读回，metadata 里的 `sourcing_run_id` 与 D1 的 run 一一对应。
+- **M2 已部署并通过云端验收**：版本化 SourcingPlan；一个 Deep Agents Supervisor 和同类型 Supplier Researcher；精确 question ID/渠道边界；Tavily Search/Extract；共享预算；Claim 引文与 Evidence/R2 快照校验；D1 情报账本、R2 快照、项目 Longlist 和成本/模型调用指标。D1 migrations `0005`/`0006` 已远端应用；Cloudflare LangSmith secret 已配置。
+- 工具失败不再中断整轮研究。越界抓取、预算用尽、页面读不出来，都作为可执行指令回到研究器手里，它继续用已抓到的来源作答并把缺口记下来。
+- 研究器答成散文而不是结构化工具调用时，系统会带着已抓到的来源再问一次，这次强制要求工具调用。
 - 一次严格计划映射的 live 本地研究返回 `PARTIAL / BUDGET_EXHAUSTED`：**2 个 Researcher tasks、4 次搜索、4 次抓取、3 个候选、6 条来源支持 Claims、15 次模型调用**；找到了精确型号 `IPC501-5M-B` 与 `T-BC-IP5M-Z-2` 的公开资料。候选仍是未核实 Longlist，像素口径、身份和现售情况都未作采购结论。其他 live 尝试也曾出现模型超时或没有精确型号；均据实标为 PARTIAL。
-- 最新本地验证：`pytest` **64 passed**，`npx tsc --noEmit`、Python `compileall` 和本轮修改文件的 Ruff 检查均通过。新回归测试覆盖多需求下无 Requirement ID 的复用决策不猜关联，以及未授权抓取 URL 的安全拒绝。云端验收脚本现在会拒绝 `PARTIAL` 结果，并通过 `LANGSMITH_API_KEY` 读回与 sourcing run ID 绑定的真实 trace。上述本地修复尚未提交/部署；先按用户授权推进 Git/Workers Build，再重复云端验收。
+- 最新本地验证：`pytest` **73 passed**，`npx tsc --noEmit`、Python `compileall` 和本轮修改文件的 Ruff 检查均通过。回归测试覆盖复用决策不猜关联、越界抓取的安全拒绝、多个工具调用的合并、JSON 字符串形状的读回、单任务预算上限、页面读不出来时的可恢复处理，以及研究器散文回答后的强制结构化补问。
 
 本地验证命令：
 

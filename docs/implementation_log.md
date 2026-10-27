@@ -104,7 +104,7 @@ The requirement count, the quantities, and the amounts are no longer guaranteed 
 
 ## M2 — SourcingPlan, Tavily research and Supplier Intelligence
 
-**Status: M2 is deployed, but cloud end-to-end acceptance has not passed. Do not call M2 complete and do not enter M3.** Migrations 0005/0006 and the Cloudflare LangSmith secret are configured. The latest cloud run exposed a task-local search/fetch protocol violation; local fixes are tested but still require authorized Git/deployment steps and a fresh cloud acceptance.
+**Status: M2 is deployed and passed cloud acceptance. `scripts/verify_m2_cloud_api.py` returns PASS.** Migrations 0005/0006 are applied, the Cloudflare LangSmith secret is configured, and the container image carries the current code. M3 has not started.
 
 ### Local implementation
 
@@ -116,7 +116,6 @@ The requirement count, the quantities, and the amounts are no longer guaranteed 
 - Added `CONTEXT.md`, `scripts/live_m2_research.py`, `scripts/verify_m2_cloud_api.py`, M2 domain/service tests, concurrent source/model dedup cases, partial-failure tests and SQLite migration-contract coverage.
 
 ### M2 tests and live signal
-
 - Latest local unit/API/migration suite after the current uncommitted fixes: **64 passed**.
 - `npx tsc --noEmit`: **PASS**; `uv run --python 3.11 python -m compileall -q src scripts tests`: **PASS**; Ruff checks for changed M2 code/tests/scripts: **PASS**.
 - Added regression coverage: multi-Requirement reuse without an explicit Requirement ID is ignored rather than guessed; an unlisted fetch URL is rejected without fetching or persisting the URL and returns a recoverable instruction to search first.
@@ -134,3 +133,34 @@ The requirement count, the quantities, and the amounts are no longer guaranteed 
 ### Not implemented (later scope)
 
 No M3 requirement-to-product PASS/FAIL gate, historical price comparison, supplier allocation, Data Fusion/SourcingDecisionSnapshot, M4 Web UI or final procurement DOCX report. The DOCX remains an M0 verification artifact; M2 Longlist does not mean technically qualified or RFQ-shortlisted.
+
+## Cloud acceptance results
+
+### M1
+
+`scripts/verify_m1_cloud_api.py`: **PASS**. Anonymous create returns 401, a text-only project compiles and reads back, the official PPTX compiles to 14 requirements, the Case A summary conflict is kept with its sources, and the optional history import stays idempotent.
+
+### M2
+
+`scripts/verify_m2_cloud_api.py`: **PASS**. The three stages and what they prove:
+
+| Stage | What it proves |
+|---|---|
+| Cold start | A research run on a fresh project produces candidates with an exact model, every claim quote is present in its R2 source snapshot, the snapshot hash matches the D1 metadata, and the Supervisor root trace is readable in LangSmith with the run ID in its metadata. |
+| Same project again | A second run on the same project states which prior leads it reused, refreshed, or ignored. |
+| Another project | A different project may reuse the same public leads. The project candidate rows stay separate. |
+
+The run budgets are eight searches, eight fetches, two tasks, two plan revisions, and twenty model calls. The research stays a Longlist. Nothing in the acceptance promotes a candidate past `DISCOVERED_LONG_LIST`.
+
+### What the cloud runs cost
+
+One cold-start run used 4 searches, 4 fetches, 12 model calls, 207 thousand prompt tokens, and 71 thousand completion tokens. The plan call alone took about 114 seconds. The provider does report token usage, but a currency figure is not claimed because the price per token is not confirmed.
+
+## Deployment notes
+
+The GitHub-triggered Cloudflare build stopped responding on 2026-10-26. The Worker code was deployed directly, and the container image was built locally with Podman and rolled out through the Containers API. Two lessons from that path:
+
+- A container image pushed to the registry is not usable by itself. The image preparation API only recognises images that Cloudflare's own build service registered. The rollout must name the image by a tag, not by a digest.
+- The image needs a build host that can reach the package index. A corporate proxy whose address does not resolve inside the build will fail the install.
+
+The dependency versions are pinned in `pyproject.toml` so the image matches the tested environment.

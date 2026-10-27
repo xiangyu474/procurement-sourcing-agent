@@ -128,7 +128,7 @@ class RequirementConstraint(BaseModel):
     validation_issues: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def validate_restricted_value(self) -> "RequirementConstraint":
+    def validate_restricted_value(self) -> RequirementConstraint:
         """Reject values/operators outside the constrained DSL."""
         if not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", self.attribute_key):
             raise ValueError("attribute_key must be a normalized snake_case identifier")
@@ -212,7 +212,7 @@ class PlannedAmount(BaseModel):
     source_quote: str
 
     @model_validator(mode="after")
-    def validate_value(self) -> "PlannedAmount":
+    def validate_value(self) -> PlannedAmount:
         _decimal_string(self.value, "planned amount")
         return self
 
@@ -241,7 +241,7 @@ class Requirement(BaseModel):
     open_questions: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def validate_quantity(self) -> "Requirement":
+    def validate_quantity(self) -> Requirement:
         if self.quantity is not None:
             _decimal_string(self.quantity, "quantity")
         return self
@@ -272,7 +272,7 @@ class RequirementCompilation(BaseModel):
     source_refs: list[str] = Field(default_factory=list)
     requirements: list[Requirement] = Field(default_factory=list)
     unstructured_requirements: list[UnstructuredRequirement] = Field(default_factory=list)
-    conflicts: list["DataConflict"] = Field(default_factory=list)
+    conflicts: list[DataConflict] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
     compiler_version: str = "req-dsl-1.0"
     issues: list[str] = Field(default_factory=list)

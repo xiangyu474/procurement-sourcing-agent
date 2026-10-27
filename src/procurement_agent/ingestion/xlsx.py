@@ -17,7 +17,7 @@ from typing import Any
 
 import openpyxl
 
-from procurement_agent.domain.requirements import HistoryImportResult, HistoricalTransaction
+from procurement_agent.domain.requirements import HistoricalTransaction, HistoryImportResult
 
 MAX_XLSX_BYTES = 32 * 1024 * 1024
 MAX_HEADER_SCAN_ROWS = 30
@@ -124,7 +124,7 @@ def import_historical_xlsx(
     # Dataset identity is workspace/project scoped: the same file imported to
     # two projects must not collide in D1 or leak one project's provenance into
     # another project's history namespace.
-    dataset_id = "hist_" + hashlib.sha256(f"{project_id}:{digest}".encode("utf-8")).hexdigest()[:24]
+    dataset_id = "hist_" + hashlib.sha256(f"{project_id}:{digest}".encode()).hexdigest()[:24]
     duplicate = digest in (previously_imported_hashes or set())
     workbook = openpyxl.load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
 

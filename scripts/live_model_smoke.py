@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from dotenv import load_dotenv
 from langchain_core.messages import ToolMessage
@@ -51,7 +51,7 @@ def main() -> int:
         max_retries=0,
     )
     trace: dict[str, object] = {
-        "started_at": datetime.now(timezone.utc).isoformat(),
+        "started_at": datetime.now(UTC).isoformat(),
         "provider": "OpenAI-compatible chat endpoint",
         "model": os.environ["GENESIS_MODEL_ID"],
     }
@@ -90,7 +90,7 @@ def main() -> int:
             "Return a SmokeResult with ok=true and message='structured-ok'."
         )
         trace["structured_output"] = "PASS" if structured.ok and structured.message else "FAIL"
-        trace["completed_at"] = datetime.now(timezone.utc).isoformat()
+        trace["completed_at"] = datetime.now(UTC).isoformat()
         trace["status"] = (
             "PASS"
             if all(
@@ -108,7 +108,7 @@ def main() -> int:
     except Exception as exc:
         trace.update(
             status="FAIL",
-            failed_at=datetime.now(timezone.utc).isoformat(),
+            failed_at=datetime.now(UTC).isoformat(),
             error_type=type(exc).__name__,
             error=str(exc).replace(os.environ["GENESIS_ACCESS_TOKEN"], "[REDACTED]")[:500],
         )

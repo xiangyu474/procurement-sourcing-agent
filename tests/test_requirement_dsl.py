@@ -2,10 +2,9 @@ import pytest
 from pydantic import ValidationError
 
 from procurement_agent.domain.requirements import (
-    ConstraintOrigin,
     ConstraintOperator,
+    ConstraintOrigin,
     Importance,
-    ParseStatus,
     RequirementConstraint,
     ValueType,
 )

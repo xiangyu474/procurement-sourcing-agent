@@ -2,7 +2,6 @@ from io import BytesIO
 
 import openpyxl
 
-from procurement_agent.domain.requirements import HistoryAvailability
 from procurement_agent.ingestion.xlsx import import_historical_xlsx
 
 

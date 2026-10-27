@@ -8,7 +8,7 @@ slice of the plan.
 from __future__ import annotations
 
 import io
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from docx import Document
 
@@ -25,7 +25,7 @@ def build_spike_docx(run_id: str, stages: list[tuple[str, str]]) -> bytes:
 
     paragraph = document.add_paragraph()
     paragraph.add_run("生成时间：").bold = True
-    paragraph.add_run(datetime.now(timezone.utc).isoformat())
+    paragraph.add_run(datetime.now(UTC).isoformat())
 
     paragraph = document.add_paragraph()
     paragraph.add_run("运行标识：").bold = True

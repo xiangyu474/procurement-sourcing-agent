@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from dotenv import load_dotenv
 
@@ -21,7 +20,7 @@ def main() -> int:
         return 2
 
     provider = TavilySearchProvider(settings.tavily_api_key)
-    started = datetime.now(timezone.utc)
+    started = datetime.now(UTC)
     results = provider.search(
         "Cloudflare Containers official documentation",
         purpose="FIND_PRODUCT_DATASHEET",
