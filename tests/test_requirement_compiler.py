@@ -245,3 +245,30 @@ def test_an_amount_written_as_a_json_string_is_read_as_an_object():
     result = _validated_compilation_payload(payload)
     assert len(result.requirements) == 1
     assert result.requirements[0].planned_unit_price.value == "125.00"
+
+
+def test_a_compilation_wrapped_in_a_json_string_is_unwrapped():
+    from procurement_agent.ingestion.compiler import merge_compilation_payloads
+
+    inner = json.dumps(
+        {
+            "requirements": [{"requirement_id": "r1", "product_name": "产品一"}],
+            "conflicts": [],
+        },
+        ensure_ascii=False,
+    )
+    merged = merge_compilation_payloads([{"result": inner}])
+    assert [item["requirement_id"] for item in merged["requirements"]] == ["r1"]
+
+
+def test_a_requirements_list_written_as_a_json_string_is_read():
+    from procurement_agent.ingestion.compiler import merge_compilation_payloads
+
+    merged = merge_compilation_payloads([
+        {
+            "requirements": json.dumps(
+                [{"requirement_id": "r1", "product_name": "产品一"}], ensure_ascii=False
+            )
+        }
+    ])
+    assert [item["requirement_id"] for item in merged["requirements"]] == ["r1"]

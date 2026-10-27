@@ -1,0 +1,12 @@
+.git
+.venv
+node_modules
+.wrangler
+docs
+scripts
+tests
+cloudflare
+*.log
+.env
+.env.*
+.demo_access_token

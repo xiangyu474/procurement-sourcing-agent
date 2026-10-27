@@ -129,6 +129,34 @@ def compile_requirement_fragments(
     return CompilerResult(compilation=raw, shaping_issues=tuple(raw.issues))
 
 
+def _unwrap_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Read a compilation that the model wrapped or stringified.
+
+    The model sometimes answers with the whole compilation as a JSON string
+    under one key, or with a list of requirements written as a JSON string.
+    """
+    if "requirements" not in payload:
+        for key, value in payload.items():
+            if not isinstance(value, str):
+                continue
+            try:
+                decoded = json.loads(value)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(decoded, dict) and "requirements" in decoded:
+                return decoded
+    for key in ("requirements", "conflicts", "unstructured_requirements"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            try:
+                decoded = json.loads(value)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(decoded, list):
+                payload[key] = decoded
+    return payload
+
+
 def merge_compilation_payloads(payloads: list[dict[str, Any]]) -> dict[str, Any]:
     """Merge the answers of several tool calls into one compilation.
 
@@ -146,7 +174,7 @@ def merge_compilation_payloads(payloads: list[dict[str, Any]]) -> dict[str, Any]
         "tax_rate", "constraints", "source_refs", "parse_status", "open_questions",
     }
     for raw_payload in payloads:
-        payload = dict(raw_payload)
+        payload = _unwrap_payload(dict(raw_payload))
         if not payload.get("requirements") and "product_name" in payload and any(
             key in payload for key in ("requirement_id", "source_product_code", "quantity", "constraints")
         ):
