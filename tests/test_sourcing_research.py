@@ -945,3 +945,26 @@ def test_search_tool_reports_a_spent_task_budget_instead_of_ending_the_run():
     second = search_tool.invoke({"task_id": "q-1", "query": "industrial camera datasheet", "purpose": "FIND_PRODUCT_DATASHEET"})
     assert second["error_code"] == "BUDGET_EXHAUSTED"
     assert ledger.search_calls == 1
+
+
+def test_a_page_the_provider_cannot_read_is_reported_to_the_researcher():
+    url = "https://manufacturer.example/product"
+    search_provider = FakeSearchProvider([
+        SearchResult(url=url, title="product", snippet="hint", rank=1, provider="fake")
+    ])
+
+    class BrokenContentProvider:
+        def fetch(self, *_args, **_kwargs):
+            raise RuntimeError("Tavily Extract returned no source content")
+
+    ledger = ResearchLedger(
+        project_id="p-1", run_id="run-1", plan=make_plan(),
+        search_provider=search_provider, content_provider=BrokenContentProvider(), private_terms=[],
+    )
+    researcher_tools, _ = build_research_tools(ledger)
+    search_tool = next(item for item in researcher_tools if item.name == "search_public_web")
+    fetch_tool = next(item for item in researcher_tools if item.name == "fetch_public_source")
+    results = search_tool.invoke({"task_id": "q-1", "query": "industrial camera model", "purpose": "DISCOVER_SUPPLIER"})
+    response = fetch_tool.invoke({"task_id": "q-1", "url": results["results"][0]["url"]})
+    assert response["error_code"] == "SOURCE_FETCH_FAILED"
+    assert "report the missing source as a gap" in response["message"]

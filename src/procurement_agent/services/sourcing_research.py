@@ -907,6 +907,17 @@ def build_research_tools(ledger: ResearchLedger) -> tuple[list[Any], list[Any]]:
                     "verbatim from that tool result; do not retry a guessed or cross-task URL."
                 ),
             }
+        except Exception as exc:
+            # A page that the provider cannot read is a gap in one source, not
+            # the end of the task. The researcher is told what happened and
+            # continues with the sources it already has.
+            return {
+                "error_code": "SOURCE_FETCH_FAILED",
+                "message": (
+                    f"The page could not be read ({type(exc).__name__}: {str(exc)[:160]}). Do not fetch it again. "
+                    "Continue with the sources already fetched and report the missing source as a gap."
+                ),
+            }
         return {
             "evidence_id": evidence.evidence_id,
             "url": evidence.source_url,

@@ -43,3 +43,4 @@ tmp/
 *.docx
 docx_dump.txt
 fail_events.txt
+NUL
