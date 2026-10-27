@@ -78,7 +78,15 @@ def _create_compiled_project(client: httpx.Client, title: str) -> str:
         files={"file": ("m2-test-requirement.pptx", _requirement_pptx(), "application/vnd.openxmlformats-officedocument.presentationml.presentation")},
     )
     _request(client, "POST", f"/api/projects/{project_id}/requirement-compile")
-    readback = _request(client, "GET", f"/api/projects/{project_id}/requirements")
+    deadline = time.monotonic() + 900
+    while time.monotonic() < deadline:
+        response = client.get(f"/api/projects/{project_id}/requirements")
+        if response.status_code == 200:
+            readback = response.json()
+            break
+        time.sleep(5)
+    else:
+        raise RuntimeError("the project was not compiled within 15 minutes")
     requirements = readback.get("compilation", {}).get("requirements", [])
     if not requirements or requirements[0].get("product_name") != PRODUCT_NAME:
         raise RuntimeError("deterministic PPTX input did not compile to the expected Requirement")

@@ -1228,7 +1228,7 @@ async def _complete_missing_findings(
                 ResearchFindings,
                 config={"callbacks": [model_budget]} if model_budget else None,
             )
-            finding = ResearchFindings.model_validate(arguments)
+            finding = ResearchFindings.model_validate(arguments[0])
         except Exception as exc:
             ledger.warnings.append(
                 f"Task {task_id} did not return structured findings ({type(exc).__name__})."

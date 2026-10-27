@@ -194,3 +194,54 @@ def test_incomplete_model_requirement_is_demoted_to_unstructured():
     assert result.requirements == []
     assert result.unstructured_requirements
     assert result.unstructured_requirements[0].source_quote == "至少7.5kW"
+
+
+def test_several_tool_calls_are_merged_into_one_compilation():
+    from procurement_agent.ingestion.compiler import merge_compilation_payloads
+
+    merged = merge_compilation_payloads([
+        {
+            "requirements": [{"requirement_id": "r1", "product_name": "产品一"}],
+            "conflicts": [{"conflict_id": "c1", "values_with_source": []}],
+        },
+        {
+            "requirements": [{"requirement_id": "r2", "product_name": "产品二"}],
+            "unstructured_requirements": [{"text": "口径说明"}],
+        },
+    ])
+    assert [item["requirement_id"] for item in merged["requirements"]] == ["r1", "r2"]
+    assert len(merged["conflicts"]) == 1
+    assert len(merged["unstructured_requirements"]) == 1
+
+
+def test_a_call_that_carries_the_line_item_at_its_root_becomes_a_requirement():
+    from procurement_agent.ingestion.compiler import merge_compilation_payloads
+
+    merged = merge_compilation_payloads([
+        {"requirement_id": "r1", "product_name": "产品一", "quantity": "10"},
+    ])
+    assert merged["requirements"] == [{"requirement_id": "r1", "product_name": "产品一", "quantity": "10"}]
+
+
+def test_an_amount_written_as_a_json_string_is_read_as_an_object():
+    payload = {
+        "requirements": [
+            {
+                "requirement_id": "r1",
+                "project_id": "p1",
+                "product_name": "产品一",
+                "planned_unit_price": json.dumps(
+                    {
+                        "kind": "PLANNED_PRICE",
+                        "value": "125.00",
+                        "source_ref": "doc:row=2",
+                        "source_quote": "125.00",
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        ]
+    }
+    result = _validated_compilation_payload(payload)
+    assert len(result.requirements) == 1
+    assert result.requirements[0].planned_unit_price.value == "125.00"

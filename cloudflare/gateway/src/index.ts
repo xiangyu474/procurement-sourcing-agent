@@ -16,6 +16,7 @@ export interface Env {
 	LANGSMITH_TRACING?: string;
 	LANGSMITH_PROJECT?: string;
 	WORKFLOW: Workflow<RunRequest>;
+	COMPILE_WORKFLOW: Workflow<CompileRequest>;
 }
 
 // The container receives the internal token from the Worker at request time so
@@ -636,6 +637,103 @@ export class SourcingContainer extends Container {
 	}
 }
 
+interface CompileRequest {
+	projectId: string;
+	analysisVersion: number;
+	demandRevision: number;
+	textSources: { source_id: string; revision: number; text: string }[];
+	pptxSources: { source_id: string; filename: string; revision: number }[];
+	sourceIds: string[];
+}
+
+export class SourcingCompileWorkflow extends WorkflowEntrypoint<Env, CompileRequest> {
+	async run(event: WorkflowEvent<CompileRequest>, step: WorkflowStep) {
+		const { projectId, analysisVersion, demandRevision, textSources, pptxSources, sourceIds } = event.payload;
+		try {
+			const result = await step.do(
+				"compile-demand",
+				{ retries: { limit: 0, delay: "10 seconds", backoff: "exponential" }, timeout: "20 minutes" },
+				async () => {
+					const container = getContainer(this.env.SOURCING_CONTAINER, "m1-intake");
+					const response = await container.fetch(
+						new Request("http://container/internal/compile-demand", {
+							method: "POST",
+							headers: { "content-type": "application/json" },
+							body: JSON.stringify({
+								project_id: projectId,
+								analysis_version: analysisVersion,
+								gateway_url: this.env.CONTAINER_GATEWAY_URL,
+								token: this.env.INTERNAL_GATEWAY_TOKEN,
+								runtime_config: {
+									GENESIS_BASE_URL: this.env.GENESIS_BASE_URL,
+									GENESIS_ACCESS_TOKEN: this.env.GENESIS_ACCESS_TOKEN,
+									GENESIS_MODEL_ID: this.env.GENESIS_MODEL_ID,
+								},
+								text_sources: textSources,
+								pptx_sources: pptxSources,
+							}),
+						}),
+					);
+					if (!response.ok) {
+						const body = await response.text().catch(() => "");
+						throw new Error(`compile failed with status ${response.status}: ${body.slice(0, 400)}`);
+					}
+					const compilation = (await response.json()) as {
+						requirements?: unknown[];
+						conflicts?: unknown[];
+					};
+					// The step output stays small. The compilation itself is stored
+					// in D1, not in the workflow state.
+					await this.env.DB.prepare(
+						`INSERT INTO demand_compilations (id, project_id, demand_revision, analysis_version, compiler_version, compilation_json, source_refs_json, created_at)
+						 VALUES (?1, ?2, ?3, ?4, 'm1-0.1.0', ?5, ?6, ?7)
+						 ON CONFLICT(project_id, demand_revision) DO UPDATE SET
+							 compilation_json = excluded.compilation_json,
+							 source_refs_json = excluded.source_refs_json,
+							 created_at = excluded.created_at`,
+					)
+						.bind(
+							crypto.randomUUID(),
+							projectId,
+							demandRevision,
+							analysisVersion,
+							JSON.stringify(compilation),
+							JSON.stringify(sourceIds),
+							new Date().toISOString(),
+						)
+						.run();
+					return {
+						requirements: Array.isArray(compilation.requirements) ? compilation.requirements.length : 0,
+						conflicts: Array.isArray(compilation.conflicts) ? compilation.conflicts.length : 0,
+					};
+				},
+			);
+			return { status: "COMPLETED", ...result };
+		} catch (error) {
+			const detail = error instanceof Error ? error.message : String(error);
+			await this.env.DB.prepare(
+				`INSERT INTO demand_compilations (id, project_id, demand_revision, analysis_version, compiler_version, compilation_json, source_refs_json, created_at)
+				 VALUES (?1, ?2, ?3, ?4, 'm1-0.1.0', ?5, ?6, ?7)
+				 ON CONFLICT(project_id, demand_revision) DO UPDATE SET
+					 compilation_json = excluded.compilation_json,
+					 source_refs_json = excluded.source_refs_json,
+					 created_at = excluded.created_at`,
+			)
+				.bind(
+					crypto.randomUUID(),
+					projectId,
+					demandRevision,
+					analysisVersion,
+					JSON.stringify({ project_id: projectId, analysis_version: analysisVersion, issues: [detail.slice(0, 500)] }),
+					JSON.stringify(sourceIds),
+					new Date().toISOString(),
+				)
+				.run();
+			return { status: "FAILED", error: detail.slice(0, 500) };
+		}
+	}
+}
+
 export class SourcingWorkflow extends WorkflowEntrypoint<Env, RunRequest> {
 	async run(event: WorkflowEvent<RunRequest>, step: WorkflowStep) {
 		const { runId, projectId, durationSeconds, mode } = event.payload;
@@ -1099,7 +1197,7 @@ export default {
 			);
 			const textSources = results
 				.filter(s => s.source_type === "USER_TEXT" && s.text_content && s.revision === latestTextRevision)
-				.map(s => ({ source_id: s.id, revision: s.revision, text: s.text_content }));
+				.map(s => ({ source_id: s.id, revision: s.revision, text: s.text_content as string }));
 			const pptxSources = results
 				.filter(s => s.source_type === "INTERNAL_PPTX")
 				.map(s => ({ source_id: s.id, filename: s.filename ?? "requirement.pptx", revision: s.revision }));
@@ -1107,45 +1205,25 @@ export default {
 				return json({ error: "at least one demand source (text or PPTX) is required" }, 422);
 			}
 
-			const container = getContainer(env.SOURCING_CONTAINER, "m1-intake");
-			const response = await container.fetch(
-				new Request("http://container/internal/compile-demand", {
-					method: "POST",
-					headers: { "content-type": "application/json" },
-					body: JSON.stringify({
-						project_id: projectId,
-						analysis_version: project.analysis_version,
-						gateway_url: env.CONTAINER_GATEWAY_URL,
-						token: env.INTERNAL_GATEWAY_TOKEN,
-						runtime_config: {
-							GENESIS_BASE_URL: env.GENESIS_BASE_URL,
-							GENESIS_ACCESS_TOKEN: env.GENESIS_ACCESS_TOKEN,
-							GENESIS_MODEL_ID: env.GENESIS_MODEL_ID,
-						},
-						text_sources: textSources,
-						pptx_sources: pptxSources,
-					}),
-				}),
-			);
-			if (!response.ok) {
-				const detail = await response.text().catch(() => "");
-				return json({ error: "requirement_compilation_failed", detail: detail.slice(0, 500) }, response.status);
-			}
-			const compilation = await response.json();
-			const compilationId = crypto.randomUUID();
-			const now = new Date().toISOString();
-			const sourcesJson = JSON.stringify(results.map(s => s.id));
-			await env.DB.prepare(
-				`INSERT INTO demand_compilations (id, project_id, demand_revision, analysis_version, compiler_version, compilation_json, source_refs_json, created_at)
-				 VALUES (?1, ?2, ?3, ?4, 'm1-0.1.0', ?5, ?6, ?7)
-				 ON CONFLICT(project_id, demand_revision) DO UPDATE SET
-					 compilation_json = excluded.compilation_json,
-					 source_refs_json = excluded.source_refs_json,
-					 created_at = excluded.created_at`,
-			)
-				.bind(compilationId, projectId, project.demand_revision, project.analysis_version, JSON.stringify(compilation), sourcesJson, now)
-				.run();
-			return json({ project_id: projectId, analysis_version: project.analysis_version, compilation });
+			// The model reads the whole document, so a long document takes several
+			// minutes. A Worker request cannot hold the connection that long, so
+			// the compile runs as a workflow and the client polls the result.
+			const instance = await env.COMPILE_WORKFLOW.create({
+				params: {
+					projectId,
+					analysisVersion: project.analysis_version,
+					demandRevision: project.demand_revision,
+					textSources,
+					pptxSources,
+					sourceIds: results.map(s => s.id),
+				},
+			});
+			return json({
+				project_id: projectId,
+				status: "QUEUED",
+				compile_id: instance.id,
+				analysis_version: project.analysis_version,
+			}, 202);
 		}
 
 		const requirementsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/requirements$/);

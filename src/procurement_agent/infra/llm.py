@@ -44,12 +44,13 @@ def stream_tool_arguments(
     *,
     max_tokens: int = 32_000,
     config: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Collect one tool call's arguments from a streamed response.
+) -> list[dict[str, Any]]:
+    """Collect the arguments of every tool call in a streamed response.
 
     The gateway drops long non-streaming requests, so the call is streamed and
     the tool call arguments are accumulated. The tool call is required, which
-    is the form this endpoint answers in a schema.
+    is the form this endpoint answers in a schema. The model sometimes answers
+    a long document with one call per item, so every call is returned.
     """
     tool = convert_to_openai_function(schema)
     bound = model.bind_tools([tool], tool_choice=tool["name"])
@@ -61,9 +62,12 @@ def stream_tool_arguments(
     calls = getattr(aggregated, "tool_calls", None) or []
     if not calls:
         raise ValueError("The model did not call the required tool")
-    arguments = calls[0].get("args")
-    if isinstance(arguments, str):
-        arguments = json.loads(arguments)
-    if not isinstance(arguments, dict):
-        raise ValueError("The tool call arguments must be a JSON object")
-    return arguments
+    payloads: list[dict[str, Any]] = []
+    for call in calls:
+        arguments = call.get("args")
+        if isinstance(arguments, str):
+            arguments = json.loads(arguments)
+        if not isinstance(arguments, dict):
+            raise ValueError("The tool call arguments must be a JSON object")
+        payloads.append(arguments)
+    return payloads

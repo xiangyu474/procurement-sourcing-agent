@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from pathlib import Path
 
 import requests
@@ -22,6 +23,26 @@ DEFAULT_MATERIALS = (
     / "命题赛道素材"
     / "寻价比源素材"
 )
+
+
+def compile_and_wait(session, headers, project_id, *, gateway, timeout=900):
+    """Start a compilation and wait for the workflow to store the result."""
+    started = session.post(
+        f"{gateway}/api/projects/{project_id}/requirement-compile",
+        headers=headers,
+        json={},
+        timeout=60,
+    )
+    started.raise_for_status()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        read = session.get(
+            f"{gateway}/api/projects/{project_id}/requirements", headers=headers, timeout=60
+        )
+        if read.status_code == 200:
+            return read.json()
+        time.sleep(5)
+    raise RuntimeError(f"project {project_id} was not compiled within {timeout} seconds")
 
 
 def main() -> int:
@@ -61,14 +82,7 @@ def main() -> int:
     )
     text_response.raise_for_status()
     text_project = text_response.json()["project_id"]
-    text_compiled = session.post(
-        f"{args.gateway}/api/projects/{text_project}/requirement-compile",
-        headers=headers,
-        json={},
-        timeout=420,
-    )
-    text_compiled.raise_for_status()
-    text_body = text_compiled.json()
+    text_body = compile_and_wait(session, headers, text_project, gateway=args.gateway)
     text_items = text_body["compilation"].get("requirements", [])
     text_read = session.get(f"{args.gateway}/api/projects/{text_project}/requirements", headers=headers, timeout=45)
     text_read.raise_for_status()
@@ -99,17 +113,10 @@ def main() -> int:
             headers=headers,
             data={"purpose": "REQUIREMENT"},
             files={"file": (pptx_path.name, stream, "application/vnd.openxmlformats-officedocument.presentationml.presentation")},
-            timeout=90,
+            timeout=300,
         )
     upload.raise_for_status()
-    ppt_compile = session.post(
-        f"{args.gateway}/api/projects/{ppt_project}/requirement-compile",
-        headers=headers,
-        json={},
-        timeout=420,
-    )
-    ppt_compile.raise_for_status()
-    ppt_body = ppt_compile.json()
+    ppt_body = compile_and_wait(session, headers, ppt_project, gateway=args.gateway)
     ppt_items = ppt_body["compilation"].get("requirements", [])
     results["ppt_only_compile"] = (
         "PASS"
@@ -136,17 +143,10 @@ def main() -> int:
             headers=headers,
             data={"purpose": "REQUIREMENT"},
             files={"file": (case_a_pptx.name, stream, "application/vnd.openxmlformats-officedocument.presentationml.presentation")},
-            timeout=90,
+            timeout=300,
         )
     case_a_upload.raise_for_status()
-    case_a_compile = session.post(
-        f"{args.gateway}/api/projects/{conflict_project}/requirement-compile",
-        headers=headers,
-        json={},
-        timeout=420,
-    )
-    case_a_compile.raise_for_status()
-    case_a_data = case_a_compile.json()["compilation"]
+    case_a_data = compile_and_wait(session, headers, conflict_project, gateway=args.gateway)["compilation"]
     conflict_values = {
         value.get("value")
         for conflict in case_a_data.get("conflicts", [])
@@ -177,7 +177,7 @@ def main() -> int:
             headers=headers,
             data={"purpose": "HISTORY"},
             files={"file": (xlsx_path.name, stream, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
-            timeout=90,
+            timeout=300,
         )
     history_upload.raise_for_status()
     source_id = history_upload.json()["source_id"]
@@ -193,7 +193,7 @@ def main() -> int:
         f"{args.gateway}/api/projects/{history_project}/history-imports",
         headers=headers,
         json={"source_id": source_id},
-        timeout=90,
+        timeout=300,
     )
     duplicate_response.raise_for_status()
     duplicate = duplicate_response.json()

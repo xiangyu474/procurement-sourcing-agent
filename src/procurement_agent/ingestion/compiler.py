@@ -108,13 +108,15 @@ def compile_requirement_fragments(
         ],
     }
     raw = _validated_compilation_payload(
-        stream_tool_arguments(
-            model,
-            [
-                SystemMessage(content=SYSTEM_PROMPT),
-                HumanMessage(content=json.dumps(prompt, ensure_ascii=False)),
-            ],
-            RequirementCompilation,
+        merge_compilation_payloads(
+            stream_tool_arguments(
+                model,
+                [
+                    SystemMessage(content=SYSTEM_PROMPT),
+                    HumanMessage(content=json.dumps(prompt, ensure_ascii=False)),
+                ],
+                RequirementCompilation,
+            )
         )
     )
 
@@ -125,6 +127,46 @@ def compile_requirement_fragments(
         requirement.project_id = project_id
         requirement.revision = revision
     return CompilerResult(compilation=raw, shaping_issues=tuple(raw.issues))
+
+
+def merge_compilation_payloads(payloads: list[dict[str, Any]]) -> dict[str, Any]:
+    """Merge the answers of several tool calls into one compilation.
+
+    The model answers a long document with one call per purchase line. Every
+    call carries a piece of the same compilation, so the requirements, the
+    conflicts, and the unstructured statements are collected from all of them.
+    """
+    if not payloads:
+        raise ValueError("the model returned no compilation")
+    merged: dict[str, Any] = {}
+    list_fields = ("requirements", "conflicts", "unstructured_requirements", "issues", "open_questions", "source_refs")
+    root_requirement_fields = {
+        "requirement_id", "product_name", "match_key", "source_product_code", "quantity",
+        "quantity_unit", "planned_unit_price", "planned_sales_unit_price", "planned_total_budget",
+        "tax_rate", "constraints", "source_refs", "parse_status", "open_questions",
+    }
+    for raw_payload in payloads:
+        payload = dict(raw_payload)
+        if not payload.get("requirements") and "product_name" in payload and any(
+            key in payload for key in ("requirement_id", "source_product_code", "quantity", "constraints")
+        ):
+            # The call carries the line item at its root instead of in a list.
+            item = {key: payload.pop(key) for key in list(payload) if key in root_requirement_fields}
+            payload["requirements"] = [item]
+        for key, value in payload.items():
+            if key in list_fields and isinstance(value, list):
+                merged.setdefault(key, [])
+                merged[key].extend(value)
+            elif key not in merged or merged.get(key) in (None, "", [], {}):
+                merged[key] = value
+    for key in list_fields:
+        if key in merged:
+            seen: list[Any] = []
+            for item in merged[key]:
+                if item not in seen:
+                    seen.append(item)
+            merged[key] = seen
+    return merged
 
 
 def _validated_compilation_payload(response: object) -> RequirementCompilation:
@@ -244,6 +286,13 @@ def _validated_compilation_payload(response: object) -> RequirementCompilation:
 
         for amount_field in ("planned_unit_price", "planned_sales_unit_price", "planned_total_budget"):
             amount = requirement.get(amount_field)
+            if isinstance(amount, str):
+                # The model sometimes writes the amount as a JSON string.
+                try:
+                    decoded = json.loads(amount)
+                except json.JSONDecodeError:
+                    decoded = None
+                amount = decoded if isinstance(decoded, dict) else amount
             if isinstance(amount, dict):
                 amount = _sanitize_model_payload(amount, PlannedAmount, "PlannedAmount", issues)
                 amount_value = amount.get("value")
