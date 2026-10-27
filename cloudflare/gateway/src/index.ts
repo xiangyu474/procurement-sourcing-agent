@@ -615,8 +615,10 @@ async function persistM2ResearchBundle(env: Env, bundle: M2BundlePayload): Promi
 
 export class SourcingContainer extends Container {
 	defaultPort = 8000;
-	// Keep idle Python instances short-lived; active HTTP requests keep them awake.
-	sleepAfter = "2m";
+	// A sourcing run can hold one request open for many minutes. Keep the
+	// instance alive long enough for the run to finish instead of stopping it
+	// under the request.
+	sleepAfter = "20m";
 	// Probe the application's own health route so readiness reflects the
 	// Python process, not just an open TCP port.
 	pingEndpoint = "localhost/health";
@@ -688,10 +690,19 @@ export class SourcingWorkflow extends WorkflowEntrypoint<Env, RunRequest> {
 							`container task failed with status ${response.status}: ${body.slice(0, 500)}`,
 						);
 					}
-					return (await response.json()) as {
+					// The container answers with the whole research bundle, including
+					// every page snapshot. A step output that large breaks the
+					// Workflows step output limit, so only the few fields the
+					// workflow needs are kept.
+					const payload = (await response.json()) as {
 						artifact?: { key?: string };
-					status?: string;
-					stop_reason_code?: string | null;
+						status?: string;
+						stop_reason_code?: string | null;
+					};
+					return {
+						artifact: payload.artifact,
+						status: payload.status,
+						stop_reason_code: payload.stop_reason_code ?? null,
 					};
 				},
 			);

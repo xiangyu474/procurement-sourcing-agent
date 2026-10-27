@@ -46,10 +46,16 @@ def _request(client: httpx.Client, method: str, path: str, **kwargs: Any) -> dic
 
 
 def _requirement_pptx() -> bytes:
-    """Small deterministic M1 fixture; it contains no real buyer or supplier data."""
+    """Small M1 fixture; it contains no real buyer or supplier data.
+
+    The purchase line appears both as prose and as a table row, so the model
+    reads the same requirement from two independent places.
+    """
     presentation = Presentation()
     slide = presentation.slides.add_slide(presentation.slide_layouts[6])
-    table = slide.shapes.add_table(2, 3, Inches(1), Inches(1), Inches(6), Inches(2)).table
+    textbox = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(6), Inches(1))
+    textbox.text = f"采购需求：{PRODUCT_NAME}，采购数量 10 套，预计采购单价 100 元/套。"
+    table = slide.shapes.add_table(2, 3, Inches(1), Inches(2), Inches(6), Inches(2)).table
     table.cell(0, 0).text = "产品名称"
     table.cell(0, 1).text = "采购数量（套）"
     table.cell(0, 2).text = "预计采购单价（元/套）"
