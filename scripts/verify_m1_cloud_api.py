@@ -147,13 +147,18 @@ def main() -> int:
         )
     case_a_upload.raise_for_status()
     case_a_data = compile_and_wait(session, headers, conflict_project, gateway=args.gateway)["compilation"]
-    conflict_values = {
-        value.get("value")
+    # The model states each value with the place it came from, so the two
+    # quantities are looked for inside the reported values.
+    conflict_values = [
+        str(value.get("value") or "")
         for conflict in case_a_data.get("conflicts", [])
         for value in conflict.get("values_with_source", [])
-    }
+    ]
     results["case_a_summary_conflict"] = (
-        "PASS" if {"58万台", "63万台"}.issubset(conflict_values) else "FAIL"
+        "PASS"
+        if any("58万台" in value for value in conflict_values)
+        and any("63万台" in value for value in conflict_values)
+        else f"FAIL:{conflict_values}"
     )
     results["case_a_conflict_project_id"] = conflict_project
 

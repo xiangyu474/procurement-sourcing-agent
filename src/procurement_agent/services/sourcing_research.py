@@ -1181,6 +1181,18 @@ code that the sources do not print stays null.
 """
 
 
+FINDINGS_WITHOUT_SOURCES_PROMPT = """You are the supplier_researcher finishing one bounded task.
+No source of this task could be read, so there is nothing to quote.
+
+Task ID: {task_id}
+Research question: {question}
+
+Return the ResearchFindings tool call with no candidate claims, the reason the
+sources are missing in `unresolved_gaps`, and a coverage note that says the
+task produced no lead.
+"""
+
+
 async def _complete_missing_findings(
     *,
     model: BaseChatModel,
@@ -1208,19 +1220,23 @@ async def _complete_missing_findings(
                 f"evidence_id: {evidence_id}\nurl: {record.source_url}\n"
                 f"text:\n{ledger.evidence_content.get(evidence_id, '')[:6000]}"
             )
-        if not sources:
-            continue
         task = ledger.tasks[task_id]
+        prompt = (
+            FINDINGS_REQUEST_PROMPT.format(
+                task_id=task_id,
+                question=task.question,
+                sources="\n\n".join(sources),
+            )
+            if sources
+            else FINDINGS_WITHOUT_SOURCES_PROMPT.format(
+                task_id=task_id,
+                question=task.question,
+            )
+        )
         try:
             payloads, text = stream_tool_call(
                 model,
-                [
-                    SystemMessage(content=FINDINGS_REQUEST_PROMPT.format(
-                        task_id=task_id,
-                        question=task.question,
-                        sources="\n\n".join(sources),
-                    ))
-                ],
+                [SystemMessage(content=prompt)],
                 ResearchFindings,
                 config={"callbacks": [model_budget]} if model_budget else None,
             )
