@@ -27,7 +27,7 @@ BUDGET = {
     "max_fetches": 8,
     "max_tasks": 2,
     "max_rounds": 2,
-    "max_model_calls": 20,
+    "max_model_calls": 24,
 }
 
 

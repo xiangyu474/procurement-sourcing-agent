@@ -61,6 +61,6 @@ def load_settings() -> Settings:
         max_web_fetches=max(1, min(int(os.getenv("SOURCING_MAX_WEB_FETCHES", "24")), 24)),
         max_research_rounds=max(1, min(int(os.getenv("SOURCING_MAX_RESEARCH_ROUNDS", "3")), 3)),
         max_concurrent_researchers=max(1, min(int(os.getenv("SOURCING_MAX_CONCURRENT_RESEARCHERS", "3")), 3)),
-        max_model_calls=max(1, min(int(os.getenv("SOURCING_MAX_MODEL_CALLS", "18")), 30)),
+        max_model_calls=max(1, min(int(os.getenv("SOURCING_MAX_MODEL_CALLS", "30")), 30)),
         intelligence_stale_after_days=max(1, int(os.getenv("SOURCING_INTELLIGENCE_STALE_DAYS", "180"))),
     )
