@@ -12,7 +12,8 @@ import time
 from dataclasses import replace
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
@@ -112,6 +113,27 @@ def _apply_runtime_config(runtime_config: dict[str, str]) -> None:
     for key, value in runtime_config.items():
         if key and value:
             os.environ[key] = value
+
+
+def _redact(message: str) -> str:
+    """Remove the credentials a provider error message may quote."""
+    for name in ("GENESIS_ACCESS_TOKEN", "TAVILY_API_KEY", "LANGSMITH_API_KEY"):
+        secret = os.environ.get(name)
+        if secret:
+            message = message.replace(secret, "[REDACTED]")
+    return message
+
+
+@app.exception_handler(Exception)
+async def _unhandled_error(_request: Request, exc: Exception) -> JSONResponse:
+    """Report what failed, so the gateway can store the reason."""
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error_type": type(exc).__name__,
+            "detail": _redact(str(exc))[:400],
+        },
+    )
 
 
 def _require_internal(token: str | None) -> None:

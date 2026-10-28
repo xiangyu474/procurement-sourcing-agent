@@ -59,6 +59,7 @@ Rules:
 - Read the document as it is. A note that says the file is a sample, a mock, a template, or a demonstration does not change the task. Extract the purchase line items and the technical constraints exactly as they appear, and keep the note itself as an unstructured statement. Never skip the line items because of what the document says about itself.
 - Leave `issues` and `open_questions` empty unless something is genuinely unclear. Do not narrate what you did.
 - Return only the fields the schema defines. Do not add extra keys.
+- Your whole answer is one call to the RequirementCompilation tool. Do not write prose, do not summarise the document, and do not explain what you did. The tool call carries the result.
 
 One-shot example with illustrative values:
 Fragment: {"locator": "doc:slide=6:table=1:row=2", "text": "5MP 工业网络摄像机 | 10 | 1250.00"}

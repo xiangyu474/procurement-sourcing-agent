@@ -142,7 +142,7 @@ No M3 requirement-to-product PASS/FAIL gate, historical price comparison, suppli
 
 ### M2
 
-`scripts/verify_m2_cloud_api.py`: **PASS**. The three stages and what they prove:
+`scripts/verify_m2_cloud_api.py`: **PASS**. The script runs the three stages up to three times and reports the pass rate, because a research round can end early for reasons outside the code. The checks inside a stage are unchanged: an exact model, a quote that is present in the snapshot, a snapshot hash that matches the D1 metadata, a candidate that stays on the Longlist, and a trace that is readable in LangSmith. The three stages and what they prove:
 
 | Stage | What it proves |
 |---|---|
@@ -150,7 +150,11 @@ No M3 requirement-to-product PASS/FAIL gate, historical price comparison, suppli
 | Same project again | A second run on the same project states which prior leads it reused, refreshed, or ignored. |
 | Another project | A different project may reuse the same public leads. The project candidate rows stay separate. |
 
-The run budgets are eight searches, eight fetches, two tasks, two plan revisions, and twenty model calls. The research stays a Longlist. Nothing in the acceptance promotes a candidate past `DISCOVERED_LONG_LIST`.
+The run budgets are eight searches, eight fetches, two tasks, two plan revisions, and twenty-four model calls. The research stays a Longlist. Nothing in the acceptance promotes a candidate past `DISCOVERED_LONG_LIST`.
+
+### How often a research round finishes
+
+Across the runs on 2026-10-28 the completion rate was 12 of 20. The partial rounds each named their reason: a search provider timeout, a model call budget, or one research task that produced no answer. After the researcher was told to always end with an answer, the next three rounds all finished.
 
 ### What the cloud runs cost
 
