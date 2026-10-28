@@ -57,7 +57,7 @@ from procurement_agent.domain.sourcing import (
     stable_id,
 )
 from procurement_agent.infra import Settings
-from procurement_agent.infra.llm import stream_tool_arguments
+from procurement_agent.infra.llm import json_object_from_text, stream_tool_call
 from procurement_agent.infra.search import (
     PublicContentProvider,
     SearchProvider,
@@ -1128,22 +1128,7 @@ def _structured_payload(content: str) -> dict[str, Any] | None:
     The model sometimes answers with prose and a JSON block instead of calling the
     structured output tool. The findings are still there, so they are read.
     """
-    text = content.strip()
-    if text.startswith("{"):
-        try:
-            value = json.loads(text)
-        except json.JSONDecodeError:
-            value = None
-        if isinstance(value, dict):
-            return value
-    for block in re.findall(r"```(?:json)?\s*(.*?)```", text, re.DOTALL):
-        try:
-            value = json.loads(block.strip())
-        except json.JSONDecodeError:
-            continue
-        if isinstance(value, dict):
-            return value
-    return None
+    return json_object_from_text(content)
 
 
 def _parse_findings(messages: list[Any], ledger: ResearchLedger) -> list[ResearchFindings]:
@@ -1227,7 +1212,7 @@ async def _complete_missing_findings(
             continue
         task = ledger.tasks[task_id]
         try:
-            arguments = stream_tool_arguments(
+            payloads, text = stream_tool_call(
                 model,
                 [
                     SystemMessage(content=FINDINGS_REQUEST_PROMPT.format(
@@ -1239,7 +1224,12 @@ async def _complete_missing_findings(
                 ResearchFindings,
                 config={"callbacks": [model_budget]} if model_budget else None,
             )
-            finding = ResearchFindings.model_validate(arguments[0])
+            if not payloads:
+                found = json_object_from_text(text)
+                if found is None:
+                    raise ValueError("the model answered without a structured answer")
+                payloads = [found]
+            finding = ResearchFindings.model_validate(payloads[0])
         except Exception as exc:
             ledger.warnings.append(
                 f"Task {task_id} did not return structured findings ({type(exc).__name__})."

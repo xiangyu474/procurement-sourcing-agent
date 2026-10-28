@@ -26,7 +26,7 @@ from procurement_agent.domain.requirements import (
     SourceFragment,
     UnstructuredRequirement,
 )
-from procurement_agent.infra.llm import stream_tool_arguments
+from procurement_agent.infra.llm import json_object_from_text, stream_tool_call
 
 SYSTEM_PROMPT = """You extract procurement demand from a source document into a restricted Requirement DSL.
 
@@ -107,17 +107,30 @@ def compile_requirement_fragments(
             for fragment in fragments
         ],
     }
-    raw = _validated_compilation_payload(
-        merge_compilation_payloads(
-            stream_tool_arguments(
-                model,
-                [
-                    SystemMessage(content=SYSTEM_PROMPT),
-                    HumanMessage(content=json.dumps(prompt, ensure_ascii=False)),
-                ],
-                RequirementCompilation,
+    payloads, text = stream_tool_call(
+        model,
+        [
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(content=json.dumps(prompt, ensure_ascii=False)),
+        ],
+        RequirementCompilation,
+    )
+    if not payloads:
+        # The model answered in prose instead of calling the tool. The answer
+        # is often still there, as a JSON object in the text.
+        found = json_object_from_text(text)
+        if found is None:
+            return CompilerResult(
+                compilation=RequirementCompilation(
+                    project_id=project_id,
+                    revision=revision,
+                    issues=["The model answered without a structured compilation."],
+                ),
+                shaping_issues=("The model answered without a structured compilation.",),
             )
-        ),
+        payloads = [found]
+    raw = _validated_compilation_payload(
+        merge_compilation_payloads(payloads),
         project_id=project_id,
         revision=revision,
     )

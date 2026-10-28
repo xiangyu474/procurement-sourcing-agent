@@ -288,3 +288,13 @@ def test_a_requirement_without_a_project_id_is_still_accepted():
     assert len(result.requirements) == 1
     assert result.requirements[0].project_id == "p1"
     assert result.requirements[0].revision == 1
+
+
+def test_a_prose_answer_without_a_tool_call_is_still_read():
+    from procurement_agent.infra.llm import json_object_from_text
+
+    text = "I read the document.\n\n```json\n{\"requirements\": [{\"requirement_id\": \"r1\", \"product_name\": \"产品一\"}]}\n```"
+    assert json_object_from_text(text) == {
+        "requirements": [{"requirement_id": "r1", "product_name": "产品一"}]
+    }
+    assert json_object_from_text("no json here") is None
