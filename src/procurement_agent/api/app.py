@@ -243,7 +243,9 @@ async def research_run(payload: ResearchRunRequest, x_internal_token: str | None
 
     await _post_event(payload, "WEB_RESEARCH", "SourcingPlan 已生成；Supervisor 正在按预算委派公开研究任务")
     try:
-        model = build_chat_model(research_settings, timeout=180)
+        # A research run holds one model call open for minutes. The plan call
+        # and the supervisor calls already run past three minutes.
+        model = build_chat_model(research_settings, timeout=600)
         bundle = await run_sourcing_research(
             model=model,
             compilation=context["compilation"],
