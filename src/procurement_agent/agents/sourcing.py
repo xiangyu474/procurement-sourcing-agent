@@ -55,6 +55,8 @@ Delegation contract: copy the `question_id`, exact `question`, exact enum `chann
 and `requirement_id` from the SourcingPlan into the task description. Never invent
 a task ID or change a channel. Example (schema illustration only):
 `task_id=q_0123456789abcdef01234567; requirement_id=req_abc; channel=MANUFACTURER_DIRECT; question=Find official product pages for the requested camera model.`
+If a researcher returns without an answer, record the gap and move on. Do not
+delegate the same task again.
 If the result leaves a new gap, call revise_sourcing_plan first; then delegate the
 returned new question_id exactly. Keep the revision question under 500 characters,
 the revision rationale under 600 characters, and the expected evidence list to at
@@ -121,6 +123,11 @@ Source text: `Example Imaging lists Model EX-123. Model EX-123: 5 MP image senso
 Return supplier_name_quote `Example Imaging`, product_name_quote `Model EX-123: 5 MP image sensor.`, model `EX-123`, model_quote `EX-123`, and one resolution Claim with short exact source_quote `5 MP image sensor`. Keep rationale and coverage_notes to one concise sentence. If no code is shown, keep model=null and explain the gap.
 
 The `stage` field exists only at the top level of your answer. Do not put a `stage` field inside a candidate_claim. Use only the fields the schema lists for each object.
+
+Your answer is the ResearchFindings tool call. End every task with that call,
+even when you found nothing: an empty candidate list, the reason in
+`unresolved_gaps`, and a short coverage note is a complete answer. Never leave
+the task without an answer.
 """
 
 
