@@ -158,9 +158,19 @@ One cold-start run used 4 searches, 4 fetches, 12 model calls, 207 thousand prom
 
 ## Deployment notes
 
-The GitHub-triggered Cloudflare build stopped responding on 2026-10-26. The Worker code was deployed directly, and the container image was built locally with Podman and rolled out through the Containers API. Two lessons from that path:
+The Cloudflare build trigger runs on every push to `main`. It clones the repository, runs `npm ci`, and then `npx wrangler deploy`, which builds the container image and rolls it out.
 
-- A container image pushed to the registry is not usable by itself. The image preparation API only recognises images that Cloudflare's own build service registered. The rollout must name the image by a tag, not by a digest.
-- The image needs a build host that can reach the package index. A corporate proxy whose address does not resolve inside the build will fail the install.
+Between 2026-10-26 17:44 and 21:01 the trigger kept firing and every build failed with the same error:
 
-The dependency versions are pinned in `pyproject.toml` so the image matches the tested environment.
+```
+The Docker CLI is needed to build the configured image before deploying but could not be launched.
+```
+
+The build environment had no container builder during that window. The fix was a pin of the dependency versions and a rebuild once the environment recovered. The trigger was never broken, and the local build and manual rollout that were used in the meantime are no longer needed.
+
+Two things that path taught, kept here because they cost time:
+
+- A container image pushed to the registry is not usable by itself. The image preparation API only recognises images that Cloudflare's own build service registered. A rollout must name the image by a tag, not by a digest.
+- The image needs a build host that can reach the package index. A corporate proxy whose address does not resolve inside the build fails the install.
+
+The dependency versions are pinned in `pyproject.toml` so the image matches the tested environment. The container runs at two vCPUs and six gigabytes, which is what a research run needs.

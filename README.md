@@ -81,6 +81,7 @@ Container 镜像由 Cloudflare 托管构建环境构建（`Dockerfile`），本�
 - 需求编译改成 **Workflow 异步执行**。模型读完一整份文档需要几分钟，Worker 请求撑不住这么久。客户端发起编译后轮询结果。
 - `scripts/live_official_demand_compile.py` 实测 **PASS**：官方两组 PPTX 各抽到 14 条采购行。Case 1 保留 58 万台与 63 万台的冲突，Case 2 由模型自行算出 5888.66 万元与表格合计 5888.64 万元的差额并报为冲突。`scripts/verify_m1_cloud_api.py` 云端 **PASS**：匿名 401、文本编译读回、官方 PPTX 14 条需求、Case A 冲突、历史导入与重复导入去重。
 - **M2 云端验收通过**：`scripts/verify_m2_cloud_api.py` 返回 **PASS**。冷启动一次寻源产出带来源的候选与精确型号，同项目重跑给出复用/刷新/忽略判断，跨项目复用共享情报但不共享项目候选。三段运行的 LangSmith root trace 都能从云端读回，metadata 里的 `sourcing_run_id` 与 D1 的 run 一一对应。
+- 部署走 Cloudflare 的 GitHub 构建：每次推 main，构建环境跑 `npm ci` 和 `npx wrangler deploy`，同时构建容器镜像并滚动发布。镜像固定 2 vCPU / 6 GiB，依赖版本在 `pyproject.toml` 里固定。
 - **M2 已部署并通过云端验收**：版本化 SourcingPlan；一个 Deep Agents Supervisor 和同类型 Supplier Researcher；精确 question ID/渠道边界；Tavily Search/Extract；共享预算；Claim 引文与 Evidence/R2 快照校验；D1 情报账本、R2 快照、项目 Longlist 和成本/模型调用指标。D1 migrations `0005`/`0006` 已远端应用；Cloudflare LangSmith secret 已配置。
 - 工具失败不再中断整轮研究。越界抓取、预算用尽、页面读不出来，都作为可执行指令回到研究器手里，它继续用已抓到的来源作答并把缺口记下来。
 - 研究器答成散文而不是结构化工具调用时，系统会带着已抓到的来源再问一次，这次强制要求工具调用。
