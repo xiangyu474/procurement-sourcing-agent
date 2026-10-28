@@ -117,7 +117,9 @@ def compile_requirement_fragments(
                 ],
                 RequirementCompilation,
             )
-        )
+        ),
+        project_id=project_id,
+        revision=revision,
     )
 
     raw.project_id = project_id
@@ -197,7 +199,12 @@ def merge_compilation_payloads(payloads: list[dict[str, Any]]) -> dict[str, Any]
     return merged
 
 
-def _validated_compilation_payload(response: object) -> RequirementCompilation:
+def _validated_compilation_payload(
+    response: object,
+    *,
+    project_id: str | None = None,
+    revision: int = 1,
+) -> RequirementCompilation:
     """Validate provider output, normalizing only JSON numbers to DSL strings.
 
     Some OpenAI-compatible endpoints serialize JSON numbers as numeric scalars
@@ -328,6 +335,10 @@ def _validated_compilation_payload(response: object) -> RequirementCompilation:
                     amount["value"] = str(amount_value)
                 requirement[amount_field] = amount
         try:
+            # The project scope belongs to the run, not to the model's answer.
+            if project_id:
+                requirement["project_id"] = project_id
+            requirement["revision"] = revision
             Requirement.model_validate(requirement)
             valid_requirements.append(requirement)
         except Exception as exc:

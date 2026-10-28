@@ -272,3 +272,19 @@ def test_a_requirements_list_written_as_a_json_string_is_read():
         }
     ])
     assert [item["requirement_id"] for item in merged["requirements"]] == ["r1"]
+
+
+def test_a_requirement_without_a_project_id_is_still_accepted():
+    payload = {
+        "requirements": [
+            {
+                "requirement_id": "r1",
+                "product_name": "产品一",
+                "quantity": "10",
+            }
+        ]
+    }
+    result = _validated_compilation_payload(payload, project_id="p1", revision=1)
+    assert len(result.requirements) == 1
+    assert result.requirements[0].project_id == "p1"
+    assert result.requirements[0].revision == 1
