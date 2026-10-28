@@ -111,7 +111,35 @@ def _verify_langsmith_trace(run_id: str, research: dict[str, Any]) -> dict[str, 
     return {"trace_id": str(trace.id), "trace_name": str(trace.name or "")}
 
 
+PROVIDER_TRANSIENT = {
+    "SEARCH_PROVIDER_TIMEOUT",
+    "SEARCH_PROVIDER_RATE_LIMITED",
+    "SOURCE_FETCH_FAILED",
+    "MODEL_TIMEOUT",
+    "MODEL_RATE_LIMIT",
+}
+
+
 def _run_project(client: httpx.Client, project_id: str, label: str) -> dict[str, Any]:
+    """Run one research, and try again when the provider had a transient failure."""
+    result: dict[str, Any] = {}
+    for attempt in range(3):
+        result = _run_project_once(client, project_id, f"{label}-{attempt}")
+        stop_reason = (result["research"].get("metrics") or {}).get("stop_reason_code")
+        if stop_reason not in PROVIDER_TRANSIENT:
+            break
+        print(f"run {label} attempt {attempt} ended with {stop_reason}; running it again")
+    metrics = result.get("research", {}).get("metrics", {})
+    if metrics.get("status") != "COMPLETED" or metrics.get("stop_reason_code"):
+        raise RuntimeError(
+            f"run {label} ({result['run_id']}) research was partial/incomplete: "
+            f"status={metrics.get('status')}, stop_reason={metrics.get('stop_reason_code')}, "
+            f"langsmith_trace={result['langsmith_trace']['trace_id']}"
+        )
+    return result
+
+
+def _run_project_once(client: httpx.Client, project_id: str, label: str) -> dict[str, Any]:
     started = _request(
         client,
         "POST",
@@ -138,13 +166,6 @@ def _run_project(client: httpx.Client, project_id: str, label: str) -> dict[str,
         )
     research = _request(client, "GET", f"/api/runs/{run_id}/research")
     langsmith_trace = _verify_langsmith_trace(run_id, research)
-    research_metrics = research.get("metrics", {})
-    if research_metrics.get("status") != "COMPLETED" or research_metrics.get("stop_reason_code"):
-        raise RuntimeError(
-            f"run {label} ({run_id}) research was partial/incomplete: status={research_metrics.get('status')}, "
-            f"stop_reason={research_metrics.get('stop_reason_code')}, "
-            f"langsmith_trace={langsmith_trace['trace_id']}"
-        )
     candidates_response = _request(client, "GET", f"/api/projects/{project_id}/candidates", params={"run_id": run_id})
     candidates = candidates_response.get("candidates", [])
     return {
