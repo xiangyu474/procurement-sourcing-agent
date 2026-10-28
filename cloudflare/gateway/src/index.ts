@@ -745,7 +745,11 @@ export class SourcingWorkflow extends WorkflowEntrypoint<Env, RunRequest> {
 			const result = await step.do(
 				"execute-container-task",
 				{
-					retries: { limit: mode === "SOURCING" ? 0 : 2, delay: "10 seconds", backoff: "exponential" },
+					// A research run that finishes never throws, so a retry only
+					// happens when the container itself failed. The research
+					// budget lives in the container's memory, so a crashed
+					// instance has nothing to reset.
+					retries: { limit: 2, delay: "10 seconds", backoff: "exponential" },
 					timeout: "20 minutes",
 				},
 				async () => {
