@@ -298,3 +298,38 @@ def test_a_prose_answer_without_a_tool_call_is_still_read():
         "requirements": [{"requirement_id": "r1", "product_name": "产品一"}]
     }
     assert json_object_from_text("no json here") is None
+
+
+def test_the_compiler_asks_again_when_the_model_answers_in_prose():
+    from procurement_agent.ingestion import compiler as compiler_module
+
+    class ProseModel:
+        def __init__(self):
+            self.calls = 0
+
+        def bind_tools(self, _tools, tool_choice=None):
+            return self
+
+        def stream(self, _messages, config=None):
+            self.calls += 1
+            yield _ProseChunk(
+                "I read the document, it lists the purchase lines."
+            )
+
+    class _ProseChunk:
+        def __init__(self, content):
+            self.content = content
+            self.tool_calls = []
+
+        def __add__(self, _other):
+            return self
+
+    model = ProseModel()
+    result = compiler_module.compile_requirement_fragments(
+        project_id="p1",
+        fragments=[_fragment("doc:row=1", "产品一 | 10 | 100")],
+        model=model,
+    )
+    assert model.calls == 2
+    assert result.compilation.requirements == []
+    assert "without a structured compilation" in result.compilation.issues[0]

@@ -107,28 +107,45 @@ def compile_requirement_fragments(
             for fragment in fragments
         ],
     }
-    payloads, text = stream_tool_call(
-        model,
-        [
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=json.dumps(prompt, ensure_ascii=False)),
-        ],
-        RequirementCompilation,
-    )
-    if not payloads:
-        # The model answered in prose instead of calling the tool. The answer
-        # is often still there, as a JSON object in the text.
+    payloads: list[dict[str, Any]] = []
+    for attempt in range(2):
+        payloads, text = stream_tool_call(
+            model,
+            [
+                SystemMessage(content=SYSTEM_PROMPT),
+                HumanMessage(content=json.dumps(prompt, ensure_ascii=False)),
+            ]
+            + (
+                [
+                    HumanMessage(
+                        content=(
+                            "The previous answer carried no structured compilation. Call the "
+                            "RequirementCompilation tool now with the full result."
+                        )
+                    )
+                ]
+                if attempt
+                else []
+            ),
+            RequirementCompilation,
+        )
+        if payloads:
+            break
+        # The model answered in prose instead of calling the tool. The answer is
+        # often still there, as a JSON object in the text.
         found = json_object_from_text(text)
-        if found is None:
-            return CompilerResult(
-                compilation=RequirementCompilation(
-                    project_id=project_id,
-                    revision=revision,
-                    issues=["The model answered without a structured compilation."],
-                ),
-                shaping_issues=("The model answered without a structured compilation.",),
-            )
-        payloads = [found]
+        if found is not None:
+            payloads = [found]
+            break
+    if not payloads:
+        return CompilerResult(
+            compilation=RequirementCompilation(
+                project_id=project_id,
+                revision=revision,
+                issues=["The model answered without a structured compilation."],
+            ),
+            shaping_issues=("The model answered without a structured compilation.",),
+        )
     raw = _validated_compilation_payload(
         merge_compilation_payloads(payloads),
         project_id=project_id,
