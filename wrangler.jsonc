@@ -39,6 +39,11 @@
 			"name": "procurement-sourcing-compile",
 			"binding": "COMPILE_WORKFLOW",
 			"class_name": "SourcingCompileWorkflow"
+		},
+		{
+			"name": "procurement-sourcing-spec",
+			"binding": "SPEC_WORKFLOW",
+			"class_name": "SourcingSpecWorkflow"
 		}
 	],
 	"d1_databases": [

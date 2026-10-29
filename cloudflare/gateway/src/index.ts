@@ -17,6 +17,7 @@ export interface Env {
 	LANGSMITH_PROJECT?: string;
 	WORKFLOW: Workflow<RunRequest>;
 	COMPILE_WORKFLOW: Workflow<CompileRequest>;
+	SPEC_WORKFLOW: Workflow<SpecRequest>;
 }
 
 // The container receives the internal token from the Worker at request time so
@@ -734,6 +735,82 @@ export class SourcingCompileWorkflow extends WorkflowEntrypoint<Env, CompileRequ
 	}
 }
 
+interface SpecRequest {
+	projectId: string;
+	requirementIds: string[];
+	candidateIds: string[];
+}
+
+// A stable id for one technical check, so that re-evaluating the same demand
+// revision replaces the row instead of adding a second one.
+async function stableSpecId(projectId: string, requirementId: string, candidateId: string, revision: number): Promise<string> {
+	const payload = [projectId, requirementId, candidateId, String(revision)].join("\u001f");
+	const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payload));
+	const hex = Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+	return `spc_${hex.slice(0, 24)}`;
+}
+
+export class SourcingSpecWorkflow extends WorkflowEntrypoint<Env, SpecRequest> {
+	async run(event: WorkflowEvent<SpecRequest>, step: WorkflowStep) {
+		const { projectId, requirementIds, candidateIds } = event.payload;
+		try {
+			const result = await step.do(
+				"evaluate-spec",
+				{ retries: { limit: 1, delay: "10 seconds", backoff: "exponential" }, timeout: "30 minutes" },
+				async () => {
+					const container = getContainer(this.env.SOURCING_CONTAINER, "m1-intake");
+					const response = await container.fetch(
+						new Request("http://container/internal/evaluate-spec", {
+							method: "POST",
+							headers: { "content-type": "application/json" },
+							body: JSON.stringify({
+								project_id: projectId,
+								gateway_url: this.env.CONTAINER_GATEWAY_URL,
+								token: this.env.INTERNAL_GATEWAY_TOKEN,
+								runtime_config: {
+									GENESIS_BASE_URL: this.env.GENESIS_BASE_URL,
+									GENESIS_ACCESS_TOKEN: this.env.GENESIS_ACCESS_TOKEN,
+									GENESIS_MODEL_ID: this.env.GENESIS_MODEL_ID,
+									...(this.env.LANGSMITH_API_KEY ? { LANGSMITH_API_KEY: this.env.LANGSMITH_API_KEY } : {}),
+									...(this.env.LANGSMITH_TRACING ? { LANGSMITH_TRACING: this.env.LANGSMITH_TRACING } : {}),
+									...(this.env.LANGSMITH_PROJECT ? { LANGSMITH_PROJECT: this.env.LANGSMITH_PROJECT } : {}),
+								},
+								requirement_ids: requirementIds,
+								candidate_ids: candidateIds,
+							}),
+						}),
+					);
+					if (!response.ok) {
+						const body = await response.text().catch(() => "");
+						throw new Error(`spec evaluation failed with status ${response.status}: ${body.slice(0, 400)}`);
+					}
+					// The step output stays small. The assessments themselves are
+					// stored in D1 by the container.
+					const payload = (await response.json()) as {
+						status?: string;
+						assessments?: number;
+						by_overall?: Record<string, number>;
+					};
+					return {
+						status: payload.status ?? "COMPLETED",
+						assessments: payload.assessments ?? 0,
+						by_overall: payload.by_overall ?? {},
+					};
+				},
+			);
+			const outcome = result as unknown as { status?: string; assessments?: number; by_overall?: Record<string, number> };
+			return {
+				status: outcome.status ?? "COMPLETED",
+				assessments: outcome.assessments ?? 0,
+				by_overall: outcome.by_overall ?? {},
+			};
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return { status: "FAILED", error: message.slice(0, 400) };
+		}
+	}
+}
+
 export class SourcingWorkflow extends WorkflowEntrypoint<Env, RunRequest> {
 	async run(event: WorkflowEvent<RunRequest>, step: WorkflowStep) {
 		const { runId, projectId, durationSeconds, mode } = event.payload;
@@ -955,6 +1032,168 @@ export default {
 					compilation,
 					existing_intelligence: priorIntelligence,
 				});
+			}
+
+			const specContextMatch = url.pathname.match(/^\/internal\/projects\/([^/]+)\/spec-context$/);
+			if (specContextMatch && request.method === "GET") {
+				const projectId = decodeURIComponent(specContextMatch[1]);
+				const wantedRequirements = (url.searchParams.get("requirement_ids") ?? "").split(",").filter(Boolean);
+				const wantedCandidates = (url.searchParams.get("candidate_ids") ?? "").split(",").filter(Boolean);
+				const compilationRow = await env.DB.prepare(
+					`SELECT demand_revision, compilation_json FROM demand_compilations WHERE project_id = ?1 ORDER BY demand_revision DESC LIMIT 1`,
+				).bind(projectId).first<{ demand_revision: number; compilation_json: string }>();
+				if (!compilationRow) return json({ error: "demand_not_compiled" }, 404);
+				const compilation = JSON.parse(compilationRow.compilation_json) as {
+					requirements?: unknown[];
+					unstructured_requirements?: unknown[];
+				};
+				const requirements = (compilation.requirements ?? []).filter((item) => {
+					if (wantedRequirements.length === 0) return true;
+					const row = item && typeof item === "object" ? item as Record<string, unknown> : {};
+					return wantedRequirements.includes(String(row.requirement_id ?? ""));
+				});
+
+				const { results: candidateRows } = await env.DB.prepare(
+					`SELECT c.id AS candidate_id, c.requirement_id, c.supplier_id, c.product_id, c.stage, c.rationale,
+					        c.open_questions_json, p.model AS product_model
+					 FROM project_candidates c
+					 LEFT JOIN intelligence_products p ON p.workspace_id = c.workspace_id AND p.id = c.product_id
+					 WHERE c.workspace_id = 'default' AND c.project_id = ?1
+					 ORDER BY c.updated_at DESC LIMIT 600`,
+				).bind(projectId).all<{
+					candidate_id: string; requirement_id: string; supplier_id: string; product_id: string | null;
+					stage: string; rationale: string; open_questions_json: string; product_model: string | null;
+				}>();
+				const candidates = candidateRows
+					.filter((row) => wantedCandidates.length === 0 || wantedCandidates.includes(row.candidate_id))
+					.map((row) => ({
+						candidate_id: row.candidate_id,
+						requirement_id: row.requirement_id,
+						supplier_id: row.supplier_id,
+						product_id: row.product_id,
+						stage: row.stage,
+						rationale: row.rationale,
+						evidence_ids: [] as string[],
+						open_questions: JSON.parse(row.open_questions_json ?? "[]") as string[],
+					}));
+
+				const { results: claimRows } = await env.DB.prepare(
+					`SELECT cc.id AS claim_id, cc.subject_type, cc.subject_id, cc.attribute, cc.value, cc.unit,
+					        cc.status, cc.evaluation_method, ce.evidence_id, ce.source_quote
+					 FROM research_claims cc
+					 JOIN claim_evidence_links ce ON ce.workspace_id = cc.workspace_id AND ce.claim_id = cc.id
+					 WHERE cc.workspace_id = 'default' AND cc.subject_type = 'PRODUCT_MODEL'
+					   AND cc.subject_id IN (SELECT DISTINCT product_id FROM project_candidates
+					        WHERE workspace_id = 'default' AND project_id = ?1)
+					 LIMIT 2000`,
+				).bind(projectId).all<{
+					claim_id: string; subject_type: string; subject_id: string; attribute: string; value: string;
+					unit: string | null; status: string; evaluation_method: string; evidence_id: string; source_quote: string;
+				}>();
+				const seenClaims = new Set<string>();
+				const claims = claimRows
+					.filter((row) => {
+						if (seenClaims.has(row.claim_id)) return false;
+						seenClaims.add(row.claim_id);
+						return true;
+					})
+					.map((row) => ({
+						claim_id: row.claim_id,
+						subject_type: row.subject_type,
+						subject_ref: row.subject_id,
+						attribute: row.attribute,
+						value: row.value,
+						unit: row.unit,
+						evidence_id: row.evidence_id,
+						source_quote: row.source_quote,
+						status: row.status,
+						evaluation_method: row.evaluation_method,
+					}));
+
+				const modelByProduct: Record<string, string> = {};
+				for (const row of candidateRows) {
+					if (row.product_id && row.product_model) modelByProduct[row.product_id] = row.product_model;
+				}
+				return json({
+					project_id: projectId,
+					demand_revision: compilationRow.demand_revision,
+					requirements,
+					unstructured_requirements: compilation.unstructured_requirements ?? [],
+					candidates,
+					claims,
+					model_by_product: modelByProduct,
+				});
+			}
+
+			const specResultsMatch = url.pathname.match(/^\/internal\/projects\/([^/]+)\/spec-results$/);
+			if (specResultsMatch && request.method === "POST") {
+				const projectId = decodeURIComponent(specResultsMatch[1]);
+				const body = (await request.json()) as {
+					demand_revision?: number;
+					assessments?: {
+						requirement_id?: string;
+						product_candidate_id?: string;
+						product_model_ref?: string | null;
+						hard_spec_overall?: string;
+						overall_reason_codes?: string[];
+						hard_constraint_count?: number;
+						calculator_version?: string;
+						dsl_schema_version?: string;
+						evaluated_at?: string;
+						assessment?: unknown;
+					}[];
+				};
+				const revision = Number(body.demand_revision ?? 1);
+				const now = new Date().toISOString();
+				const statements = [];
+				for (const item of body.assessments ?? []) {
+					const requirementId = String(item.requirement_id ?? "");
+					const candidateId = String(item.product_candidate_id ?? "");
+					if (!requirementId || !candidateId) continue;
+					const assessment = item.assessment ?? {};
+					const evidenceIds = new Set<string>();
+					const checks = (assessment as { checks?: { evidence_ids?: string[] }[] }).checks ?? [];
+					for (const check of checks) {
+						for (const evidenceId of check.evidence_ids ?? []) evidenceIds.add(evidenceId);
+					}
+					statements.push(env.DB.prepare(
+						`INSERT INTO spec_assessments (
+							id, workspace_id, project_id, requirement_id, product_candidate_id, product_model_ref,
+							demand_revision, hard_spec_overall, overall_reason_codes_json, hard_constraint_count,
+							calculator_version, dsl_schema_version, assessment_json, evidence_ids_json, evaluated_at, created_at)
+						 VALUES (?1, 'default', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+						 ON CONFLICT(workspace_id, project_id, requirement_id, product_candidate_id, demand_revision) DO UPDATE SET
+							product_model_ref = excluded.product_model_ref,
+							hard_spec_overall = excluded.hard_spec_overall,
+							overall_reason_codes_json = excluded.overall_reason_codes_json,
+							hard_constraint_count = excluded.hard_constraint_count,
+							calculator_version = excluded.calculator_version,
+							dsl_schema_version = excluded.dsl_schema_version,
+							assessment_json = excluded.assessment_json,
+							evidence_ids_json = excluded.evidence_ids_json,
+							evaluated_at = excluded.evaluated_at,
+							created_at = excluded.created_at`,
+					)
+						.bind(
+							await stableSpecId(projectId, requirementId, candidateId, revision),
+							projectId,
+							requirementId,
+							candidateId,
+							item.product_model_ref ?? null,
+							revision,
+							String(item.hard_spec_overall ?? "UNKNOWN"),
+							JSON.stringify(item.overall_reason_codes ?? []),
+							Number(item.hard_constraint_count ?? 0),
+							String(item.calculator_version ?? "0.1.0"),
+							String(item.dsl_schema_version ?? "1.0"),
+							JSON.stringify(assessment),
+							JSON.stringify([...evidenceIds]),
+							String(item.evaluated_at ?? now),
+							now,
+						));
+				}
+				if (statements.length > 0) await env.DB.batch(statements);
+				return json({ stored: statements.length });
 			}
 
 			const researchResultsMatch = url.pathname.match(/^\/internal\/runs\/([^/]+)\/research-results$/);
@@ -1344,6 +1583,69 @@ export default {
 			const row = await statement.first<{ plan_json: string }>();
 			if (!row) return json({ error: "sourcing_plan_not_found" }, 404);
 			return json({ plan: JSON.parse(row.plan_json) });
+		}
+
+		const specAssessmentsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/spec-assessments$/);
+		if (specAssessmentsMatch) {
+			const projectId = decodeURIComponent(specAssessmentsMatch[1]);
+			if (request.method === "GET") {
+				const { results } = await env.DB.prepare(
+					`SELECT id, requirement_id, product_candidate_id, product_model_ref, demand_revision,
+					        hard_spec_overall, overall_reason_codes_json, hard_constraint_count, calculator_version,
+					        dsl_schema_version, assessment_json, evidence_ids_json, evaluated_at, created_at
+					 FROM spec_assessments
+					 WHERE workspace_id = 'default' AND project_id = ?1
+					 ORDER BY requirement_id, hard_spec_overall DESC, product_candidate_id
+					 LIMIT 1000`,
+				).bind(projectId).all<Record<string, unknown>>();
+				return json({
+					project_id: projectId,
+					assessments: results.map((row) => ({
+						assessment_id: row.id,
+						requirement_id: row.requirement_id,
+						product_candidate_id: row.product_candidate_id,
+						product_model_ref: row.product_model_ref,
+						demand_revision: row.demand_revision,
+						hard_spec_overall: row.hard_spec_overall,
+						overall_reason_codes: JSON.parse(String(row.overall_reason_codes_json ?? "[]")) as string[],
+						hard_constraint_count: row.hard_constraint_count,
+						calculator_version: row.calculator_version,
+						dsl_schema_version: row.dsl_schema_version,
+						assessment: JSON.parse(String(row.assessment_json ?? "{}")) as unknown,
+						evidence_ids: JSON.parse(String(row.evidence_ids_json ?? "[]")) as string[],
+						evaluated_at: row.evaluated_at,
+						created_at: row.created_at,
+					})),
+				});
+			}
+			if (request.method === "POST") {
+				const project = await env.DB.prepare(`SELECT id FROM projects WHERE id = ?1`).bind(projectId).first<{ id: string }>();
+				if (!project) return json({ error: "not_found" }, 404);
+				const compilation = await env.DB.prepare(
+					`SELECT demand_revision FROM demand_compilations WHERE project_id = ?1 ORDER BY demand_revision DESC LIMIT 1`,
+				).bind(projectId).first<{ demand_revision: number }>();
+				if (!compilation) return json({ error: "demand_not_compiled" }, 409);
+				const body = (await request.json().catch(() => ({}))) as {
+					requirement_ids?: string[];
+					candidate_ids?: string[];
+				};
+				// The typing and the alignment hold one model call open for
+				// minutes, so the evaluation runs as a workflow and the client
+				// polls the result.
+				const instance = await env.SPEC_WORKFLOW.create({
+					params: {
+						projectId,
+						requirementIds: body.requirement_ids ?? [],
+						candidateIds: body.candidate_ids ?? [],
+					},
+				});
+				return json({
+					project_id: projectId,
+					status: "QUEUED",
+					assessment_id: instance.id,
+					demand_revision: compilation.demand_revision,
+				}, 202);
+			}
 		}
 
 		const candidateMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/candidates$/);

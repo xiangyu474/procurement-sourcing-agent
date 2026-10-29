@@ -104,6 +104,17 @@ class ResearchRunRequest(BaseModel):
     )
 
 
+class SpecEvaluationRequest(BaseModel):
+    """Internal request for the M3-A technical check of one project."""
+
+    project_id: str
+    gateway_url: str
+    token: str
+    runtime_config: dict[str, str] = Field(default_factory=dict)
+    requirement_ids: list[str] = Field(default_factory=list, max_length=50)
+    candidate_ids: list[str] = Field(default_factory=list, max_length=300)
+
+
 def _apply_runtime_config(runtime_config: dict[str, str]) -> None:
     """Install runtime configuration supplied by the Worker for this run.
 
@@ -347,6 +358,135 @@ def health() -> dict[str, Any]:
         "llm_configured": settings.has_llm,
         "search_configured": bool(settings.tavily_api_key),
         "max_search_calls": settings.max_search_calls,
+    }
+
+
+def _unresolved_demand_by_requirement(
+    requirements: list[Any],
+    unstructured: list[Any],
+) -> dict[str, list[str]]:
+    """Attach the project statements that could not become constraints.
+
+    A statement that names the product of a requirement is an unresolved demand
+    of that requirement, so its check cannot be a PASS. The statements that do
+    not name a product stay with the project, and the decision stage reads
+    them.
+    """
+    result: dict[str, list[str]] = {}
+    for requirement in requirements:
+        name = str(getattr(requirement, "product_name", "") or "").strip()
+        matched: list[str] = []
+        if name:
+            for item in unstructured:
+                text = str(getattr(item, "text", "") or "")
+                if text and name in text:
+                    matched.append(text)
+        result[str(getattr(requirement, "requirement_id", ""))] = matched
+    return result
+
+
+@app.post("/internal/evaluate-spec")
+async def evaluate_spec(payload: SpecEvaluationRequest, x_internal_token: str | None = Header(default=None)) -> dict[str, Any]:
+    """Judge every requirement against every candidate of a project.
+
+    The container asks the gateway for the compiled demand, the project
+    candidates, and the product claims, then types the claims, aligns them with
+    the constraints, and hands the result to the calculator. The verdicts go
+    back to the gateway, which stores them in D1.
+    """
+    _require_internal(payload.token or x_internal_token)
+    _apply_runtime_config(payload.runtime_config)
+
+    import httpx
+
+    from procurement_agent.domain.requirements import Requirement
+    from procurement_agent.domain.sourcing import ClaimDraft, ResearchCandidate
+    from procurement_agent.services.spec_evaluation import evaluate_candidates, summarize
+
+    async with httpx.AsyncClient(timeout=120) as client:
+        context_response = await client.get(
+            f"{payload.gateway_url.rstrip('/')}/internal/projects/{payload.project_id}/spec-context",
+            params={
+                "requirement_ids": ",".join(payload.requirement_ids),
+                "candidate_ids": ",".join(payload.candidate_ids),
+            },
+            headers={"x-internal-token": payload.token},
+        )
+        if context_response.status_code == 404:
+            raise HTTPException(status_code=404, detail="project or compiled demand not found")
+        context_response.raise_for_status()
+        context = context_response.json()
+
+    evaluation_settings = load_settings()
+    if not evaluation_settings.has_llm:
+        raise HTTPException(status_code=503, detail="M3-A evaluation requires a configured chat model")
+
+    requirements = [Requirement.model_validate(item) for item in context.get("requirements") or []]
+    candidates = [ResearchCandidate.model_validate(item) for item in context.get("candidates") or []]
+    claims = [ClaimDraft.model_validate(item) for item in context.get("claims") or []]
+    models = {str(key): str(value) for key, value in (context.get("model_by_product") or {}).items()}
+    unresolved = _unresolved_demand_by_requirement(
+        requirements,
+        context.get("unstructured_requirements") or [],
+    )
+
+    try:
+        # The typing and the alignment hold one model call open for minutes.
+        model = build_chat_model(evaluation_settings, timeout=600)
+        assessments = evaluate_candidates(
+            requirements=requirements,
+            candidates=candidates,
+            claims=claims,
+            model=model,
+            model_by_product=models,
+            unresolved_demand=unresolved,
+        )
+    except Exception as exc:
+        error_type = type(exc).__name__
+        lower_name = error_type.casefold()
+        if "timeout" in lower_name:
+            status_code, reason_code = 504, "MODEL_TIMEOUT"
+        elif "ratelimit" in lower_name:
+            status_code, reason_code = 429, "MODEL_RATE_LIMIT"
+        else:
+            status_code, reason_code = 502, "SPEC_EVALUATION_FAILED"
+        raise HTTPException(
+            status_code=status_code,
+            detail={"reason_code": reason_code, "error_type": error_type},
+        ) from exc
+
+    serialized = [
+        {
+            "requirement_id": assessment.requirement_id,
+            "product_candidate_id": assessment.product_candidate_id,
+            "product_model_ref": assessment.product_model_ref,
+            "hard_spec_overall": assessment.hard_spec_overall.value,
+            "overall_reason_codes": [code.value for code in assessment.overall_reason_codes],
+            "hard_constraint_count": assessment.hard_constraint_count,
+            "calculator_version": assessment.calculator_version,
+            "dsl_schema_version": assessment.dsl_schema_version,
+            "evaluated_at": assessment.evaluated_at.isoformat(),
+            "assessment": assessment.model_dump(mode="json"),
+        }
+        for assessment in assessments
+    ]
+    async with httpx.AsyncClient(timeout=120) as client:
+        stored = await client.post(
+            f"{payload.gateway_url.rstrip('/')}/internal/projects/{payload.project_id}/spec-results",
+            headers={"x-internal-token": payload.token},
+            json={"demand_revision": context.get("demand_revision", 1), "assessments": serialized},
+        )
+        if not stored.is_success:
+            raise HTTPException(
+                status_code=stored.status_code,
+                detail=f"spec assessment persistence failed: {stored.text[:500]}",
+            )
+    summary = summarize(assessments)
+    return {
+        "project_id": payload.project_id,
+        "status": "COMPLETED",
+        "assessments": len(assessments),
+        "by_overall": summary["by_overall"],
     }
 
 
