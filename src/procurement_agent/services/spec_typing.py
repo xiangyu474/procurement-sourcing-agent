@@ -53,7 +53,7 @@ Rules:
 _TRUE_WORDS = {"是", "有", "支持", "yes", "true", "√", "已"}
 _FALSE_WORDS = {"否", "无", "不支持", "no", "false", "×", "未"}
 
-TYPING_BATCH_SIZE = 20
+TYPING_BATCH_SIZE = 15
 
 
 def _claim_payload(claims: Sequence[ClaimDraft]) -> list[dict[str, Any]]:
@@ -107,23 +107,28 @@ def _propose_batch(
     }
     batches: list[TypedClaimBatch] = []
     for attempt in range(2):
-        payloads, text = stream_tool_call(
-            model,
-            [
-                SystemMessage(content=SYSTEM_PROMPT),
-                HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
-            ]
-            + (
+        try:
+            payloads, text = stream_tool_call(
+                model,
                 [
-                    HumanMessage(
-                        content="Answer with one typed claim for every claim_id given to you."
-                    )
+                    SystemMessage(content=SYSTEM_PROMPT),
+                    HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
                 ]
-                if attempt
-                else []
-            ),
-            TypedClaimBatch,
-        )
+                + (
+                    [
+                        HumanMessage(
+                            content="Answer with one typed claim for every claim_id given to you."
+                        )
+                    ]
+                    if attempt
+                    else []
+                ),
+                TypedClaimBatch,
+            )
+        except Exception:
+            # The provider failed. The claims of this batch stay untyped, so the
+            # calculator reports UNKNOWN for them instead of guessing.
+            continue
         for raw in payloads:
             try:
                 batches.append(TypedClaimBatch.model_validate(raw))

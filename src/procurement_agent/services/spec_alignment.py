@@ -256,19 +256,24 @@ def propose_alignments(
     payload = _payload(constraints, candidates)
     proposals: list[AlignmentProposal] = []
     for attempt in range(2):
-        calls, text = stream_tool_call(
-            model,
-            [
-                SystemMessage(content=SYSTEM_PROMPT),
-                HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
-            ]
-            + (
-                [HumanMessage(content="Answer with one alignment for every constraint and candidate pair.")]
-                if attempt
-                else []
-            ),
-            AlignmentBatch,
-        )
+        try:
+            calls, text = stream_tool_call(
+                model,
+                [
+                    SystemMessage(content=SYSTEM_PROMPT),
+                    HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
+                ]
+                + (
+                    [HumanMessage(content="Answer with one alignment for every constraint and candidate pair.")]
+                    if attempt
+                    else []
+                ),
+                AlignmentBatch,
+            )
+        except Exception:
+            # The provider failed. Without an alignment the constraints stay
+            # UNKNOWN, which is the honest outcome.
+            continue
         for raw in calls:
             try:
                 proposals.extend(AlignmentBatch.model_validate(raw).alignments)

@@ -1,12 +1,13 @@
 """Run the M3-A2 evaluation live against the real M2 research output.
 
-The script reads one finished M2 run from the cloud, takes the requirements it
+The script reads one finished M2 run from D1, takes the requirements it
 compiled and the product claims the researcher recorded, and then runs the
 typing, the alignment, and the calculator with the real model. It prints the
 verdicts with their operation and their evidence, and it writes nothing.
 
 Usage:
     uv run --python 3.11 python scripts/live_m3_spec_evaluation.py --run <run_id>
+    uv run --python 3.11 python scripts/live_m3_spec_evaluation.py --run <run_id> --local-requirement
 """
 
 from __future__ import annotations
@@ -17,8 +18,8 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
-import httpx
 from dotenv import load_dotenv
 
 from procurement_agent.domain.requirements import Requirement
@@ -35,62 +36,9 @@ from procurement_agent.ingestion.pptx import extract_pptx_fragments
 from procurement_agent.services.demand_intake import build_demand_intake
 from procurement_agent.services.spec_evaluation import evaluate_candidates, summarize
 
-DEFAULT_BASE_URL = "https://procurement-sourcing-gateway.xiangyu474.workers.dev"
 
-
-def _request(client: httpx.Client, method: str, path: str) -> dict:
-    response = client.request(method, path, timeout=300)
-    response.raise_for_status()
-    return response.json()
-
-
-def _requirements(body: dict) -> list[Requirement]:
-    compilation = body.get("compilation") or body
-    raw = compilation.get("requirements") or []
-    return [Requirement.model_validate(item) for item in raw]
-
-
-def _candidates(body: dict) -> list[ResearchCandidate]:
-    raw = body.get("candidates") or []
-    candidates: list[ResearchCandidate] = []
-    for item in raw:
-        supplier = item.get("supplier") or {}
-        product = item.get("product") or {}
-        evidence_ids = [
-            entry.get("evidence_id")
-            for entry in item.get("evidence") or []
-            if entry.get("evidence_id")
-        ]
-        candidates.append(
-            ResearchCandidate(
-                candidate_id=item["candidate_id"],
-                requirement_id=item["requirement_id"],
-                supplier_id=supplier.get("supplier_id", "supplier-unknown"),
-                product_id=product.get("product_id"),
-                stage=CandidateStage(item.get("stage", "DISCOVERED_LONG_LIST")),
-                rationale=item.get("rationale", "the source states this candidate"),
-                evidence_ids=evidence_ids or ["evidence-unknown"],
-            )
-        )
-    return candidates
-
-
-def _claims_from_d1(project_id: str) -> list[ClaimDraft]:
-    """Read the product claims the researcher recorded for this project's candidates.
-
-    The claims live in D1. The script only reads them.
-    """
-    sql = (
-        "SELECT cc.id AS claim_id, cc.subject_type, cc.subject_id, cc.attribute, cc.value, cc.unit, "
-        "cc.status, ce.evidence_id, ce.source_quote "
-        "FROM research_claims cc JOIN claim_evidence_links ce "
-        "ON ce.workspace_id = cc.workspace_id AND ce.claim_id = cc.id "
-        "WHERE cc.workspace_id = 'default' AND cc.subject_type = 'PRODUCT_MODEL' "
-        "AND cc.subject_id IN (SELECT DISTINCT product_id FROM project_candidates "
-        "WHERE workspace_id = 'default' AND project_id = '"
-        + project_id
-        + "')"
-    )
+def _d1(sql: str) -> list[dict[str, Any]]:
+    """Run a read-only query against the remote D1 database."""
     npx = "npx.cmd" if os.name == "nt" else "npx"
     completed = subprocess.run(
         [npx, "wrangler", "d1", "execute", "DB", "--remote", "--command", sql, "--json"],
@@ -98,31 +46,81 @@ def _claims_from_d1(project_id: str) -> list[ClaimDraft]:
         text=True,
         encoding="utf-8",
     )
-    rows = json.loads(completed.stdout)[0]["results"]
+    if completed.returncode != 0:
+        raise RuntimeError(f"the D1 query failed: {completed.stderr[:300]}")
+    return json.loads(completed.stdout)[0]["results"]
+
+
+def _run_project(run_id: str) -> str:
+    rows = _d1(f"SELECT project_id FROM runs WHERE id = '{run_id}'")
+    if not rows:
+        raise SystemExit(f"the run {run_id} is not in D1")
+    return str(rows[0]["project_id"])
+
+
+def _candidates(project_id: str) -> list[ResearchCandidate]:
+    """Read the project candidates and the model code of their product."""
+    rows = _d1(
+        "SELECT c.id AS candidate_id, c.requirement_id, c.stage, c.rationale, c.supplier_id, c.product_id, "
+        "p.model AS product_model, "
+        "(SELECT group_concat(e.evidence_id) FROM project_candidate_evidence e "
+        "WHERE e.workspace_id = c.workspace_id AND e.candidate_id = c.id) AS evidence_ids "
+        "FROM project_candidates c LEFT JOIN intelligence_products p "
+        "ON p.workspace_id = c.workspace_id AND p.id = c.product_id "
+        f"WHERE c.workspace_id = 'default' AND c.project_id = '{project_id}'"
+    )
+    candidates: list[ResearchCandidate] = []
+    for row in rows:
+        evidence_ids = [item for item in str(row.get("evidence_ids") or "").split(",") if item]
+        candidates.append(
+            ResearchCandidate(
+                candidate_id=str(row["candidate_id"]),
+                requirement_id=str(row["requirement_id"]),
+                supplier_id=str(row["supplier_id"]),
+                product_id=str(row["product_id"]) if row.get("product_id") else None,
+                stage=CandidateStage(str(row.get("stage", "DISCOVERED_LONG_LIST"))),
+                rationale=str(row.get("rationale") or "the source states this candidate"),
+                evidence_ids=evidence_ids or ["evidence-unknown"],
+            )
+        )
+    return candidates
+
+
+def _claims(project_id: str) -> list[ClaimDraft]:
+    """Read the product claims the researcher recorded for this project."""
+    rows = _d1(
+        "SELECT cc.id AS claim_id, cc.subject_type, cc.subject_id, cc.attribute, cc.value, cc.unit, "
+        "cc.status, ce.evidence_id, ce.source_quote "
+        "FROM research_claims cc JOIN claim_evidence_links ce "
+        "ON ce.workspace_id = cc.workspace_id AND ce.claim_id = cc.id "
+        "WHERE cc.workspace_id = 'default' AND cc.subject_type = 'PRODUCT_MODEL' "
+        "AND cc.subject_id IN (SELECT DISTINCT product_id FROM project_candidates "
+        f"WHERE workspace_id = 'default' AND project_id = '{project_id}')"
+    )
     return [
         ClaimDraft(
-            claim_id=row["claim_id"],
-            subject_type=SubjectType(row["subject_type"]),
-            subject_ref=row["subject_id"],
-            attribute=row["attribute"],
-            value=row["value"],
+            claim_id=str(row["claim_id"]),
+            subject_type=SubjectType(str(row["subject_type"])),
+            subject_ref=str(row["subject_id"]),
+            attribute=str(row["attribute"]),
+            value=str(row["value"]),
             unit=row.get("unit"),
-            evidence_id=row["evidence_id"],
-            source_quote=row["source_quote"],
-            status=ClaimStatus(row.get("status", "SUPPORTED_BY_SOURCE")),
+            evidence_id=str(row["evidence_id"]),
+            source_quote=str(row["source_quote"]),
+            status=ClaimStatus(str(row.get("status", "SUPPORTED_BY_SOURCE"))),
             evaluation_method="EXCERPT_MATCH",
         )
         for row in rows
     ]
 
 
-def _models(bundle: dict) -> dict[str, str]:
-    return {
-        product["product_id"]: product["model"]
-        for product in bundle.get("products") or []
-        if product.get("model")
-    }
-
+def _models(project_id: str) -> dict[str, str]:
+    rows = _d1(
+        "SELECT c.product_id AS product_id, p.model AS model FROM project_candidates c "
+        "JOIN intelligence_products p ON p.workspace_id = c.workspace_id AND p.id = c.product_id "
+        f"WHERE c.workspace_id = 'default' AND c.project_id = '{project_id}' AND p.model IS NOT NULL"
+    )
+    return {str(row["product_id"]): str(row["model"]) for row in rows}
 
 
 def _local_requirements(model) -> list[Requirement]:
@@ -160,8 +158,6 @@ def _local_requirements(model) -> list[Requirement]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run", required=True, help="a finished M2 run ID")
-    parser.add_argument("--base-url", default=os.getenv("PROCUREMENT_AGENT_BASE_URL", DEFAULT_BASE_URL))
-    parser.add_argument("--token-file", type=Path, default=Path(".demo_access_token"))
     parser.add_argument(
         "--local-requirement",
         action="store_true",
@@ -169,38 +165,19 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    load_dotenv()
+    load_dotenv(".env")
     settings = load_settings()
     if not settings.has_llm:
         print(json.dumps({"status": "BLOCKED", "reason": "GENESIS_* is not configured"}))
         return 2
-    if not args.token_file.exists():
-        print(json.dumps({"status": "BLOCKED", "reason": "the demo access token file is missing"}))
-        return 2
-    token = args.token_file.read_text(encoding="utf-8").strip()
 
-    with httpx.Client(
-        base_url=args.base_url.rstrip("/"),
-        headers={"authorization": f"Bearer {token}"},
-        timeout=httpx.Timeout(300),
-    ) as client:
-        run = _request(client, "GET", f"/api/runs/{args.run}")
-        project_id = run.get("project_id")
-        requirements_body = _request(client, "GET", f"/api/projects/{project_id}/requirements")
-        candidates_body = _request(client, "GET", f"/api/projects/{project_id}/candidates")
-
-    requirements = _requirements(requirements_body)
-    candidates = _candidates(candidates_body)
-    claims = _claims_from_d1(project_id)
-    models = {
-        candidate["product"]["product_id"]: candidate["product"]["model"]
-        for candidate in candidates_body.get("candidates") or []
-        if (candidate.get("product") or {}).get("model")
-    }
+    project_id = _run_project(args.run)
+    candidates = _candidates(project_id)
+    claims = _claims(project_id)
+    models = _models(project_id)
 
     model = build_chat_model(settings, timeout=600)
-    if args.local_requirement:
-        requirements = _local_requirements(model)
+    requirements = _local_requirements(model) if args.local_requirement else []
     assessments = evaluate_candidates(
         requirements=requirements,
         candidates=candidates,

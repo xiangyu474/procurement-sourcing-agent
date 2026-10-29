@@ -280,3 +280,24 @@ The compiler now asks again when the answer carries no purchase line, and it acc
 The first run of that script over the M2 cold-start run `4ca31b39` produced 39 assessments, one per candidate, and every one of them UNKNOWN with `ATTRIBUTE_NOT_ALIGNED`. The reason the model gave is the interesting part: the requirement asks for the video output pixel count, while the LUCID claims state the camera's sensor resolution, five megapixels on the Sony IMX264 sensor array. Sensor effective pixels and video output pixels are not the same quantity, so the alignment refused the pairing instead of letting a matching number pass.
 
 That is the behaviour the milestone asks for, on real data: a number that looks like a match is not a match when the two sides measure different things.
+
+The evaluation groups the candidates by product model before it aligns them, because the technical check is a requirement against a model and several candidate rows point at the same model. With the real M2 output that is 39 candidate rows and 9 models, and the alignment call count falls from 39 to 9. The model had been answering with duplicate-check notes before, because it was asked about the same product again and again.
+
+### The final live result over the real M2 output
+
+The requirement was compiled locally from the same 5MP material the M2 acceptance uses, with two constraints: the video output resolution of at least 5 MP, and ONVIF support. The products and their claims are the real ones from run `4ca31b39`.
+
+| Outcome | Count |
+|---|---|
+| PASS | 3 checks, all the same model: LUCID `TRI050S-CC`, the resolution constraint, operation `5 MP GTE 5 MP` |
+| UNKNOWN, `ATTRIBUTE_NOT_ALIGNED` | 67 checks |
+| UNKNOWN, `MODEL_VARIANT_UNCERTAIN` | 8 checks, the candidates with no exact model code |
+
+Every UNKNOWN names the claim that was rejected and why. The LUCID `TRI055N` says the claim measures connector types with an IP67 context, which is not the output pixel count. The `CAM-CIC-5000R-14-G` says trigger and strobe support is a synchronization signal, not a pixel count. The `NBN-80052-BA` says the claims cover output resolution, product type, availability, sensor optical format, environmental rating and power input, and state no ONVIF support anywhere.
+
+Two findings came out of this run that the next stage has to answer:
+
+- **The research mostly states sensor resolution while the buyer asks for video output resolution.** The two are not the same quantity, so the alignment refuses them. Either the research has to ask for the output resolution, or the demand has to say which quantity it means.
+- **One real claim states ONVIF conformance** as the phrase `Conforms to ONVIF Profile S`, while its quotation reads `The camera conforms to the ONVIF Profile S specifications.` A string value is refused because the phrase is not verbatim in the quotation, and the token set `ONVIF Profile S` is accepted. The typing prompt should prefer the token set for a protocol list, and the alignment should then find that claim.
+
+The provider returned a 504 in the middle of one typing batch while this was running. The typing and the alignment now survive a provider failure: the claims of the failed batch stay untyped and the constraints stay UNKNOWN, instead of the whole evaluation failing.

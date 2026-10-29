@@ -95,46 +95,47 @@ def evaluate_candidates(
         own_candidates = [candidate for candidate in candidates if candidate.requirement_id == requirement.requirement_id]
         if not own_candidates:
             continue
-        candidate_claims: list[tuple[str, list[ProductAttributeClaim]]] = []
-        for candidate in own_candidates:
-            typed = _claims_for_candidate(
-                candidate,
-                typed_claims,
-                _candidate_model_ref(candidate, product_models),
-            )
-            candidate_claims.append((candidate.candidate_id, typed))
-
-        alignments: dict[tuple[str, str], SemanticAlignment] = {}
-        if model is not None:
-            alignments = align_requirement(
-                constraints=requirement.constraints,
-                candidates=candidate_claims,
-                model=model,
-            )
-
+        # The unit of the technical check is the requirement and the product
+        # model. Several candidate rows can point at the same model, so the
+        # alignment is done once per model and the verdicts are shared.
+        groups: dict[str, list[ResearchCandidate]] = {}
         for candidate in own_candidates:
             product_ref = _candidate_model_ref(candidate, product_models)
+            key = product_ref or candidate.product_id or candidate.candidate_id
+            groups.setdefault(key, []).append(candidate)
+
+        for group_key, group in groups.items():
+            model_ref = _candidate_model_ref(group[0], product_models)
             typed = _claims_for_candidate(
-                candidate,
+                group[0],
                 typed_claims,
-                _candidate_model_ref(candidate, product_models),
+                model_ref,
             )
-            candidate_alignments = [
-                alignments[(constraint.constraint_id, candidate.candidate_id)]
-                for constraint in requirement.constraints
-                if (constraint.constraint_id, candidate.candidate_id) in alignments
-            ]
-            assessments.append(
-                evaluate_requirement_product(
-                    requirement=requirement,
-                    product_candidate_id=candidate.candidate_id,
-                    product_model_ref=product_ref,
-                    claims=typed,
-                    alignments=candidate_alignments,
-                    unresolved_demand=(unresolved_demand or {}).get(requirement.requirement_id, ()),
-                    evaluated_at=moment,
+            representative = group[0].candidate_id
+            alignments: dict[tuple[str, str], SemanticAlignment] = {}
+            if model is not None:
+                alignments = align_requirement(
+                    constraints=requirement.constraints,
+                    candidates=[(representative, typed)],
+                    model=model,
                 )
-            )
+            candidate_alignments = [
+                alignments[(constraint.constraint_id, representative)]
+                for constraint in requirement.constraints
+                if (constraint.constraint_id, representative) in alignments
+            ]
+            for candidate in group:
+                assessments.append(
+                    evaluate_requirement_product(
+                        requirement=requirement,
+                        product_candidate_id=candidate.candidate_id,
+                        product_model_ref=model_ref,
+                        claims=typed,
+                        alignments=candidate_alignments,
+                        unresolved_demand=(unresolved_demand or {}).get(requirement.requirement_id, ()),
+                        evaluated_at=moment,
+                    )
+                )
     return assessments
 
 
