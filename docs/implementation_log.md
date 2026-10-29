@@ -142,7 +142,15 @@ No M3 requirement-to-product PASS/FAIL gate, historical price comparison, suppli
 
 ### M2
 
-`scripts/verify_m2_cloud_api.py`: **PASS**. The script runs the three stages up to three times and reports the pass rate, because a research round can end early for reasons outside the code. The checks inside a stage are unchanged: an exact model, a quote that is present in the snapshot, a snapshot hash that matches the D1 metadata, a candidate that stays on the Longlist, and a trace that is readable in LangSmith. The three stages and what they prove:
+`scripts/verify_m2_cloud_api.py`: **PASS**.
+
+**The acceptance criterion.** Each stage runs up to three times and the script reports the pass rate. A round that passes all three stages at least once is a PASS. The criterion asks whether the pipeline can produce sourced candidates, not whether the network and the model happened to cooperate on one particular attempt. Every round records why it ended early, in the run's `stop_reason_code`.
+
+**The checks inside a stage are unchanged and are hard failures.** An exact model code, a quote that is present in the R2 snapshot, a snapshot hash that matches the D1 metadata, a candidate that stays on the Longlist, no duplicate candidate rows in one project, no candidate row shared between projects, and a Supervisor trace that is readable in LangSmith with the run ID in its metadata.
+
+`scripts/verify_m1_cloud_api.py` uses the same rule.
+
+The three M2 stages and what they prove:
 
 | Stage | What it proves |
 |---|---|
