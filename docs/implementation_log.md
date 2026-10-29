@@ -186,3 +186,27 @@ Two things that path taught, kept here because they cost time:
 - The image needs a build host that can reach the package index. A corporate proxy whose address does not resolve inside the build fails the install.
 
 The dependency versions are pinned in `pyproject.toml` so the image matches the tested environment. The container runs at two vCPUs and six gigabytes, which is what a research run needs.
+
+## M3 — Requirement alignment, price comparability, decision gate
+
+**Status: M3-0 (plan and baseline audit) done. M3-A1 next.**
+
+### Plan
+
+`docs/m3_plan.md` holds the file-level order, the data flow, the test mapping for the nine acceptance requirements, and the estimated change range. M3 runs in seven stages: M3-0 plan and audit, M3-A1 contracts and the pure calculator, M3-A2 claim typing and semantic alignment, M3-A3 cloud wiring and a real case, M3-B history and price comparability, M3-C decision and verification gate, and M3-Q quality strengthening that runs across the whole milestone.
+
+### Baseline audit: M2 candidates and evidence
+
+On run `4ca31b39` (the last passing M2 cold start): 39 candidate rows resolve to 28 suppliers, 17 products, and 8 distinct models. 35 of the 39 rows carry a model. 34 claims exist, 23 of them at model level, and 10 of the 17 products carry at least one model-level claim, which is 59 percent. 19 sources were fetched.
+
+Two facts set the M3-A design. The 39 rows are 8 real models, mostly multiplied by supplier name spellings such as `LUCID`, `LUCID Vision Labs`, and `LUCID Vision Labs, Inc.`, so the evaluation unit is the model. And only 59 percent of products have a model-level claim, so a product without one must return UNKNOWN rather than pass on category similarity.
+
+### Baseline audit: where the tokens go
+
+The same run made 16 model calls: 266762 prompt tokens, 57954 completion tokens, 298.6 seconds. The supervisor alone took 205017 prompt tokens, which is 77 percent of the input, because each round carries the researcher's full claims and quotations in its context. The researcher took 57844 and the plan call 3901. M3-C feeds the supervisor a short summary and IDs, and M3-B does the same for the history analysis.
+
+### Baseline audit: what the requirements actually contain
+
+The M1 compiler produced one constraint per requirement on the official material, `onenet_access EQ True`, plus 26 unstructured statements. Reading the source presentation shows this is correct: the purchase table carries name, quantity, unit price, sales price, budget, and tax rate, and the 26 statements are project policy, payment terms, and sample labels.
+
+The acceptance test material exposes a real gap. It asks for a `5MP  industrial network camera` and the compiler kept the 5MP in the product name and produced no constraint. M3-A needs a constraint to align against, so the first item of M3-Q, a prompt that turns objective specifications in the requirement text into quoted constraints plus a deterministic check that the number appears in the quote, has to land before the real case in M3-A2.
