@@ -18,7 +18,7 @@
 cd procurement_sourcing_agent
 grep -h "CREATE TABLE IF NOT EXISTS" cloudflare/gateway/migrations/*.sql \
   | sed 's/CREATE TABLE IF NOT EXISTS //;s/ (//' | sort | nl
-grep -c "^class " src/procurement_agent/domain/requirements.py src/procurement_agent/domain/sourcing.py
+grep -c "^class " src/procurement_agent/domain/*.py
 grep -h "CREATE INDEX IF NOT EXISTS\|CREATE UNIQUE INDEX IF NOT EXISTS" \
   cloudflare/gateway/migrations/*.sql | wc -l
 ```
@@ -31,6 +31,8 @@ grep -h "CREATE INDEX IF NOT EXISTS\|CREATE UNIQUE INDEX IF NOT EXISTS" \
 | D1 索引 | 13 |
 | `domain/requirements.py` 领域类型 | 20，其中 9 个枚举，11 个模型 |
 | `domain/sourcing.py` 领域类型 | 30，其中 10 个枚举，20 个模型 |
+| `domain/spec_alignment.py` 领域类型 | 8，其中 4 个枚举，4 个模型 |
+| `domain/units.py` 领域类型 | 2 |
 | R2 key 前缀 | 4 |
 
 ## 三层存储的分工
@@ -399,6 +401,45 @@ grep -h "CREATE INDEX IF NOT EXISTS\|CREATE UNIQUE INDEX IF NOT EXISTS" \
 - **为什么需要**：`ChannelHint` 决定研究走哪条渠道，`CandidateStage` 决定候选成熟度，`ProvenanceType` 决定一个结论是用户明说的还是模型猜的。这些判断一旦走字符串比较，边界就会松动。
 - **怎么用**：`StrEnum`，以字符串落库。
 - **预期行为**：`ProvenanceType` 的 `INFERRED_FOR_REVIEW` 表示待人工确认。`RequirementAssociationOrigin` 的四个值分别对应"计划明写"、"单需求回填"、"主管追问"、"无关联被忽略"。
+
+## 规格对齐领域模型
+
+M3-A 把需求侧和产品侧接到同一套值类型上，中间只隔一层对齐。
+
+### `ProductAttributeClaim`
+
+- **设计理念**：一个具体产品型号的、带类型的、带来源的属性陈述。
+- **为什么需要**：M2 的 `ClaimDraft` 只有自由文本的 `attribute` 和 `value`，没法直接比较。类型化之后，需求侧和产品侧用同一套 `value_type`、同一套单位和同一套算子，比较才成立。
+- **怎么用**：`claim_id` + `product_candidate_id` + `product_model_ref` 定位到型号；`attribute_key` 与 `attribute_definition` 说明量的是什么；`value`/`unit` 是值；`evidence_ids` + `source_quote` 是出处；`claim_status` 说明来源是支持、否证、还是未核实。
+- **预期行为**：`claim_status` 为 `SUPPORTED_BY_SOURCE` 时必须带至少一个证据 ID。`attribute_key` 必须是小写无空格标识符。`extraction_status` 不是 `RESOLVED` 时不参与自动比较。
+
+### `SemanticAlignment`
+
+- **设计理念**：一条需求约束和一条产品声明「量的是不是同一个东西」的判定。
+- **为什么需要**：`额定输出功率` 和 `最大输入功率` 名字相近，含义不同。没有这一层，比较器会把 8 kW 的最大输入功率当成满足 7.5 kW 额定输出功率。
+- **怎么用**：`constraint_id` 与 `claim_ids` 指向两侧；`status` 是 `ALIGNED` / `NOT_ALIGNED` / `AMBIGUOUS` / `CONFLICTING`；`method` 说明判定来源；`dimension` 记录测量对象；`unit_conversion` 记录换算依据。
+- **预期行为**：`ALIGNED` 必须列出参与比较的声明。`NOT_ALIGNED` 与 `AMBIGUOUS` 一律判 UNKNOWN，不能降级成 PASS。
+
+### `ConstraintCheck`
+
+- **设计理念**：一条约束对一个型号的判定结果和过程。
+- **为什么需要**：结论必须可复算。「为什么是 FAIL」要能一眼看出比较了什么。
+- **怎么用**：`status` 是 `PASS`/`FAIL`/`UNKNOWN`；`reason_code` 说明原因；`operation` 是比较过程；`normalized_actual`/`normalized_required`/`unit` 是归一化后的值；`evidence_ids` 与 `source_refs` 指回来源。
+- **预期行为**：只有 `VERIFIED_COMPARISON` 能给 PASS 或 FAIL。其余原因码一律是 UNKNOWN，并写明缺什么。
+
+### `SpecAssessment`
+
+- **设计理念**：一条需求对一个型号的完整评价。
+- **为什么需要**：M3 的技术门禁以「需求 × 型号」为最小单位，不是以供应商为单位。同一家的两个型号要分开评价。
+- **怎么用**：`checks` 是逐条结果；`hard_spec_overall` 是硬约束汇总；`overall_reason_codes` 说明汇总的理由；`calculator_version` 记录用了哪版计算器。
+- **预期行为**：汇总规则是「有一条可靠的 HARD FAIL 就是 FAIL；全部 HARD PASS 才是 PASS；没有 HARD 约束或还有未决需求时是 UNKNOWN」。`PREFERENCE` 不参与汇总。`evaluated_at` 必须带时区。
+
+### 单位换算表
+
+- **设计理念**：一份白名单，决定哪些单位能换算到同一刻度。
+- **为什么需要**：150 μm 和 0.2 mm 能比，32 GB 和 32 GiB 不能比，5 MP 和 5 px 能比。单位规则写死在代码里，不靠模型判断。
+- **怎么用**：`domain/units.py` 的 `unit_spec` 查一个单位的维度和换算系数；`convert_between` 做换算；`units_compatible` 判断两侧是否同刻度。
+- **预期行为**：十进制存储字节和二进制存储字节是两个维度，不互相换算。帧率和频率是两个维度。一边有单位一边没有单位，不判可比。两个相同的未知单位仍可比，同一个刻度会抵消。
 
 ## 模型参与哪一步
 

@@ -210,3 +210,27 @@ The same run made 16 model calls: 266762 prompt tokens, 57954 completion tokens,
 The M1 compiler produced one constraint per requirement on the official material, `onenet_access EQ True`, plus 26 unstructured statements. Reading the source presentation shows this is correct: the purchase table carries name, quantity, unit price, sales price, budget, and tax rate, and the 26 statements are project policy, payment terms, and sample labels.
 
 The acceptance test material exposes a real gap. It asks for a `5MP  industrial network camera` and the compiler kept the 5MP in the product name and produced no constraint. M3-A needs a constraint to align against, so the first item of M3-Q, a prompt that turns objective specifications in the requirement text into quoted constraints plus a deterministic check that the number appears in the quote, has to land before the real case in M3-A2.
+
+### M3-A1: contracts and the pure calculator
+
+**Status: done. 48 new tests; the suite is 124 passed.**
+
+Three files carry the work.
+
+`src/procurement_agent/domain/spec_alignment.py` holds four contracts and four enums. `ProductAttributeClaim` is a typed statement about one product model, with the same `value_type` vocabulary the requirement DSL uses, so a comparison never crosses two vocabularies. `SemanticAlignment` records the decision that a constraint and a claim measure one thing. `ConstraintCheck` carries the outcome and the trace. `SpecAssessment` carries every check of one requirement against one model. The reason codes are explicit: only `VERIFIED_COMPARISON` may produce PASS or FAIL, and every other code names what is missing.
+
+`src/procurement_agent/domain/units.py` is the unit whitelist. Each unit belongs to a dimension, and only units in one dimension convert into each other. Decimal storage bytes and binary storage bytes are different dimensions, so 32 GB never compares with 32 GiB. A frame rate is not a frequency. Two identical unknown units still compare, because the same unit cancels out of an ordering; two different unknown units do not.
+
+`src/procurement_agent/services/spec_calculator.py` is the calculator. It reads its inputs and never changes them, and it reaches neither the network nor a model. A test asserts that the module does not import a provider client.
+
+The admission order follows the calculator specification. The requirement must be `RESOLVED`, the product must carry an exact model code, the claim must be supported by a source, the attributes must be aligned, the units must convert, and only then does the comparison run. Anything missing returns UNKNOWN with the reason that names it.
+
+The HARD aggregation is the rule the milestone asks for. One reliable HARD failure is FAIL even when the other HARD checks are UNKNOWN. PASS needs every HARD check to pass and no unresolved demand. A requirement without a HARD constraint is UNKNOWN, never PASS.
+
+The three cases the milestone names outright behave as required: a 4 MP product fails a 5 MP minimum with the trace `4 MP GTE 5 MP`; a 150 µm housing passes a 0.2 mm limit with the trace `0.15 mm LTE 0.2 mm`; a product that states only maximum input power against a requirement for rated output power is UNKNOWN with `ATTRIBUTE_NOT_ALIGNED`.
+
+One test proves the calculator does not grow per-category branches: four attributes from four different categories run through the same code path.
+
+### M3-A1 documentation
+
+`docs/requirement_dsl.md` is the quick reference for the Requirement DSL: the fields, the value types, the operator whitelist, the three statuses, eight common mistakes, and how M3 consumes the DSL. `docs/m3_plan.md` holds the file-level order and the acceptance mapping. `docs/data_model.md` gained a section for the four new contracts and the unit table, with regenerated counts.
