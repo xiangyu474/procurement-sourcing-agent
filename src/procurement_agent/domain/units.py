@@ -168,7 +168,7 @@ _ALIASES: dict[str, str] = {
     "小时": "h",
     "celsius": "degc",
     "°c": "degc",
-    "c": "degc",
+    "℃": "degc",
     "华氏度": "degc",
     "bit/s": "bps",
     "degree": "deg",
@@ -181,6 +181,17 @@ _ALIASES: dict[str, str] = {
     "gram": "g",
     "克": "g",
 }
+
+
+def unit_spellings() -> list[tuple[str, str]]:
+    """Surface spellings that can be recognized inside free text, longest first.
+
+    The longer spelling wins, so a text that says "cm" is read as centimetres
+    and not as metres.
+    """
+    spellings: list[tuple[str, str]] = [(key, key) for key in _UNIT_TABLE]
+    spellings.extend(_ALIASES.items())
+    return sorted(spellings, key=lambda item: -len(item[0]))
 
 
 def normalize_unit(unit: str | None) -> str | None:

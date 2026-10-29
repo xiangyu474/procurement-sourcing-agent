@@ -160,7 +160,12 @@ def test_compiler_sends_every_fragment_to_the_model():
     model = FakeChatModel(RequirementCompilation(requirements=[]))
     compile_requirement_fragments(project_id="p1", fragments=fragments, model=model)
 
-    payload = json.loads(model.captured[-1].content)
+    # The prompt that carries the fragments is the one the model answered first.
+    payload = next(
+        json.loads(message.content)
+        for message in model.captured
+        if isinstance(message.content, str) and message.content.startswith("{")
+    )
     assert [item["locator"] for item in payload["fragments"]] == [f.locator for f in fragments]
     assert [item["text"] for item in payload["fragments"]] == [f.text for f in fragments]
 
@@ -330,6 +335,6 @@ def test_the_compiler_asks_again_when_the_model_answers_in_prose():
         fragments=[_fragment("doc:row=1", "产品一 | 10 | 100")],
         model=model,
     )
-    assert model.calls == 2
+    assert model.calls == compiler_module.MAX_COMPILER_ATTEMPTS
     assert result.compilation.requirements == []
     assert "without a structured compilation" in result.compilation.issues[0]

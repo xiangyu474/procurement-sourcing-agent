@@ -234,3 +234,29 @@ One test proves the calculator does not grow per-category branches: four attribu
 ### M3-A1 documentation
 
 `docs/requirement_dsl.md` is the quick reference for the Requirement DSL: the fields, the value types, the operator whitelist, the three statuses, eight common mistakes, and how M3 consumes the DSL. `docs/m3_plan.md` holds the file-level order and the acceptance mapping. `docs/data_model.md` gained a section for the four new contracts and the unit table, with regenerated counts.
+
+### M3-Q1: the compiler turns a stated specification into a constraint
+
+**Status: done. The compiler now emits a constraint for a specification that the requirement text states, and a deterministic check confirms the number and the citation.**
+
+The prompt gained one rule and one example. The rule says that a specification the text states is a constraint even when the same number also appears in the product name, and it names the figures that matter: 5MP, 4MP, IP66, -20 to 80 degrees Celsius, 7.5kW, 150 micrometres, 30fps, 12V. The example shows a requirement for a 5MP camera carrying one `output_resolution` constraint with value 5 and unit MP, while the product name stays as the document wrote it.
+
+`src/procurement_agent/services/requirement_verification.py` checks what the model reported. For every constraint it confirms that the quoted text appears in the cited fragment and that the quoted text states the value on the unit the requirement states, including a Chinese scale word, so 500万像素 confirms a 5 MP constraint. For every quantity and amount it confirms that the cited text states the number. A constraint that cannot be confirmed becomes AMBIGUOUS, which keeps it out of the automatic PASS/FAIL gate, and the reason is recorded. Nothing is deleted: a quantity, a price, and a budget keep the value the model gave, and an unconfirmed one is reported as an issue and an open question.
+
+The check of the project total recomputes the sum of the line-item budgets and classifies the difference. The classification separates our own arithmetic being wrong, the gap that the rounded row budgets explain, and a difference inside the source. The tolerance is the number of rows plus one times half of the last printed digit, because each row budget is rounded and the project total is rounded once more.
+
+`tests/test_case2_budget_regression.py` recomputes the official case 2 reading. The sum of the fourteen line-item budgets is 5888.64 万元. The document states 5888.66 万元. The unrounded rows add up to 5888.656 万元, which is the 5888.66 万元 the document states, so the 0.02 万元 gap is the rounding of the row budgets and not a mistake. The test skips when the official files are not in the local workspace.
+
+### What the live check found
+
+Running `scripts/live_m3q_verification.py` against the local test material and the official case 2 presentation:
+
+- The test material now compiles to one requirement with one constraint: `output_resolution GTE 5 MP`, importance HARD, parse status RESOLVED, quote `5MP 工业网络摄像机`. Before the change the constraint list was empty.
+- The official case 2 presentation compiles to 14 requirements and 50 constraints. The constraints now include the specifications that the product names state, such as `solar_panel_power`, `voice_intercom`, and `onenet_access`.
+- The total check reports `ROUNDING`: the document states 5888.64 and 5888.66, and the gap of 0.02 is within the 0.075 that fourteen rounded row budgets can explain.
+
+### A pre-existing failure the check exposed
+
+The live check also found that the model sometimes answers a document with an empty purchase line list. The same happened with the prompt before this change, so it was not caused by it: one of two attempts with the old prompt returned zero requirements for the official case 2, and the compiler accepted that answer silently.
+
+The compiler now asks again when the answer carries no purchase line, and it accepts an empty answer only after the last attempt. `MAX_COMPILER_ATTEMPTS` is three. This turned the observed case from zero requirements into fourteen.

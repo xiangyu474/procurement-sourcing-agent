@@ -27,6 +27,7 @@ from procurement_agent.domain.requirements import (
     UnstructuredRequirement,
 )
 from procurement_agent.infra.llm import json_object_from_text, stream_tool_call
+from procurement_agent.services.requirement_verification import apply_source_verification
 
 SYSTEM_PROMPT = """You extract procurement demand from a source document into a restricted Requirement DSL.
 
@@ -40,6 +41,7 @@ Extract:
 - Every purchase line item. One line item is one row of a purchase table, or one explicitly described purchase object. Do not merge rows. Do not drop rows.
 - For each line item: product_name, quantity, quantity_unit, planned_unit_price (kind PLANNED_PRICE), planned_total_budget (kind PLANNED_BUDGET), product_category, source_product_code, and the source_refs of the fragments you read it from.
 - Every technical constraint of each line item, nested inside that line item. Give each one attribute_key, attribute_definition, value_type, operator, value, unit, importance, source_ref and source_quote.
+- A specification that the text states is a constraint, even when the same number also appears in the product name. A requirement that says 5MP 工业网络摄像机 carries one constraint for the resolution, with value 5 and unit MP, and the product name stays 5MP 工业网络摄像机. The same applies to 4MP, IP66, -20~80℃, 7.5kW, 150μm, 30fps, 12V, and any other figure the text states about the product. Never leave a stated specification only inside the product name.
 - Disagreements inside the document itself, such as a project total that contradicts the sum of its own line items, as conflicts. Quote each value you are comparing.
 - Statements that are meaningful but not convertible, as unstructured_requirements.
 
@@ -68,6 +70,10 @@ Requirement: {"requirement_id": "r1", "product_name": "5MP 工业网络摄像机
 One-shot constraint example:
 Fragment: {"locator": "doc:slide=3:shape=7:paragraph=1", "text": "接入 OneNET | 是"}
 Constraint: {"constraint_id": "c1", "requirement_id": "r1", "attribute_key": "onenet_access", "attribute_definition": "接入 OneNET 平台", "value_type": "BOOLEAN", "operator": "EQ", "value": true, "importance": "HARD", "origin": "PPT_EXPLICIT", "source_ref": "doc:slide=3:shape=7:paragraph=1", "source_quote": "接入 OneNET", "parse_status": "RESOLVED"}
+
+One-shot specification example:
+Fragment: {"locator": "doc:slide=1:shape=0:paragraph=1", "text": "采购需求：5MP 工业网络摄像机，采购数量 10 套，预计采购单价 100 元/套。"}
+Requirement: {"requirement_id": "r1", "product_name": "5MP 工业网络摄像机", "quantity": "10", "quantity_unit": "套", "source_refs": ["doc:slide=1:shape=0:paragraph=1"], "constraints": [{"constraint_id": "c1", "requirement_id": "r1", "attribute_key": "output_resolution", "attribute_definition": "视频输出像素数", "value_type": "NUMBER", "operator": "GTE", "value": "5", "unit": "MP", "importance": "HARD", "origin": "PPT_EXPLICIT", "source_ref": "doc:slide=1:shape=0:paragraph=1", "source_quote": "5MP 工业网络摄像机", "parse_status": "RESOLVED"}], "parse_status": "RESOLVED", "open_questions": []}
 """
 
 
@@ -77,6 +83,23 @@ class CompilerResult:
 
     compilation: RequirementCompilation
     shaping_issues: tuple[str, ...] = ()
+
+
+MAX_COMPILER_ATTEMPTS = 3
+
+
+def _follow_up_message(attempt: int, payloads: list[dict[str, Any]]) -> str:
+    """Ask the model again, saying what the previous answer was missing."""
+    if payloads:
+        return (
+            "The previous answer carried no purchase line, but the document contains "
+            "rows with data. Call the RequirementCompilation tool again with every "
+            "purchase line the document states, one requirement for each row."
+        )
+    return (
+        "The previous answer carried no structured compilation. Call the "
+        "RequirementCompilation tool now with the full result."
+    )
 
 
 def compile_requirement_fragments(
@@ -110,36 +133,31 @@ def compile_requirement_fragments(
         ],
     }
     payloads: list[dict[str, Any]] = []
-    for attempt in range(2):
+    merged: dict[str, Any] = {}
+    for attempt in range(MAX_COMPILER_ATTEMPTS):
         payloads, text = stream_tool_call(
             model,
             [
                 SystemMessage(content=SYSTEM_PROMPT),
                 HumanMessage(content=json.dumps(prompt, ensure_ascii=False)),
             ]
-            + (
-                [
-                    HumanMessage(
-                        content=(
-                            "The previous answer carried no structured compilation. Call the "
-                            "RequirementCompilation tool now with the full result."
-                        )
-                    )
-                ]
-                if attempt
-                else []
-            ),
+            + ([_follow_up_message(attempt, payloads)] if attempt else []),
             RequirementCompilation,
         )
-        if payloads:
+        if not payloads:
+            # The model answered in prose instead of calling the tool. The
+            # answer is often still there, as a JSON object in the text.
+            found = json_object_from_text(text)
+            if found is not None:
+                payloads = [found]
+        if not payloads:
+            continue
+        merged = merge_compilation_payloads(payloads)
+        if merged.get("requirements") or attempt == MAX_COMPILER_ATTEMPTS - 1:
             break
-        # The model answered in prose instead of calling the tool. The answer is
-        # often still there, as a JSON object in the text.
-        found = json_object_from_text(text)
-        if found is not None:
-            payloads = [found]
-            break
-    if not payloads:
+        # The model reported no purchase line. The document carries data rows,
+        # so ask again before an empty answer is accepted.
+    if not merged:
         return CompilerResult(
             compilation=RequirementCompilation(
                 project_id=project_id,
@@ -149,7 +167,7 @@ def compile_requirement_fragments(
             shaping_issues=("The model answered without a structured compilation.",),
         )
     raw = _validated_compilation_payload(
-        merge_compilation_payloads(payloads),
+        merged,
         project_id=project_id,
         revision=revision,
     )
@@ -160,6 +178,8 @@ def compile_requirement_fragments(
     for requirement in raw.requirements:
         requirement.project_id = project_id
         requirement.revision = revision
+    verification = apply_source_verification(raw, fragments)
+    raw = verification.compilation
     return CompilerResult(compilation=raw, shaping_issues=tuple(raw.issues))
 
 
