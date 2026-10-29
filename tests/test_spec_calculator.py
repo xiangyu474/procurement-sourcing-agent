@@ -60,7 +60,7 @@ def constraint(**overrides) -> RequirementConstraint:
 def claim(**overrides) -> ProductAttributeClaim:
     fields = {
         "claim_id": "clm1",
-        "product_candidate_id": "cand1",
+        "product_ref": "cand1",
         "product_model_ref": "TRI055N",
         "attribute_key": "output_resolution",
         "attribute_definition": "Video output pixel count",
@@ -441,7 +441,7 @@ def test_two_models_of_one_supplier_are_judged_separately():
         requirement(constraint()),
         "cand2",
         "TRI050S-CC",
-        [claim(claim_id="clm9", product_candidate_id="cand2", product_model_ref="TRI050S-CC", value="5", unit="MP")],
+        [claim(claim_id="clm9", product_ref="cand2", product_model_ref="TRI050S-CC", value="5", unit="MP")],
         [alignment(claim_ids=["clm9"])],
         evaluated_at=NOW,
     )

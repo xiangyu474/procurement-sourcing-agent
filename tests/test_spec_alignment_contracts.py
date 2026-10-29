@@ -32,7 +32,7 @@ NOW = datetime(2026, 10, 28, 12, 0, tzinfo=UTC)
 def claim(**overrides) -> ProductAttributeClaim:
     fields = {
         "claim_id": "clm1",
-        "product_candidate_id": "cand1",
+        "product_ref": "cand1",
         "product_model_ref": "TRI055N",
         "attribute_key": "output_resolution",
         "attribute_definition": "Video output pixel count",

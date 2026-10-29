@@ -1,0 +1,272 @@
+"""M3-A2: turn the research claims into typed product attribute claims.
+
+The researcher records what a source states as free text: an attribute name, a
+value, sometimes a unit. The typing step asks the model to give that text a
+type, and the code then checks the reading against the quotation the claim
+already carries.
+
+A claim whose number is not in its own quotation does not become a usable
+typed claim. It stays unverified, and the calculator refuses to use it, so a
+model cannot invent a threshold that turns into a PASS.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Mapping, Sequence
+from typing import Any
+
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import ValidationError
+
+from procurement_agent.domain.requirements import ParseStatus, ValueType
+from procurement_agent.domain.sourcing import ClaimDraft, ClaimStatus
+from procurement_agent.domain.spec_alignment import (
+    ProductAttributeClaim,
+    TypedClaimBatch,
+)
+from procurement_agent.infra.llm import json_object_from_text, stream_tool_call
+from procurement_agent.services.source_numbers import (
+    number_is_quoted,
+    plain_number_is_quoted,
+    quoted_numbers,
+    read_decimal,
+    text_is_quoted,
+)
+
+SYSTEM_PROMPT = """You type product claims so that a requirement can be compared with them.
+
+A claim says what a source states about one product model. You give it a stable
+attribute key, a definition of what the attribute measures, a value type, a
+value, and a unit.
+
+Rules:
+- Keep the claim's own wording in the value. Do not round, convert, or infer a number the quotation does not state. If the quotation states "up to 2560 x 1920 (~5 MP) pixels", the value is 5 and the unit is MP, and the conditions keep the wording.
+- value_type NUMBER needs a decimal number and its unit. BOOLEAN needs true or false. STRING needs one text value. SET needs a list of tokens the source lists. RANGE needs lower and upper bounds.
+- attribute_key is a lowercase snake_case identifier that names the quantity the attribute measures, not the wording of the source. attribute_definition says what the attribute measures, in a few words.
+- Do not merge two claims that measure different quantities. Do not drop a qualifier such as a mode, a variant, or a condition.
+- Copy the claim_id exactly as it is given.
+- If a claim states something that cannot be given a comparable value, answer with value_type NUMBER and value null only if the source states a number; otherwise leave value_type out.
+"""
+
+_TRUE_WORDS = {"是", "有", "支持", "yes", "true", "√", "已"}
+_FALSE_WORDS = {"否", "无", "不支持", "no", "false", "×", "未"}
+
+TYPING_BATCH_SIZE = 20
+
+
+def _claim_payload(claims: Sequence[ClaimDraft]) -> list[dict[str, Any]]:
+    return [
+        {
+            "claim_id": claim.claim_id,
+            "attribute": claim.attribute,
+            "value": claim.value,
+            "unit": claim.unit,
+            "source_quote": claim.source_quote,
+            "evidence_id": claim.evidence_id,
+        }
+        for claim in claims
+    ]
+
+
+def _propose(
+    *,
+    claims: Sequence[ClaimDraft],
+    target_attributes: Sequence[str],
+    model: BaseChatModel,
+) -> dict[str, Any]:
+    """Ask the model to type the claims, a batch at a time.
+
+    A long list of claims makes the request slow enough to time out, so the
+    list is cut into batches and each batch is a separate call.
+    """
+    typed: dict[str, Any] = {}
+    for start in range(0, len(claims), TYPING_BATCH_SIZE):
+        batch_claims = claims[start: start + TYPING_BATCH_SIZE]
+        typed.update(
+            _propose_batch(
+                claims=batch_claims,
+                target_attributes=target_attributes,
+                model=model,
+            )
+        )
+    return typed
+
+
+def _propose_batch(
+    *,
+    claims: Sequence[ClaimDraft],
+    target_attributes: Sequence[str],
+    model: BaseChatModel,
+) -> dict[str, Any]:
+    """Ask the model to type one batch of claims."""
+    payload = {
+        "target_attributes": list(target_attributes),
+        "claims": _claim_payload(claims),
+    }
+    batches: list[TypedClaimBatch] = []
+    for attempt in range(2):
+        payloads, text = stream_tool_call(
+            model,
+            [
+                SystemMessage(content=SYSTEM_PROMPT),
+                HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
+            ]
+            + (
+                [
+                    HumanMessage(
+                        content="Answer with one typed claim for every claim_id given to you."
+                    )
+                ]
+                if attempt
+                else []
+            ),
+            TypedClaimBatch,
+        )
+        for raw in payloads:
+            try:
+                batches.append(TypedClaimBatch.model_validate(raw))
+            except ValidationError:
+                continue
+        if batches:
+            break
+        found = json_object_from_text(text)
+        if found is not None:
+            try:
+                batches.append(TypedClaimBatch.model_validate(found))
+            except ValidationError:
+                pass
+            break
+    typed: dict[str, Any] = {}
+    for batch in batches:
+        for proposal in batch.claims:
+            typed.setdefault(proposal.claim_id, proposal)
+    return typed
+
+
+def _value_is_quoted(value: Any, value_type: ValueType, unit: str | None, quote: str) -> bool:
+    """Report whether the quotation states the value the model proposed."""
+    if value_type == ValueType.NUMBER:
+        number = read_decimal(str(value))
+        if number is None:
+            return False
+        return number_is_quoted(number, unit, quote)
+    if value_type == ValueType.RANGE:
+        if not isinstance(value, dict):
+            return False
+        for bound in ("lower", "upper"):
+            raw = value.get(bound)
+            if raw is None:
+                continue
+            number = read_decimal(str(raw))
+            if number is None or not number_is_quoted(number, unit, quote):
+                return False
+        return True
+    if value_type == ValueType.STRING:
+        return isinstance(value, str) and text_is_quoted(value, quote)
+    if value_type == ValueType.SET:
+        if not isinstance(value, (list, tuple)) or not value:
+            return False
+        return all(isinstance(item, str) and text_is_quoted(item, quote) for item in value)
+    if value_type == ValueType.BOOLEAN:
+        if not isinstance(value, bool):
+            return False
+        words = _TRUE_WORDS if value else _FALSE_WORDS
+        folded = quote.casefold()
+        return any(word.casefold() in folded for word in words)
+    return False
+
+
+def _canonical_attribute_key(value: str) -> str:
+    key = "_".join(part for part in "".join(ch if ch.isalnum() else " " for ch in value.casefold()).split())
+    return key[:120] or "attribute"
+
+
+def type_claims(
+    *,
+    claims: Sequence[ClaimDraft],
+    target_attributes: Sequence[str],
+    model: BaseChatModel,
+    evidence: Mapping[str, str] | None = None,
+) -> list[ProductAttributeClaim]:
+    """Type the research claims and check every reading against its quotation."""
+    if not claims:
+        return []
+    proposals = _propose(claims=claims, target_attributes=target_attributes, model=model)
+    typed: list[ProductAttributeClaim] = []
+    for claim in claims:
+        proposal = proposals.get(claim.claim_id)
+        if proposal is None:
+            continue
+        value_type = proposal.value_type
+        if value_type is None:
+            continue
+        value = proposal.value
+        if value is None:
+            continue
+        unit = proposal.unit if proposal.unit is not None else claim.unit
+        quote = claim.source_quote
+        supported = claim.status == ClaimStatus.SUPPORTED_BY_SOURCE
+        if evidence is not None and claim.evidence_id not in evidence:
+            supported = False
+        verified = _value_is_quoted(value, value_type, unit, quote)
+        attribute_key = _canonical_attribute_key(proposal.attribute_key or claim.attribute)
+        typed.append(
+            ProductAttributeClaim(
+                claim_id=claim.claim_id,
+                product_ref=claim.subject_ref,
+                attribute_key=attribute_key,
+                attribute_definition=proposal.attribute_definition or claim.attribute,
+                value_type=value_type,
+                value=value,
+                unit=unit,
+                qualifiers=proposal.qualifiers,
+                evidence_ids=[claim.evidence_id] if claim.evidence_id else [],
+                source_quote=quote,
+                claim_status=ClaimStatus.SUPPORTED_BY_SOURCE if supported and verified else ClaimStatus.UNVERIFIED,
+                extraction_status=ParseStatus.RESOLVED if verified else ParseStatus.AMBIGUOUS,
+                conditions=proposal.conditions,
+            )
+        )
+    return typed
+
+
+def untyped_claims(claims: Sequence[ClaimDraft]) -> list[ProductAttributeClaim]:
+    """Keep the research claims usable when no model typed them.
+
+    The claim keeps the wording the source used. The calculator then treats it
+    as a claim without a comparable value, so the result stays UNKNOWN rather
+    than becoming a guess.
+    """
+    typed: list[ProductAttributeClaim] = []
+    for claim in claims:
+        typed.append(
+            ProductAttributeClaim(
+                claim_id=claim.claim_id,
+                product_ref=claim.subject_ref,
+                attribute_key=_canonical_attribute_key(claim.attribute),
+                attribute_definition=claim.attribute,
+                value_type=ValueType.STRING,
+                value=claim.value,
+                unit=claim.unit,
+                evidence_ids=[claim.evidence_id] if claim.evidence_id else [],
+                source_quote=claim.source_quote,
+                claim_status=claim.status,
+                extraction_status=ParseStatus.UNSUPPORTED,
+            )
+        )
+    return typed
+
+
+def numbers_in_quote(quote: str) -> list[str]:
+    """Read the numbers a quotation states, for the report."""
+    return [str(item.value) for item in quoted_numbers(quote)]
+
+
+def plain_number_present(value: str, quote: str) -> bool:
+    """Report whether a quotation states a plain number."""
+    number = read_decimal(value)
+    if number is None:
+        return False
+    return plain_number_is_quoted(number, quote)

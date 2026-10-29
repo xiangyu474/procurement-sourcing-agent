@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
 from procurement_agent.domain.requirements import (
     ParseStatus,
@@ -25,19 +25,16 @@ from procurement_agent.domain.requirements import (
     SourceFragment,
     ValueType,
 )
-from procurement_agent.domain.units import unit_spec, unit_spellings
-
-SCALE_WORDS: dict[str, Decimal] = {
-    "万": Decimal(10_000),
-    "亿": Decimal(100_000_000),
-    "千": Decimal(1000),
-}
-
-_NUMBER = re.compile(r"(?<![\d.,])(-?)(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?")
+from procurement_agent.services.source_numbers import (
+    number_is_quoted,
+    plain_number_is_quoted,
+    quote_is_grounded,
+    quoted_numbers,
+    read_decimal,
+)
 
 _VERIFIED = "VERIFIED"
 _UNVERIFIABLE = "UNVERIFIABLE"
-
 
 @dataclass(frozen=True)
 class NumberCheck:
@@ -88,80 +85,6 @@ class _QuotedNumber:
     unit: str | None
 
 
-def _decimal(text: str) -> Decimal | None:
-    try:
-        result = Decimal(text.replace(",", "").strip())
-    except (InvalidOperation, ValueError):
-        return None
-    return result if result.is_finite() else None
-
-
-def _detect_unit(text: str) -> tuple[str | None, str]:
-    """Read the unit that follows a number, and the rest of the text."""
-    tail = text.lstrip()
-    for spelling, normalized in unit_spellings():
-        if tail[: len(spelling)].casefold() == spelling.casefold():
-            return normalized, tail[len(spelling):]
-    return None, tail
-
-
-def _quoted_numbers(text: str) -> list[_QuotedNumber]:
-    """Read every number the text states, with the scale word and unit after it."""
-    found: list[_QuotedNumber] = []
-    for match in _NUMBER.finditer(text):
-        sign, whole, fraction = match.groups()
-        raw = f"{sign}{whole}" + (f".{fraction}" if fraction else "")
-        value = _decimal(raw)
-        if value is None:
-            continue
-        tail = text[match.end():]
-        scale = Decimal(1)
-        stripped = tail.lstrip()
-        if stripped[:1] in SCALE_WORDS:
-            scale = SCALE_WORDS[stripped[0]]
-            tail = stripped[1:]
-        unit, _rest = _detect_unit(tail)
-        found.append(_QuotedNumber(value=value, scale=scale, unit=unit))
-    return found
-
-
-def _number_is_quoted(value: Decimal, unit: str | None, quote: str) -> bool:
-    """Report whether the quote states the value on the unit the requirement states."""
-    quoted = _quoted_numbers(quote)
-    if not quoted:
-        return False
-    requirement_spec = unit_spec(unit)
-    for item in quoted:
-        if requirement_spec is None:
-            if item.value * item.scale == value:
-                return True
-            continue
-        if item.unit is None:
-            continue
-        quote_spec = unit_spec(item.unit)
-        if quote_spec is None or quote_spec.dimension != requirement_spec.dimension:
-            continue
-        if item.value * item.scale * quote_spec.factor == value * requirement_spec.factor:
-            return True
-    return False
-
-
-def _plain_number_is_quoted(value: Decimal, quote: str) -> bool:
-    """Report whether the quote states the value, whatever scale word it carries."""
-    return any(item.value == value for item in _quoted_numbers(quote))
-
-
-def _normalize_text(value: str) -> str:
-    return " ".join(value.split())
-
-
-def _quote_is_grounded(quote: str | None, source_text: str | None) -> bool:
-    """Report whether the quote appears in the cited fragment."""
-    if not quote or not source_text:
-        return False
-    return _normalize_text(quote) in _normalize_text(source_text)
-
-
 def _fragment_index(fragments: Sequence[SourceFragment]) -> dict[str, str]:
     return {fragment.locator: fragment.text for fragment in fragments}
 
@@ -169,7 +92,7 @@ def _fragment_index(fragments: Sequence[SourceFragment]) -> dict[str, str]:
 def _constraint_values(constraint: RequirementConstraint) -> list[Decimal]:
     """Read the numbers a constraint claims."""
     if constraint.value_type == ValueType.NUMBER:
-        value = _decimal(str(constraint.value))
+        value = read_decimal(str(constraint.value))
         return [value] if value is not None else []
     if constraint.value_type == ValueType.RANGE and isinstance(constraint.value, dict):
         bounds = []
@@ -177,7 +100,7 @@ def _constraint_values(constraint: RequirementConstraint) -> list[Decimal]:
             raw = constraint.value.get(key)
             if raw is None:
                 continue
-            value = _decimal(str(raw))
+            value = read_decimal(str(raw))
             if value is None:
                 return []
             bounds.append(value)
@@ -201,7 +124,7 @@ def _verify_constraint(
             status=_VERIFIED,
             detail="The constraint carries no numeric value.",
         )
-    if not _quote_is_grounded(quote, source_text):
+    if not quote_is_grounded(quote, source_text):
         return NumberCheck(
             scope="constraint",
             reference=reference,
@@ -210,7 +133,7 @@ def _verify_constraint(
             detail="The quotation was not found in the cited fragment.",
         )
     for value in _constraint_values(constraint):
-        if not _number_is_quoted(value, constraint.unit, quote or ""):
+        if not number_is_quoted(value, constraint.unit, quote or ""):
             return NumberCheck(
                 scope="constraint",
                 reference=reference,
@@ -236,7 +159,7 @@ def _verify_amount(
     """Check that an amount's number and citation hold."""
     if not value:
         return NumberCheck(scope="amount", reference=label, value="", status=_VERIFIED, detail="No amount was reported.")
-    number = _decimal(value)
+    number = read_decimal(value)
     if number is None:
         return NumberCheck(
             scope="amount",
@@ -245,7 +168,7 @@ def _verify_amount(
             status=_UNVERIFIABLE,
             detail="The amount is not a finite decimal.",
         )
-    if not _quote_is_grounded(quote, source_text):
+    if not quote_is_grounded(quote, source_text):
         return NumberCheck(
             scope="amount",
             reference=label,
@@ -253,7 +176,7 @@ def _verify_amount(
             status=_UNVERIFIABLE,
             detail="The quotation was not found in the cited fragment.",
         )
-    if not _plain_number_is_quoted(number, quote or ""):
+    if not plain_number_is_quoted(number, quote or ""):
         return NumberCheck(
             scope="amount",
             reference=label,
@@ -275,7 +198,7 @@ def _verify_quantity(requirement: Requirement, cited_text: str) -> NumberCheck:
     reference = requirement.requirement_id
     if not requirement.quantity:
         return NumberCheck(scope="quantity", reference=reference, value="", status=_VERIFIED, detail="No quantity was reported.")
-    number = _decimal(requirement.quantity)
+    number = read_decimal(requirement.quantity)
     if number is None:
         return NumberCheck(
             scope="quantity",
@@ -284,7 +207,7 @@ def _verify_quantity(requirement: Requirement, cited_text: str) -> NumberCheck:
             status=_UNVERIFIABLE,
             detail="The quantity is not a finite decimal.",
         )
-    if _plain_number_is_quoted(number, cited_text):
+    if plain_number_is_quoted(number, cited_text):
         return NumberCheck(
             scope="quantity",
             reference=reference,
@@ -310,7 +233,7 @@ def _budget_sum(compilation: RequirementCompilation) -> tuple[Decimal, str | Non
         budget = requirement.planned_total_budget
         if budget is None:
             continue
-        value = _decimal(budget.value)
+        value = read_decimal(budget.value)
         if value is None:
             continue
         if unit is None:
@@ -340,7 +263,7 @@ def _stated_totals(compilation: RequirementCompilation) -> list[Decimal]:
                 stated.extend(totals)
                 continue
             # Without a currency, the first number of the statement is the total.
-            first = _quoted_numbers(value.value)
+            first = quoted_numbers(value.value)
             if first:
                 stated.append(first[0].value)
     return stated

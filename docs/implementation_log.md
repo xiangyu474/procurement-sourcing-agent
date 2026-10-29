@@ -260,3 +260,23 @@ Running `scripts/live_m3q_verification.py` against the local test material and t
 The live check also found that the model sometimes answers a document with an empty purchase line list. The same happened with the prompt before this change, so it was not caused by it: one of two attempts with the old prompt returned zero requirements for the official case 2, and the compiler accepted that answer silently.
 
 The compiler now asks again when the answer carries no purchase line, and it accepts an empty answer only after the last attempt. `MAX_COMPILER_ATTEMPTS` is three. This turned the observed case from zero requirements into fourteen.
+
+### M3-A2: typed claims, semantic alignment, and the evaluation entry point
+
+**Status: done. 29 new tests; the suite is 172 passed.**
+
+`src/procurement_agent/services/source_numbers.py` holds the question both sides ask: does this text state this number, on this unit? The demand verification and the product claim typer now judge a quotation the same way, so a number that the compiler would have refused is not accepted by the typer either.
+
+`src/procurement_agent/services/spec_typing.py` turns the research claims into typed claims. The model gives each claim an attribute key, a definition of what the attribute measures, a value type, a value, and a unit. The code then checks the reading against the claim's own quotation: a number has to be in the quotation, a text value has to be in the quotation, every token of a set has to be in the quotation, a boolean has to match a word in the quotation, and both bounds of a range have to be in the quotation. A claim that fails the check does not become a usable claim. It stays unverified, and the calculator refuses it, so a model cannot invent a threshold that turns into a pass. The claims are typed twenty at a time, because one call with ninety-nine claims was slow enough to time out.
+
+`src/procurement_agent/services/spec_alignment.py` decides whether a constraint and a claim measure the same thing. The model proposes the pairing and names its method. The code checks what it can: the claim has to exist for the candidate under assessment, a pairing that claims the attribute keys are identical is only kept when they are, a pairing that claims an approved alias is only kept when the alias table says so, a reviewed pairing has to name the measurement object, and a unit conversion has to be one the whitelist allows. The alias table is small and reviewed by hand. `max_input_power` and `rated_output_power` are in different groups on purpose, because they are not the same measurement.
+
+`src/procurement_agent/services/spec_evaluation.py` is the entry point. It types the claims, aligns every constraint of every requirement with every candidate that belongs to it, and hands the result to the calculator. The model never decides a verdict.
+
+### The live case with the real M2 output
+
+`scripts/live_m3_spec_evaluation.py` reads a finished M2 run from the cloud, takes the real product claims the researcher recorded, compiles the requirement locally with the current compiler, and runs the whole chain.
+
+The first run of that script over the M2 cold-start run `4ca31b39` produced 39 assessments, one per candidate, and every one of them UNKNOWN with `ATTRIBUTE_NOT_ALIGNED`. The reason the model gave is the interesting part: the requirement asks for the video output pixel count, while the LUCID claims state the camera's sensor resolution, five megapixels on the Sony IMX264 sensor array. Sensor effective pixels and video output pixels are not the same quantity, so the alignment refused the pairing instead of letting a matching number pass.
+
+That is the behaviour the milestone asks for, on real data: a number that looks like a match is not a match when the two sides measure different things.

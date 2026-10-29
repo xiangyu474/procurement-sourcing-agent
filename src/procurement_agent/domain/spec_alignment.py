@@ -75,7 +75,8 @@ class ProductAttributeClaim(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     claim_id: str
-    product_candidate_id: str
+    product_ref: str
+    product_candidate_id: str | None = None
     product_model_ref: str | None = None
     attribute_key: str
     attribute_definition: str = Field(min_length=1, max_length=300)
@@ -123,6 +124,56 @@ class SemanticAlignment(BaseModel):
         if self.status == AlignmentStatus.ALIGNED and not self.claim_ids:
             raise ValueError("an aligned constraint must name the claims it is compared with")
         return self
+
+
+class TypedClaimProposal(BaseModel):
+    """Lenient model output for one typed product claim.
+
+    The model may leave fields out or add fields; the code decides what is
+    usable.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    claim_id: str
+    attribute_key: str = Field(default="", max_length=120)
+    attribute_definition: str = Field(default="", max_length=300)
+    value_type: ValueType | None = None
+    value: Any = None
+    unit: str | None = Field(default=None, max_length=60)
+    qualifiers: dict[str, str | int | bool] = Field(default_factory=dict)
+    conditions: str | None = Field(default=None, max_length=500)
+
+
+class TypedClaimBatch(BaseModel):
+    """The model's answer for a batch of claims."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    claims: list[TypedClaimProposal] = Field(default_factory=list, max_length=200)
+
+
+class AlignmentProposal(BaseModel):
+    """Lenient model output for one constraint and one candidate."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    constraint_id: str
+    product_candidate_id: str
+    claim_ids: list[str] = Field(default_factory=list, max_length=20)
+    status: AlignmentStatus = AlignmentStatus.AMBIGUOUS
+    method: AlignmentMethod = AlignmentMethod.LLM_PROPOSED_REVIEWED
+    reason: str = Field(default="", max_length=1000)
+    dimension: str | None = Field(default=None, max_length=200)
+    unit_conversion: str | None = Field(default=None, max_length=300)
+
+
+class AlignmentBatch(BaseModel):
+    """The model's answer for one requirement and its candidates."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    alignments: list[AlignmentProposal] = Field(default_factory=list, max_length=400)
 
 
 class ConstraintCheck(BaseModel):
