@@ -301,3 +301,28 @@ Two findings came out of this run that the next stage has to answer:
 - **One real claim states ONVIF conformance** as the phrase `Conforms to ONVIF Profile S`, while its quotation reads `The camera conforms to the ONVIF Profile S specifications.` A string value is refused because the phrase is not verbatim in the quotation, and the token set `ONVIF Profile S` is accepted. The typing prompt should prefer the token set for a protocol list, and the alignment should then find that claim.
 
 The provider returned a 504 in the middle of one typing batch while this was running. The typing and the alignment now survive a provider failure: the claims of the failed batch stay untyped and the constraints stay UNKNOWN, instead of the whole evaluation failing.
+
+### M3-A3: the technical check in the cloud
+
+**Status: deployed. The cloud acceptance is queued behind a local network block.**
+
+The gateway reads the compiled demand, the project candidates, and the product claims from D1, and hands them to the container. The container types the claims, aligns them with the constraints, judges them with the calculator, and posts the verdicts back. The verdicts land in `spec_assessments`, keyed by the project, the requirement, the candidate, and the demand revision, so that re-evaluating the same demand revision replaces the row instead of adding a second one, and a new demand revision leaves the old verdicts in place.
+
+Three routes were added. `POST /api/projects/{id}/spec-assessments` starts the evaluation and answers with a job ID, `GET /api/projects/{id}/spec-assessments` reads the verdicts back, and two internal routes carry the context to the container and the verdicts back. The evaluation holds one model call open for minutes, so it runs as a workflow, the same way the demand compile does, and the client polls the result.
+
+`scripts/verify_m3_cloud_api.py` compiles a demand, runs a research round, triggers the evaluation, and reads the verdicts back. It checks that every verdict is one of the three values, that a PASS or a FAIL carries a verified comparison and the calculation, that a failing check is reflected in the overall verdict, that a PASS never rides on a hard check that did not pass, and that the calculator version is recorded.
+
+Migration `0007_m3_spec_assessment.sql` is applied to the remote D1.
+
+### The local network block
+
+The cloud acceptance could not be run from this machine. The enterprise DNS now refuses every query, and the public resolvers answer `*.workers.dev` with an internal sinkhole address while other domains resolve normally:
+
+| Host | Answer |
+|---|---|
+| `api.cloudflare.com` | 104.19.x.x, the real addresses |
+| `github.com` | 20.205.243.166, the real address |
+| `token.moi.matrixorigin.cn` | 116.62.x.x, the real addresses |
+| `procurement-sourcing-gateway.xiangyu474.workers.dev` | 128.242.240.91, a sinkhole |
+
+The same machine reached the Worker earlier in the same session, so the block was enabled during the session rather than being the normal state. The Cloudflare side is fine: the build for `af318a4` deployed successfully, and the Cloudflare API answers normally. A watcher runs the three cloud acceptance scripts as soon as the network answers again.

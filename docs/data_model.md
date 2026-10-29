@@ -27,11 +27,11 @@ grep -h "CREATE INDEX IF NOT EXISTS\|CREATE UNIQUE INDEX IF NOT EXISTS" \
 
 | 位置 | 数量 |
 |---|---|
-| D1 表 | 20 |
-| D1 索引 | 13 |
+| D1 表 | 21 |
+| D1 索引 | 16 |
 | `domain/requirements.py` 领域类型 | 20，其中 9 个枚举，11 个模型 |
 | `domain/sourcing.py` 领域类型 | 30，其中 10 个枚举，20 个模型 |
-| `domain/spec_alignment.py` 领域类型 | 8，其中 4 个枚举，4 个模型 |
+| `domain/spec_alignment.py` 领域类型 | 12，其中 4 个枚举，8 个模型 |
 | `domain/units.py` 领域类型 | 2 |
 | R2 key 前缀 | 4 |
 
@@ -434,6 +434,13 @@ M3-A 把需求侧和产品侧接到同一套值类型上，中间只隔一层对
 - **怎么用**：`checks` 是逐条结果；`hard_spec_overall` 是硬约束汇总；`overall_reason_codes` 说明汇总的理由；`calculator_version` 记录用了哪版计算器。
 - **预期行为**：汇总规则是「有一条可靠的 HARD FAIL 就是 FAIL；全部 HARD PASS 才是 PASS；没有 HARD 约束或还有未决需求时是 UNKNOWN」。`PREFERENCE` 不参与汇总。`evaluated_at` 必须带时区。
 
+### `spec_assessments` 表
+
+- **设计理念**：一条需求对一个型号的技术核验结果，连同它的计算过程和引用的证据。
+- **为什么需要**：结论要能被复核，也要在需求修订后仍然留着旧版本。
+- **怎么用**：唯一键是「项目 + 需求 + 候选 + 需求修订号」。同一修订号重算覆盖旧行；需求修订后新增行，旧行不动。
+- **预期行为**：`hard_spec_overall` 只允许 `PASS`/`FAIL`/`UNKNOWN`。`assessment_json` 里是逐条判定、计算过程和原因码。`evidence_ids_json` 是这次判定引用过的证据。
+
 ### 单位换算表
 
 - **设计理念**：一份白名单，决定哪些单位能换算到同一刻度。
@@ -477,6 +484,7 @@ M2 的证据层仍然是确定性的。网页快照的哈希、引文是否在�
 | 每一次工具调用 | `research_actions` |
 | 模型调用耗时、token、trace | `research_run_costs` |
 | 候选与证据 | `project_candidates`、`project_candidate_evidence` |
+| 技术核验结果 | `spec_assessments` |
 
 **R2 里存原文。** 上传的文件、网页快照正文、标准化历史数据。
 
