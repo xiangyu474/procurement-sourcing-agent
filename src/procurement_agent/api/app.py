@@ -718,7 +718,9 @@ async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = 
             if run.status_code not in (200, 201, 202):
                 return {
                     "status": "FAIL",
-                    "failures": [f"the research run could not be started: {run.status_code}"],
+                    "failures": [
+                        f"the research run could not be started: {run.status_code} {run.text[:200]}"
+                    ],
                     "state": json.dumps({"project_id": project_id}),
                 }
             run_id = str(run.json()["run_id"])

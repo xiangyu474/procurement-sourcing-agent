@@ -862,9 +862,12 @@ export class SourcingAcceptanceWorkflow extends WorkflowEntrypoint<Env, Acceptan
 			);
 			failures.push(...(started.failures ?? []));
 			const runId = String(_parseStages(started.state).run_id ?? "");
+			if (!runId) {
+				throw new Error("the research run did not start, so the chain cannot continue");
+			}
 
 			let researched: Record<string, unknown> | undefined;
-			for (let attempt = 0; attempt < 120; attempt += 1) {
+			for (let attempt = 0; attempt < 60; attempt += 1) {
 				const polled = await step.do(
 					`acceptance-research-${attempt}`,
 					{ retries: { limit: 0, delay: "5 seconds", backoff: "exponential" }, timeout: "10 minutes" },
@@ -886,7 +889,7 @@ export class SourcingAcceptanceWorkflow extends WorkflowEntrypoint<Env, Acceptan
 				async () => runStage("spec-start", projectId, ""),
 			);
 			let judged: Record<string, unknown> | undefined;
-			for (let attempt = 0; attempt < 120; attempt += 1) {
+			for (let attempt = 0; attempt < 60; attempt += 1) {
 				const polled = await step.do(
 					`acceptance-spec-${attempt}`,
 					{ retries: { limit: 0, delay: "5 seconds", backoff: "exponential" }, timeout: "10 minutes" },
@@ -908,7 +911,7 @@ export class SourcingAcceptanceWorkflow extends WorkflowEntrypoint<Env, Acceptan
 				async () => runStage("decide-start", projectId, ""),
 			);
 			let decided: Record<string, unknown> | undefined;
-			for (let attempt = 0; attempt < 120; attempt += 1) {
+			for (let attempt = 0; attempt < 60; attempt += 1) {
 				const polled = await step.do(
 					`acceptance-decide-${attempt}`,
 					{ retries: { limit: 0, delay: "5 seconds", backoff: "exponential" }, timeout: "10 minutes" },
