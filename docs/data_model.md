@@ -27,12 +27,13 @@ grep -h "CREATE INDEX IF NOT EXISTS\|CREATE UNIQUE INDEX IF NOT EXISTS" \
 
 | 位置 | 数量 |
 |---|---|
-| D1 表 | 21 |
-| D1 索引 | 16 |
+| D1 表 | 22 |
+| D1 索引 | 19 |
 | `domain/requirements.py` 领域类型 | 20，其中 9 个枚举，11 个模型 |
 | `domain/sourcing.py` 领域类型 | 30，其中 10 个枚举，20 个模型 |
 | `domain/spec_alignment.py` 领域类型 | 12，其中 4 个枚举，8 个模型 |
 | `domain/pricing.py` 领域类型 | 7，其中 3 个枚举，4 个模型 |
+| `domain/decision.py` 领域类型 | 7，其中 3 个枚举，4 个模型 |
 | `domain/units.py` 领域类型 | 2 |
 | R2 key 前缀 | 4 |
 
@@ -442,6 +443,31 @@ M3-A 把需求侧和产品侧接到同一套值类型上，中间只隔一层对
 - **怎么用**：唯一键是「项目 + 需求 + 候选 + 需求修订号」。同一修订号重算覆盖旧行；需求修订后新增行，旧行不动。
 - **预期行为**：`hard_spec_overall` 只允许 `PASS`/`FAIL`/`UNKNOWN`。`assessment_json` 里是逐条判定、计算过程和原因码。`evidence_ids_json` 是这次判定引用过的证据。
 
+## 决策领域模型
+
+M3-C 把「模型建议」和「闸门判定」分开。
+
+### `DecisionProposal`
+
+- **设计理念**：Supervisor 对一个候选的建议。
+- **为什么需要**：建议和结论必须分开存，否则一个被拒的建议和被采纳的建议看起来一样。
+- **怎么用**：`recommendation` 是 `SHORTLIST`/`INVESTIGATE`/`EXCLUDE`；`technical_verdict` 是 `VERIFIED_PASS`/`VERIFIED_FAIL`/`UNVERIFIED`；`evidence_ids`、`claimed_lowest_observation_id`、`claimed_saving` 是可以被核对的引用。
+- **预期行为**：未知字段被忽略，不让一个多余的键毁掉整批回答。
+
+### `SourcingDecision`
+
+- **设计理念**：闸门放行之后才能写下的决策。
+- **为什么需要**：每个决策都要能回答「凭什么」。
+- **怎么用**：`accepted` 说明有没有被放行；`violations` 列出被拒的原因；`technical_verdict` 与 `hard_spec_overall` 一起说明技术结论的来源。
+- **预期行为**：被放行的决策没有 violation，被拒的决策至少有一个 violation。时间戳必须带时区。
+
+### `GateViolation`
+
+- **设计理念**：一条具体的违规。
+- **为什么需要**：「被拒了」不够，必须说清是被哪一条规则拦下的。
+- **怎么用**：`code` 是机器可读的枚举，`subject` 指到具体的候选，`message` 是一句人话。
+- **预期行为**：覆盖硬约束 FAIL 进短名单、未知被写成已核实、虚构证据 ID、虚构节支、无评估可判、无缺口却进短名单、结论与计算不符这几类。
+
 ## 价格领域模型
 
 M3-B 把「一个价格数字」和「两个价格能不能比」拆开。
@@ -511,6 +537,7 @@ M2 的证据层仍然是确定性的。网页快照的哈希、引文是否在�
 | 模型调用耗时、token、trace | `research_run_costs` |
 | 候选与证据 | `project_candidates`、`project_candidate_evidence` |
 | 技术核验结果 | `spec_assessments` |
+| 采购决策与闸门结果 | `sourcing_decisions` |
 
 **R2 里存原文。** 上传的文件、网页快照正文、标准化历史数据。
 

@@ -342,3 +342,35 @@ The same machine reached the Worker earlier in the same session, so the block wa
 `src/procurement_agent/services/price_context.py` brings the three together for one requirement. A requirement without a history still gets a context; the history part says there is none.
 
 Two rules came out of writing the tests. A set of prices that mixes kinds has no meaningful cheapest member, so the whole set is reported as not comparable and no lowest price is named. And the price series is analysed per kind, so a project with both history and public listings still gets the answer each of them supports.
+
+### M3-C: the sourcing decision and the verification gate
+
+**Status: deployed. 20 new tests; the suite is 225 passed.**
+
+`src/procurement_agent/domain/decision.py` separates the recommendation from the technical verdict. The verdict is a field with three values, and the gate compares it with the assessment that was computed. That is what keeps an unknown from being written down as a verified pass: the model cannot reword its way past a field.
+
+`src/procurement_agent/services/sourcing_decision.py` asks the Supervisor for one decision per candidate and puts the answer through the gate. The Supervisor reads a summary, not the sources: per candidate it gets the overall verdict, the per-constraint status and reason code, the computed operation, the price finding, and the identifiers of the evidence that exists. The quotations and the pages are not in that context. A test asserts that a long source quotation does not reach the model and that the context stays small, because in M2 the supervisor consumed 77 percent of the input tokens by carrying the researcher's full findings in its context.
+
+`src/procurement_agent/services/decision_gate.py` does the checking. The rules it enforces:
+
+- A model with a failed hard requirement cannot reach the short list. The decision is stored as rejected with the failure named.
+- An unknown cannot be written down as a verified pass. A verdict that contradicts the computed check is refused.
+- An unknown may be shortlisted when the decision names what is missing. A shortlist entry with no gap is refused, because a shortlist entry without a gap hides the gap.
+- Every cited evidence identifier has to be in the ledger. An identifier that is not there is refused, and the evidence that does exist is still kept.
+- A saving may only be stated when the price analysis produced one, and the stated saving has to be the one that was computed.
+
+The gateway stores the decisions, including the rejected ones and the reason they were rejected, in `sourcing_decisions`. `POST /api/projects/{id}/decisions` starts the decision and `GET /api/projects/{id}/decisions` reads it back. The decision holds one model call open for minutes, so it runs as a workflow, the same way the technical check does.
+
+`scripts/verify_m3_decision_api.py` drives the whole chain on the deployed Worker and checks the gate rules on what was stored: no accepted decision shortlists a failed model, no accepted decision calls an unknown a verified pass, every cited evidence identifier exists, and every rejected decision names a violation.
+
+Migration `0008_m3_sourcing_decision.sql` is applied to the remote D1.
+
+### What M3 now delivers
+
+The three slices the milestone names are built:
+
+- M3-A: the requirement and the product model are aligned and compared by a pure calculator that returns PASS, FAIL, or UNKNOWN with its reason code and its calculation.
+- M3-B: the history is analysed on its real fields, the prices are compared by their basis, and the history and the public leads are fused by a confirmed product equivalence rather than by a supplier name.
+- M3-C: the Supervisor writes the decision from a compact summary, and a program checks the decision against the analysis that was computed.
+
+The cloud acceptance for all three is still waiting on the local network to reach the Worker.
