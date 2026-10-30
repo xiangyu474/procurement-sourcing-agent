@@ -15,7 +15,7 @@ M3 切成七个阶段。每个阶段结束时给出实际测试结果和代表�
 | M3-A2 | 声明类型化与语义对齐 | 声明类型化适配器；对齐适配器；编排入口与集成测试 | M3-A1 |✅|
 | M3-A3 | 云端接线与真实案例 | D1 迁移；容器端点；Worker 路由；真实 M2 产品的评估结果 | M3-A2 |✅（云端验收待网络恢复）|
 | M3-B | 历史分析与价格可比性 | 历史统计；产品等价关系；价格口径与可比性判定 | M3-A2 |✅|
-| M3-C | 决策与验证闸门 | Supervisor 决策输出；程序化闸门；决策快照 | M3-A3、M3-B |
+| M3-C | 决策与验证闸门 | Supervisor 决策输出；程序化闸门；决策快照 | M3-A3、M3-B |✅|
 | M3-Q | M1/M2 质量补强 | 数字与来源校验；Case 2 回归；约束抽取改进 | 贯穿全程 |第一项 ✅|
 
 M3-Q 里的两项审计（M3-0 的候选与证据审计、token 归因）已经在本阶段完成，其余项随相关切片推进。
@@ -94,7 +94,7 @@ SemanticAlignment（M3-A2，LLM 提议 + 代码保守校验）◀┘
 | `src/procurement_agent/services/product_equivalence.py` | 新增 | 需求/SKU 与确认的产品等价关系；按等价关系融合，不按供应商名 JOIN |
 | `tests/test_history_analytics.py`、`tests/test_price_comparability.py` | 新增 | 无历史数据可分析；不可比价格不产生最低价或节支结论 |
 
-### M3-C：决策与验证闸门
+### M3-C：决策与验证闸门（已完成）
 
 | 文件 | 动作 | 内容 |
 |---|---|---|
@@ -137,7 +137,9 @@ SemanticAlignment（M3-A2，LLM 提议 + 代码保守校验）◀┘
 - **新增 D1 表** 1 张（`spec_assessments`），M3-B 阶段再加 1–2 张。已有 20 张表不改。
 - **新增 API 路由** 2 组（触发评估、读取评估）。
 - **Worker 改动** 只加路由，不改 M0–M2 的既有路径。
-- **新增验收脚本** 2 个：`verify_m3_cloud_api.py`（M3-A）、`verify_m3_decision_api.py`（M3-C）。
+- **新增验收脚本** 4 个：`verify_m1_cloud_api.py`、`verify_m2_cloud_api.py`（已有）、`verify_m3_cloud_api.py`（M3-A）、`verify_m3_decision_api.py`（M3-C）。
+- **新增 D1 表** 2 张：`spec_assessments`（M3-A）、`sourcing_decisions`（M3-C）。已有 20 张表不改。
+- **新增 API 路由** 4 组：技术核验的触发与读回、决策的触发与读回。
 - **不动**：`agents/sourcing.py` 的 Researcher/Supervisor 角色、M2 的搜索与证据链、Cloudflare 拓扑、R2 布局。
 
 ## 基线审计结果（M3-0）
