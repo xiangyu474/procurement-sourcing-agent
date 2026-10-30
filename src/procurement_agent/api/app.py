@@ -667,7 +667,7 @@ async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = 
 
     async with httpx.AsyncClient(base_url=base, headers=headers, timeout=httpx.Timeout(300)) as client:
         created = await client.post("/api/projects", json={"title": "M3 cloud acceptance"})
-        if created.status_code != 200:
+        if created.status_code not in (200, 201):
             return {"status": "FAIL", "failures": [f"the project could not be created: {created.status_code}"], "stages": stages}
         project_id = str(created.json()["project_id"])
         stages["project_id"] = project_id
@@ -700,7 +700,7 @@ async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = 
             failures.append("the compiled demand carries no constraint to check")
 
         run = await client.post(f"/api/projects/{project_id}/runs", json={"mode": "SOURCING"})
-        if run.status_code != 200:
+        if run.status_code not in (200, 201, 202):
             failures.append(f"the research run could not be started: {run.status_code}")
             return {"status": "FAIL", "failures": failures, "stages": stages}
         run_id = str(run.json()["run_id"])
