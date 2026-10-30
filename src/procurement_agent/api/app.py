@@ -115,6 +115,16 @@ class SpecEvaluationRequest(BaseModel):
     candidate_ids: list[str] = Field(default_factory=list, max_length=300)
 
 
+class DecisionRequest(BaseModel):
+    """Internal request for the M3-C decision of one project."""
+
+    project_id: str
+    gateway_url: str
+    token: str
+    runtime_config: dict[str, str] = Field(default_factory=dict)
+    requirement_ids: list[str] = Field(default_factory=list, max_length=50)
+
+
 def _apply_runtime_config(runtime_config: dict[str, str]) -> None:
     """Install runtime configuration supplied by the Worker for this run.
 
@@ -487,6 +497,108 @@ async def evaluate_spec(payload: SpecEvaluationRequest, x_internal_token: str | 
         "status": "COMPLETED",
         "assessments": len(assessments),
         "by_overall": summary["by_overall"],
+    }
+
+
+@app.post("/internal/decide")
+async def decide(payload: DecisionRequest, x_internal_token: str | None = Header(default=None)) -> dict[str, Any]:
+    """Write the sourcing decision of a project and put it through the gate.
+
+    The Supervisor sees a summary of the computed analysis. The gate checks the
+    proposal against that analysis, and a decision that does not hold up is
+    stored as rejected with the reason.
+    """
+    _require_internal(payload.token or x_internal_token)
+    _apply_runtime_config(payload.runtime_config)
+
+    import httpx
+
+    from procurement_agent.domain.requirements import HistoricalTransaction, Requirement
+    from procurement_agent.domain.spec_alignment import SpecAssessment
+    from procurement_agent.services.price_context import build_price_context
+    from procurement_agent.services.sourcing_decision import decide as decide_candidates
+    from procurement_agent.services.sourcing_decision import decision_summary
+
+    async with httpx.AsyncClient(timeout=180) as client:
+        context_response = await client.get(
+            f"{payload.gateway_url.rstrip('/')}/internal/projects/{payload.project_id}/decision-context",
+            params={"requirement_ids": ",".join(payload.requirement_ids)},
+            headers={"x-internal-token": payload.token},
+        )
+        if context_response.status_code == 404:
+            raise HTTPException(status_code=404, detail="project or compiled demand not found")
+        context_response.raise_for_status()
+        context = context_response.json()
+
+    decision_settings = load_settings()
+    if not decision_settings.has_llm:
+        raise HTTPException(status_code=503, detail="M3-C decisions require a configured chat model")
+
+    assessments = [
+        SpecAssessment.model_validate(item) for item in context.get("assessments") or []
+    ]
+    requirements = [
+        Requirement.model_validate(item) for item in context.get("requirements") or []
+    ]
+    transactions = [
+        HistoricalTransaction.model_validate(item) for item in context.get("history_transactions") or []
+    ]
+    evidence_ids = [str(item) for item in context.get("evidence_ids") or []]
+
+    price_findings: dict[str, list[Any]] = {}
+    for requirement in requirements:
+        price_context = build_price_context(
+            requirement=requirement,
+            transactions=transactions,
+            history_price_unit=context.get("history_price_unit"),
+        )
+        if price_context.findings:
+            price_findings[requirement.requirement_id] = price_context.findings
+
+    try:
+        model = build_chat_model(decision_settings, timeout=600)
+        decisions = decide_candidates(
+            project_id=payload.project_id,
+            assessments=assessments,
+            model=model,
+            price_findings=price_findings,
+            known_evidence_ids=evidence_ids,
+        )
+    except Exception as exc:
+        error_type = type(exc).__name__
+        lower_name = error_type.casefold()
+        if "timeout" in lower_name:
+            status_code, reason_code = 504, "MODEL_TIMEOUT"
+        elif "ratelimit" in lower_name:
+            status_code, reason_code = 429, "MODEL_RATE_LIMIT"
+        else:
+            status_code, reason_code = 502, "DECISION_FAILED"
+        raise HTTPException(
+            status_code=status_code,
+            detail={"reason_code": reason_code, "error_type": error_type},
+        ) from exc
+
+    serialized = [decision.model_dump(mode="json") for decision in decisions]
+    async with httpx.AsyncClient(timeout=120) as client:
+        stored = await client.post(
+            f"{payload.gateway_url.rstrip('/')}/internal/projects/{payload.project_id}/decision-results",
+            headers={"x-internal-token": payload.token},
+            json={"decisions": serialized},
+        )
+        if not stored.is_success:
+            raise HTTPException(
+                status_code=stored.status_code,
+                detail=f"decision persistence failed: {stored.text[:500]}",
+            )
+    summary = decision_summary(decisions)
+    return {
+        "project_id": payload.project_id,
+        "status": "COMPLETED",
+        "decisions": summary["decisions"],
+        "accepted": summary["accepted"],
+        "rejected": summary["rejected"],
+        "by_recommendation": summary["by_recommendation"],
+        "violations": summary["violations"],
     }
 
 

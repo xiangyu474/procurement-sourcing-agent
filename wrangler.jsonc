@@ -44,6 +44,11 @@
 			"name": "procurement-sourcing-spec",
 			"binding": "SPEC_WORKFLOW",
 			"class_name": "SourcingSpecWorkflow"
+		},
+		{
+			"name": "procurement-sourcing-decision",
+			"binding": "DECISION_WORKFLOW",
+			"class_name": "SourcingDecisionWorkflow"
 		}
 	],
 	"d1_databases": [

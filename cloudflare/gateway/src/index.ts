@@ -18,6 +18,7 @@ export interface Env {
 	WORKFLOW: Workflow<RunRequest>;
 	COMPILE_WORKFLOW: Workflow<CompileRequest>;
 	SPEC_WORKFLOW: Workflow<SpecRequest>;
+	DECISION_WORKFLOW: Workflow<DecisionRequest>;
 }
 
 // The container receives the internal token from the Worker at request time so
@@ -741,6 +742,79 @@ interface SpecRequest {
 	candidateIds: string[];
 }
 
+interface DecisionRequest {
+	projectId: string;
+	requirementIds: string[];
+}
+
+export class SourcingDecisionWorkflow extends WorkflowEntrypoint<Env, DecisionRequest> {
+	async run(event: WorkflowEvent<DecisionRequest>, step: WorkflowStep) {
+		const { projectId, requirementIds } = event.payload;
+		try {
+			const result = await step.do(
+				"write-decisions",
+				{ retries: { limit: 1, delay: "10 seconds", backoff: "exponential" }, timeout: "30 minutes" },
+				async () => {
+					const container = getContainer(this.env.SOURCING_CONTAINER, "m1-intake");
+					const response = await container.fetch(
+						new Request("http://container/internal/decide", {
+							method: "POST",
+							headers: { "content-type": "application/json" },
+							body: JSON.stringify({
+								project_id: projectId,
+								gateway_url: this.env.CONTAINER_GATEWAY_URL,
+								token: this.env.INTERNAL_GATEWAY_TOKEN,
+								runtime_config: {
+									GENESIS_BASE_URL: this.env.GENESIS_BASE_URL,
+									GENESIS_ACCESS_TOKEN: this.env.GENESIS_ACCESS_TOKEN,
+									GENESIS_MODEL_ID: this.env.GENESIS_MODEL_ID,
+									...(this.env.LANGSMITH_API_KEY ? { LANGSMITH_API_KEY: this.env.LANGSMITH_API_KEY } : {}),
+									...(this.env.LANGSMITH_TRACING ? { LANGSMITH_TRACING: this.env.LANGSMITH_TRACING } : {}),
+									...(this.env.LANGSMITH_PROJECT ? { LANGSMITH_PROJECT: this.env.LANGSMITH_PROJECT } : {}),
+								},
+								requirement_ids: requirementIds,
+							}),
+						}),
+					);
+					if (!response.ok) {
+						const body = await response.text().catch(() => "");
+						throw new Error(`decision failed with status ${response.status}: ${body.slice(0, 400)}`);
+					}
+					// The step output stays small. The decisions themselves are
+					// stored in D1 by the container.
+					const payload = (await response.json()) as {
+						status?: string;
+						decisions?: number;
+						accepted?: number;
+						rejected?: number;
+					};
+					return {
+						status: payload.status ?? "COMPLETED",
+						decisions: payload.decisions ?? 0,
+						accepted: payload.accepted ?? 0,
+						rejected: payload.rejected ?? 0,
+					};
+				},
+			);
+			const outcome = result as unknown as {
+				status?: string;
+				decisions?: number;
+				accepted?: number;
+				rejected?: number;
+			};
+			return {
+				status: outcome.status ?? "COMPLETED",
+				decisions: outcome.decisions ?? 0,
+				accepted: outcome.accepted ?? 0,
+				rejected: outcome.rejected ?? 0,
+			};
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return { status: "FAILED", error: message.slice(0, 400) };
+		}
+	}
+}
+
 // A stable id for one technical check, so that re-evaluating the same demand
 // revision replaces the row instead of adding a second one.
 async function stableSpecId(projectId: string, requirementId: string, candidateId: string, revision: number): Promise<string> {
@@ -1123,6 +1197,121 @@ export default {
 					claims,
 					model_by_product: modelByProduct,
 				});
+			}
+
+			const decisionContextMatch = url.pathname.match(/^\/internal\/projects\/([^/]+)\/decision-context$/);
+			if (decisionContextMatch && request.method === "GET") {
+				const projectId = decodeURIComponent(decisionContextMatch[1]);
+				const wantedRequirements = (url.searchParams.get("requirement_ids") ?? "").split(",").filter(Boolean);
+				const compilationRow = await env.DB.prepare(
+					`SELECT demand_revision, compilation_json FROM demand_compilations WHERE project_id = ?1 ORDER BY demand_revision DESC LIMIT 1`,
+				).bind(projectId).first<{ demand_revision: number; compilation_json: string }>();
+				if (!compilationRow) return json({ error: "demand_not_compiled" }, 404);
+				const compilation = JSON.parse(compilationRow.compilation_json) as { requirements?: unknown[] };
+				const requirements = (compilation.requirements ?? []).filter((item) => {
+					if (wantedRequirements.length === 0) return true;
+					const row = item && typeof item === "object" ? item as Record<string, unknown> : {};
+					return wantedRequirements.includes(String(row.requirement_id ?? ""));
+				});
+
+				const { results: assessmentRows } = await env.DB.prepare(
+					`SELECT requirement_id, product_candidate_id, product_model_ref, hard_spec_overall,
+					        assessment_json, evidence_ids_json, evaluated_at
+					 FROM spec_assessments
+					 WHERE workspace_id = 'default' AND project_id = ?1
+					 ORDER BY requirement_id, product_candidate_id LIMIT 2000`,
+				).bind(projectId).all<{
+					requirement_id: string; product_candidate_id: string; product_model_ref: string | null;
+					hard_spec_overall: string; assessment_json: string; evidence_ids_json: string; evaluated_at: string;
+				}>();
+				const assessments = assessmentRows.map((row) => JSON.parse(row.assessment_json) as unknown);
+				const evidenceIds = new Set<string>();
+				for (const row of assessmentRows) {
+					for (const evidenceId of JSON.parse(row.evidence_ids_json ?? "[]") as string[]) {
+						evidenceIds.add(evidenceId);
+					}
+				}
+
+				// The normalized history lives in R2. It is optional: a project
+				// without one simply has no history prices.
+				let historyTransactions: unknown[] = [];
+				const { results: historyRows } = await env.DB.prepare(
+					`SELECT normalized_r2_key FROM history_datasets WHERE project_id = ?1 ORDER BY imported_at DESC LIMIT 1`,
+				).bind(projectId).all<{ normalized_r2_key: string }>();
+				if (historyRows.length > 0) {
+					const stored = await env.BUCKET.get(historyRows[0].normalized_r2_key);
+					if (stored) {
+						const normalized = JSON.parse(await stored.text()) as { transactions?: unknown[] };
+						historyTransactions = normalized.transactions ?? [];
+					}
+				}
+				return json({
+					project_id: projectId,
+					demand_revision: compilationRow.demand_revision,
+					requirements,
+					assessments,
+					evidence_ids: [...evidenceIds],
+					history_transactions: historyTransactions,
+					history_price_unit: null,
+				});
+			}
+
+			const decisionResultsMatch = url.pathname.match(/^\/internal\/projects\/([^/]+)\/decision-results$/);
+			if (decisionResultsMatch && request.method === "POST") {
+				const projectId = decodeURIComponent(decisionResultsMatch[1]);
+				const body = (await request.json()) as { decisions?: Record<string, unknown>[] };
+				const now = new Date().toISOString();
+				const statements = [];
+				for (const decision of body.decisions ?? []) {
+					const requirementId = String(decision.requirement_id ?? "");
+					const candidateId = String(decision.product_candidate_id ?? "");
+					if (!requirementId || !candidateId) continue;
+					const violations = (decision.violations ?? []) as unknown[];
+					statements.push(env.DB.prepare(
+						`INSERT INTO sourcing_decisions (
+							id, workspace_id, project_id, requirement_id, product_candidate_id, product_model_ref,
+							recommendation, technical_verdict, hard_spec_overall, accepted, priority_rank, rationale,
+							evidence_ids_json, gaps_json, next_actions_json, violations_json, decision_json, decided_at, created_at)
+						 VALUES (?1, 'default', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+						 ON CONFLICT(workspace_id, project_id, requirement_id, product_candidate_id) DO UPDATE SET
+							product_model_ref = excluded.product_model_ref,
+							recommendation = excluded.recommendation,
+							technical_verdict = excluded.technical_verdict,
+							hard_spec_overall = excluded.hard_spec_overall,
+							accepted = excluded.accepted,
+							priority_rank = excluded.priority_rank,
+							rationale = excluded.rationale,
+							evidence_ids_json = excluded.evidence_ids_json,
+							gaps_json = excluded.gaps_json,
+							next_actions_json = excluded.next_actions_json,
+							violations_json = excluded.violations_json,
+							decision_json = excluded.decision_json,
+							decided_at = excluded.decided_at,
+							created_at = excluded.created_at`,
+					)
+						.bind(
+							`dec_${requirementId}_${candidateId}`.slice(0, 120),
+							projectId,
+							requirementId,
+							candidateId,
+							decision.product_model_ref ?? null,
+							String(decision.recommendation ?? "INVESTIGATE"),
+							String(decision.technical_verdict ?? "UNVERIFIED"),
+							String(decision.hard_spec_overall ?? "UNKNOWN"),
+							decision.accepted === true ? 1 : 0,
+							decision.priority_rank ?? null,
+							String(decision.rationale ?? ""),
+							JSON.stringify(decision.evidence_ids ?? []),
+							JSON.stringify(decision.gaps ?? []),
+							JSON.stringify(decision.next_actions ?? []),
+							JSON.stringify(violations),
+							JSON.stringify(decision),
+							String(decision.decided_at ?? now),
+							now,
+						));
+				}
+				if (statements.length > 0) await env.DB.batch(statements);
+				return json({ stored: statements.length });
 			}
 
 			const specResultsMatch = url.pathname.match(/^\/internal\/projects\/([^/]+)\/spec-results$/);
@@ -1583,6 +1772,65 @@ export default {
 			const row = await statement.first<{ plan_json: string }>();
 			if (!row) return json({ error: "sourcing_plan_not_found" }, 404);
 			return json({ plan: JSON.parse(row.plan_json) });
+		}
+
+		const decisionsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/decisions$/);
+		if (decisionsMatch) {
+			const projectId = decodeURIComponent(decisionsMatch[1]);
+			if (request.method === "GET") {
+				const { results } = await env.DB.prepare(
+					`SELECT id, requirement_id, product_candidate_id, product_model_ref, recommendation,
+					        technical_verdict, hard_spec_overall, accepted, priority_rank, rationale,
+					        evidence_ids_json, gaps_json, next_actions_json, violations_json, decided_at, created_at
+					 FROM sourcing_decisions
+					 WHERE workspace_id = 'default' AND project_id = ?1
+					 ORDER BY accepted DESC, priority_rank IS NULL, priority_rank, requirement_id, product_candidate_id
+					 LIMIT 2000`,
+				).bind(projectId).all<Record<string, unknown>>();
+				return json({
+					project_id: projectId,
+					decisions: results.map((row) => ({
+						decision_id: row.id,
+						requirement_id: row.requirement_id,
+						product_candidate_id: row.product_candidate_id,
+						product_model_ref: row.product_model_ref,
+						recommendation: row.recommendation,
+						technical_verdict: row.technical_verdict,
+						hard_spec_overall: row.hard_spec_overall,
+						accepted: row.accepted === 1,
+						priority_rank: row.priority_rank,
+						rationale: row.rationale,
+						evidence_ids: JSON.parse(String(row.evidence_ids_json ?? "[]")) as string[],
+						gaps: JSON.parse(String(row.gaps_json ?? "[]")) as string[],
+						next_actions: JSON.parse(String(row.next_actions_json ?? "[]")) as string[],
+						violations: JSON.parse(String(row.violations_json ?? "[]")) as unknown[],
+						decided_at: row.decided_at,
+						created_at: row.created_at,
+					})),
+				});
+			}
+			if (request.method === "POST") {
+				const project = await env.DB.prepare(`SELECT id FROM projects WHERE id = ?1`).bind(projectId).first<{ id: string }>();
+				if (!project) return json({ error: "not_found" }, 404);
+				const counted = await env.DB.prepare(
+					`SELECT COUNT(*) AS count FROM spec_assessments WHERE workspace_id = 'default' AND project_id = ?1`,
+				).bind(projectId).first<{ count: number }>();
+				if (!counted || !counted.count) return json({ error: "no_spec_assessment" }, 409);
+				const body = (await request.json().catch(() => ({}))) as { requirement_ids?: string[] };
+				// The decision holds one model call open for minutes, so it runs
+				// as a workflow and the client polls the result.
+				const instance = await env.DECISION_WORKFLOW.create({
+					params: {
+						projectId,
+						requirementIds: body.requirement_ids ?? [],
+					},
+				});
+				return json({
+					project_id: projectId,
+					status: "QUEUED",
+					decision_id: instance.id,
+				}, 202);
+			}
 		}
 
 		const specAssessmentsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/spec-assessments$/);
