@@ -1328,7 +1328,9 @@ export default {
 
 				const { results: candidateRows } = await env.DB.prepare(
 					`SELECT c.id AS candidate_id, c.requirement_id, c.supplier_id, c.product_id, c.stage, c.rationale,
-					        c.open_questions_json, p.model AS product_model
+					        c.open_questions_json, p.model AS product_model,
+					        (SELECT group_concat(e.evidence_id) FROM project_candidate_evidence e
+					          WHERE e.workspace_id = c.workspace_id AND e.candidate_id = c.id) AS evidence_ids
 					 FROM project_candidates c
 					 LEFT JOIN intelligence_products p ON p.workspace_id = c.workspace_id AND p.id = c.product_id
 					 WHERE c.workspace_id = 'default' AND c.project_id = ?1
@@ -1336,6 +1338,7 @@ export default {
 				).bind(projectId).all<{
 					candidate_id: string; requirement_id: string; supplier_id: string; product_id: string | null;
 					stage: string; rationale: string; open_questions_json: string; product_model: string | null;
+					evidence_ids: string | null;
 				}>();
 				const candidates = candidateRows
 					.filter((row) => wantedCandidates.length === 0 || wantedCandidates.includes(row.candidate_id))
@@ -1346,7 +1349,7 @@ export default {
 						product_id: row.product_id,
 						stage: row.stage,
 						rationale: row.rationale,
-						evidence_ids: [] as string[],
+						evidence_ids: (row.evidence_ids ?? "").split(",").filter((item) => item.length > 0),
 						open_questions: JSON.parse(row.open_questions_json ?? "[]") as string[],
 					}));
 
