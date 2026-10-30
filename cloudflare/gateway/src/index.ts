@@ -33,6 +33,11 @@ export interface Env {
 // wait for the sleep timer.
 const CONTAINER_INSTANCE = "sourcing-v2";
 
+// The acceptance drives the public API, and the public API starts workflows
+// that call a container. The acceptance therefore runs in its own instance,
+// otherwise it would wait for a container that is waiting for it.
+const ACCEPTANCE_INSTANCE = "acceptance-v1";
+
 interface ResearchBudgetConfig {
 	max_search_calls: number;
 	max_fetches: number;
@@ -770,7 +775,7 @@ export class SourcingAcceptanceWorkflow extends WorkflowEntrypoint<Env, Acceptan
 				"run-acceptance",
 				{ retries: { limit: 0, delay: "10 seconds", backoff: "exponential" }, timeout: "60 minutes" },
 				async () => {
-					const container = getContainer(this.env.SOURCING_CONTAINER, CONTAINER_INSTANCE);
+					const container = getContainer(this.env.SOURCING_CONTAINER, ACCEPTANCE_INSTANCE);
 					const response = await container.fetch(
 						new Request("http://container/internal/acceptance", {
 							method: "POST",
