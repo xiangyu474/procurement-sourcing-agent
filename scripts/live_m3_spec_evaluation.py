@@ -17,6 +17,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -37,18 +38,30 @@ from procurement_agent.services.demand_intake import build_demand_intake
 from procurement_agent.services.spec_evaluation import evaluate_candidates, summarize
 
 
-def _d1(sql: str) -> list[dict[str, Any]]:
-    """Run a read-only query against the remote D1 database."""
+def _d1(sql: str, attempts: int = 3) -> list[dict[str, Any]]:
+    """Run a read-only query against the remote D1 database.
+
+    The network to Cloudflare drops occasionally, so a failed query is tried
+    again before it is reported.
+    """
     npx = "npx.cmd" if os.name == "nt" else "npx"
-    completed = subprocess.run(
-        [npx, "wrangler", "d1", "execute", "DB", "--remote", "--command", sql, "--json"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
-    if completed.returncode != 0:
-        raise RuntimeError(f"the D1 query failed: {completed.stderr[:300]}")
-    return json.loads(completed.stdout)[0]["results"]
+    last = ""
+    for attempt in range(attempts):
+        completed = subprocess.run(
+            [npx, "wrangler", "d1", "execute", "DB", "--remote", "--command", sql, "--json"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        if completed.returncode == 0:
+            try:
+                return json.loads(completed.stdout)[0]["results"]
+            except (json.JSONDecodeError, KeyError, IndexError) as exc:
+                last = f"the D1 answer could not be read: {exc}"
+        else:
+            last = completed.stderr[:300]
+        time.sleep(5)
+    raise RuntimeError(f"the D1 query failed: {last}")
 
 
 def _run_project(run_id: str) -> str:

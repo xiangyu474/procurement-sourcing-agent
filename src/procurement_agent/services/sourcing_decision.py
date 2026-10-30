@@ -42,6 +42,7 @@ Rules:
 - Only state a price conclusion when the price analysis produced one. Never state a saving that the analysis does not show.
 - Recommend INVESTIGATE when a gap is worth another research round, and say what to look for in next_actions.
 - Recommend SHORTLIST only for a candidate that passes the check, or whose unknown is worth confirming with the supplier.
+- When you recommend SHORTLIST, set priority_rank: 1 is the one to contact first. Leave priority_rank out when you do not recommend a shortlist.
 - Keep the rationale under 200 characters. Do not repeat the whole analysis."""
 
 
@@ -93,6 +94,7 @@ def propose_decisions(
     *,
     context: Sequence[dict[str, Any]],
     model: BaseChatModel,
+    config: dict[str, Any] | None = None,
 ) -> list[DecisionProposal]:
     """Ask the Supervisor for one decision per candidate."""
     if not context:
@@ -112,6 +114,7 @@ def propose_decisions(
                     else []
                 ),
                 DecisionBatch,
+                config=config,
             )
         except Exception:
             # The provider failed. Without a proposal there is no decision,
@@ -142,6 +145,7 @@ def decide(
     price_findings: Mapping[str, Sequence[PriceFinding]] | None = None,
     known_evidence_ids: Sequence[str] = (),
     decided_at: datetime | None = None,
+    config: dict[str, Any] | None = None,
 ) -> list[SourcingDecision]:
     """Produce the decisions of a project and put them through the gate."""
     if not assessments:
@@ -151,7 +155,7 @@ def decide(
         price_findings=price_findings,
         known_evidence_ids=known_evidence_ids,
     )
-    proposals = propose_decisions(context=context, model=model)
+    proposals = propose_decisions(context=context, model=model, config=config)
     by_key = {
         (assessment.requirement_id, assessment.product_candidate_id): assessment
         for assessment in assessments

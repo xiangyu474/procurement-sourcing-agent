@@ -86,6 +86,7 @@ Container 镜像由 Cloudflare 托管构建环境构建（`Dockerfile`），本�
 - 工具失败不再中断整轮研究。越界抓取、预算用尽、页面读不出来，都作为可执行指令回到研究器手里，它继续用已抓到的来源作答并把缺口记下来。
 - 研究器答成散文而不是结构化工具调用时，系统会带着已抓到的来源再问一次，这次强制要求工具调用。
 - 一次严格计划映射的 live 本地研究返回 `PARTIAL / BUDGET_EXHAUSTED`：**2 个 Researcher tasks、4 次搜索、4 次抓取、3 个候选、6 条来源支持 Claims、15 次模型调用**；找到了精确型号 `IPC501-5M-B` 与 `T-BC-IP5M-Z-2` 的公开资料。候选仍是未核实 Longlist，像素口径、身份和现售情况都未作采购结论。其他 live 尝试也曾出现模型超时或没有精确型号；均据实标为 PARTIAL。
+- **M3 的验收核对**（把《M3验收标准.md》逐条对着实现与实测过一遍，含实测 token 用量与尚未完成项）见 `docs/m3_verification.md`。
 - **系统的预期行为**（状态词表、关键行为、失败时的表现、验收方式、已知限制）整理在 `docs/expected_behavior.md`，供交付后的交接使用。
 - **M3 的技术核验已接通云端**：`POST /api/projects/{id}/spec-assessments` 触发，`GET /api/projects/{id}/spec-assessments` 读回。判定结果存进 D1 的 `spec_assessments` 表，唯一键是「项目 + 需求 + 候选 + 需求修订号」。
 - **M3 的决策与闸门已接通云端**：`POST /api/projects/{id}/decisions` 触发，`GET /api/projects/{id}/decisions` 读回。决策存进 D1 的 `sourcing_decisions` 表，**被闸门拒绝的决策也留着**，连同被拒的原因。

@@ -374,3 +374,14 @@ The three slices the milestone names are built:
 - M3-C: the Supervisor writes the decision from a compact summary, and a program checks the decision against the analysis that was computed.
 
 The cloud acceptance for all three is still waiting on the local network to reach the Worker.
+
+### The M3 acceptance check
+
+`docs/m3_verification.md` goes through every section of the M3 acceptance document and answers it with the implementation, the test that proves it, and the measured result. The three slices pass their local acceptance. The cloud acceptance is waiting on the network.
+
+Two gaps were found by the check and closed:
+
+- The token and time limits were constants in the code. They are now settings: `MODEL_TIMEOUT_SECONDS`, `MODEL_MAX_OUTPUT_TOKENS`, `M3_SPEC_TYPING_BATCH_SIZE`, and `M3_SPEC_ALIGNMENT_CANDIDATES`. The typing, the alignment, and the decision all take a run configuration, so a caller can attach a token counter or a model call budget.
+- The model price cannot be verified from here. The gateway lists eighteen models with their context windows but no price fields, and its billing, account, and balance endpoints answer 404. The token usage is measured instead: one technical check over the real M2 output costs 8 model calls, 18154 prompt tokens, 86933 completion tokens, and 563 seconds.
+
+That last number carries a lesson: the completion tokens are 4.8 times the prompt tokens, because the model is a reasoning model and most of the output is thinking. A budget that only counts the prompt will be wrong.

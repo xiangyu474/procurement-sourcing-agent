@@ -20,9 +20,9 @@ from procurement_agent.domain.spec_alignment import (
     SemanticAlignment,
     SpecAssessment,
 )
-from procurement_agent.services.spec_alignment import align_requirement
+from procurement_agent.services.spec_alignment import ALIGNMENT_BATCH_SIZE, align_requirement
 from procurement_agent.services.spec_calculator import evaluate_requirement_product
-from procurement_agent.services.spec_typing import type_claims
+from procurement_agent.services.spec_typing import TYPING_BATCH_SIZE, type_claims
 
 
 def _candidate_model_ref(candidate: ResearchCandidate, model_by_product: Mapping[str, str]) -> str | None:
@@ -67,6 +67,9 @@ def evaluate_candidates(
     evidence: Mapping[str, str] | None = None,
     unresolved_demand: Mapping[str, Sequence[str]] | None = None,
     evaluated_at: datetime | None = None,
+    typing_batch_size: int | None = None,
+    alignment_batch_size: int | None = None,
+    config: dict[str, Any] | None = None,
 ) -> list[SpecAssessment]:
     """Evaluate every requirement against every candidate that belongs to it.
 
@@ -88,6 +91,8 @@ def evaluate_candidates(
             target_attributes=target_attributes,
             model=model,
             evidence=evidence,
+            batch_size=typing_batch_size or TYPING_BATCH_SIZE,
+            config=config,
         )
 
     assessments: list[SpecAssessment] = []
@@ -118,6 +123,8 @@ def evaluate_candidates(
                     constraints=requirement.constraints,
                     candidates=[(representative, typed)],
                     model=model,
+                    batch_size=alignment_batch_size or ALIGNMENT_BATCH_SIZE,
+                    config=config,
                 )
             candidate_alignments = [
                 alignments[(constraint.constraint_id, representative)]

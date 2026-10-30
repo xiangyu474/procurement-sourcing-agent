@@ -75,20 +75,25 @@ def _propose(
     claims: Sequence[ClaimDraft],
     target_attributes: Sequence[str],
     model: BaseChatModel,
+    batch_size: int = TYPING_BATCH_SIZE,
+    config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Ask the model to type the claims, a batch at a time.
 
     A long list of claims makes the request slow enough to time out, so the
-    list is cut into batches and each batch is a separate call.
+    list is cut into batches and each batch is a separate call. The batch size
+    is a setting, not a constant of the code.
     """
     typed: dict[str, Any] = {}
-    for start in range(0, len(claims), TYPING_BATCH_SIZE):
-        batch_claims = claims[start: start + TYPING_BATCH_SIZE]
+    step = max(1, batch_size)
+    for start in range(0, len(claims), step):
+        batch_claims = claims[start: start + step]
         typed.update(
             _propose_batch(
                 claims=batch_claims,
                 target_attributes=target_attributes,
                 model=model,
+                config=config,
             )
         )
     return typed
@@ -99,6 +104,7 @@ def _propose_batch(
     claims: Sequence[ClaimDraft],
     target_attributes: Sequence[str],
     model: BaseChatModel,
+    config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Ask the model to type one batch of claims."""
     payload = {
@@ -124,6 +130,7 @@ def _propose_batch(
                     else []
                 ),
                 TypedClaimBatch,
+                config=config,
             )
         except Exception:
             # The provider failed. The claims of this batch stay untyped, so the
@@ -194,11 +201,19 @@ def type_claims(
     target_attributes: Sequence[str],
     model: BaseChatModel,
     evidence: Mapping[str, str] | None = None,
+    batch_size: int = TYPING_BATCH_SIZE,
+    config: dict[str, Any] | None = None,
 ) -> list[ProductAttributeClaim]:
     """Type the research claims and check every reading against its quotation."""
     if not claims:
         return []
-    proposals = _propose(claims=claims, target_attributes=target_attributes, model=model)
+    proposals = _propose(
+        claims=claims,
+        target_attributes=target_attributes,
+        model=model,
+        batch_size=batch_size,
+        config=config,
+    )
     typed: list[ProductAttributeClaim] = []
     for claim in claims:
         proposal = proposals.get(claim.claim_id)

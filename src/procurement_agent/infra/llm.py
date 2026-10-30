@@ -15,7 +15,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.utils.function_calling import convert_to_openai_function
 from langchain_openai import ChatOpenAI
 
-from procurement_agent.infra import Settings
+from procurement_agent.infra import Settings, load_settings
 
 
 def build_chat_model(settings: Settings, *, timeout: int = 45) -> ChatOpenAI:
@@ -43,7 +43,7 @@ def stream_tool_call(
     messages: list[Any],
     schema: Any,
     *,
-    max_tokens: int = 32_000,
+    max_tokens: int | None = None,
     config: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], str]:
     """Return the arguments of every tool call and the text the model wrote.
@@ -55,8 +55,9 @@ def stream_tool_call(
     """
     tool = convert_to_openai_function(schema)
     bound = model.bind_tools([tool], tool_choice=tool["name"])
+    limit = max_tokens if max_tokens is not None else load_settings().model_max_output_tokens
     aggregated: Any = None
-    for chunk in bound.stream(messages, config={"max_tokens": max_tokens, **(config or {})}):
+    for chunk in bound.stream(messages, config={"max_tokens": limit, **(config or {})}):
         aggregated = chunk if aggregated is None else aggregated + chunk
     if aggregated is None:
         raise ValueError("The model returned no response")
@@ -78,7 +79,7 @@ def stream_tool_arguments(
     messages: list[Any],
     schema: Any,
     *,
-    max_tokens: int = 32_000,
+    max_tokens: int | None = None,
     config: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Collect the arguments of every tool call in a streamed response."""

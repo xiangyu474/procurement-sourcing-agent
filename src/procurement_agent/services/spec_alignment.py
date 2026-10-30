@@ -56,6 +56,8 @@ APPROVED_ALIASES: dict[str, frozenset[str]] = {
     "max_input_power": frozenset({"max_input_power", "input_power"}),
 }
 
+ALIGNMENT_BATCH_SIZE = 12
+
 SYSTEM_PROMPT = """You decide whether a requirement constraint and a product claim measure the same thing.
 
 A constraint says what the buyer wants: an attribute key, a definition of what
@@ -249,6 +251,7 @@ def propose_alignments(
     constraints: Sequence[RequirementConstraint],
     candidates: Sequence[tuple[str, Sequence[ProductAttributeClaim]]],
     model: BaseChatModel,
+    config: dict[str, Any] | None = None,
 ) -> list[AlignmentProposal]:
     """Ask the model which claims belong to which constraint."""
     if not constraints or not candidates:
@@ -269,6 +272,7 @@ def propose_alignments(
                     else []
                 ),
                 AlignmentBatch,
+                config=config,
             )
         except Exception:
             # The provider failed. Without an alignment the constraints stay
@@ -296,13 +300,26 @@ def align_requirement(
     constraints: Sequence[RequirementConstraint],
     candidates: Sequence[tuple[str, Sequence[ProductAttributeClaim]]],
     model: BaseChatModel,
+    batch_size: int = ALIGNMENT_BATCH_SIZE,
+    config: dict[str, Any] | None = None,
 ) -> dict[tuple[str, str], SemanticAlignment]:
-    """Align every constraint with every candidate and check the proposals."""
-    proposals = propose_alignments(
-        constraints=constraints,
-        candidates=candidates,
-        model=model,
-    )
+    """Align every constraint with every candidate and check the proposals.
+
+    The candidates are asked about in batches, because one call with every
+    candidate of a project becomes slow enough to time out. The batch size is
+    a setting, not a constant of the code.
+    """
+    proposals: list[AlignmentProposal] = []
+    step = max(1, batch_size)
+    for start in range(0, len(candidates), step):
+        proposals.extend(
+            propose_alignments(
+                constraints=constraints,
+                candidates=candidates[start: start + step],
+                model=model,
+                config=config,
+            )
+        )
     by_constraint = {constraint.constraint_id: constraint for constraint in constraints}
     alignments: dict[tuple[str, str], SemanticAlignment] = {}
     for proposal in proposals:

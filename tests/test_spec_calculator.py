@@ -480,3 +480,52 @@ def test_the_same_code_judges_four_categories(attribute_key, unit, required, act
     )
     assert check.status == ConstraintStatus.FAIL
     assert check.reason_code == ConstraintReasonCode.VERIFIED_COMPARISON
+
+
+# --- a vague demand is never satisfied by default ----------------------------
+
+
+def test_a_vague_demand_is_not_a_constraint_and_not_satisfied():
+    """「工业级可靠」is not a threshold, so it cannot become a passing check."""
+    from procurement_agent.ingestion.compiler import SYSTEM_PROMPT
+
+    assert '"工业级", "口碑好", "符合相关标准" are not constraints' in SYSTEM_PROMPT
+    # A requirement without a hard constraint is not a pass.
+    checks: list = []
+    overall, reasons = aggregate_hard_checks(checks)
+    assert overall == ConstraintStatus.UNKNOWN
+    assert reasons == [ConstraintReasonCode.NO_HARD_CONSTRAINT]
+
+
+def test_an_unresolved_demand_keeps_the_overall_unknown():
+    """A demand that could not be compiled stops the overall from being a pass."""
+    checks = [
+        evaluate_constraint(constraint(), [claim(value="5", unit="MP")], alignment(), product_model_ref="TRI055N")
+    ]
+    overall, reasons = aggregate_hard_checks(checks, unresolved_demand=["工业级可靠"])
+    assert overall == ConstraintStatus.UNKNOWN
+    assert reasons == [ConstraintReasonCode.UNRESOLVED_DEMAND]
+
+
+def test_an_unconfirmed_attribute_is_not_treated_as_standardised():
+    """A web claim that only looks like the requirement does not become a value."""
+    from procurement_agent.domain.spec_alignment import AlignmentMethod, AlignmentProposal
+    from procurement_agent.services.spec_alignment import canonical_alignment
+
+    proposal = AlignmentProposal(
+        constraint_id="c1",
+        product_candidate_id="cand1",
+        claim_ids=["clm1"],
+        status="ALIGNED",
+        method=AlignmentMethod.EXACT_ATTRIBUTE_KEY,
+        reason="the two look like the same attribute",
+    )
+    alignment = canonical_alignment(
+        proposal,
+        constraint=constraint(),
+        claims={"clm1": claim(attribute_key="sensor_resolution")},
+    )
+    assert alignment.status.value == "NOT_ALIGNED"
+    check = evaluate_constraint(constraint(), [claim(attribute_key="sensor_resolution")], alignment, product_model_ref="TRI055N")
+    assert check.status == ConstraintStatus.UNKNOWN
+    assert check.reason_code == ConstraintReasonCode.ATTRIBUTE_NOT_ALIGNED

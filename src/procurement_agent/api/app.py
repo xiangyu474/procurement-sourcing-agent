@@ -442,7 +442,7 @@ async def evaluate_spec(payload: SpecEvaluationRequest, x_internal_token: str | 
 
     try:
         # The typing and the alignment hold one model call open for minutes.
-        model = build_chat_model(evaluation_settings, timeout=600)
+        model = build_chat_model(evaluation_settings, timeout=evaluation_settings.model_timeout_seconds)
         assessments = evaluate_candidates(
             requirements=requirements,
             candidates=candidates,
@@ -450,6 +450,8 @@ async def evaluate_spec(payload: SpecEvaluationRequest, x_internal_token: str | 
             model=model,
             model_by_product=models,
             unresolved_demand=unresolved,
+            typing_batch_size=evaluation_settings.spec_typing_batch_size,
+            alignment_batch_size=evaluation_settings.spec_alignment_candidates,
         )
     except Exception as exc:
         error_type = type(exc).__name__
@@ -556,7 +558,7 @@ async def decide(payload: DecisionRequest, x_internal_token: str | None = Header
             price_findings[requirement.requirement_id] = price_context.findings
 
     try:
-        model = build_chat_model(decision_settings, timeout=600)
+        model = build_chat_model(decision_settings, timeout=decision_settings.model_timeout_seconds)
         decisions = decide_candidates(
             project_id=payload.project_id,
             assessments=assessments,

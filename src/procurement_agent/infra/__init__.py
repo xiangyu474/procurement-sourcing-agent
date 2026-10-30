@@ -38,6 +38,11 @@ class Settings:
     max_concurrent_researchers: int
     max_model_calls: int
     intelligence_stale_after_days: int
+    spec_typing_batch_size: int
+    spec_alignment_candidates: int
+    model_timeout_seconds: int
+    model_max_output_tokens: int
+    model_context_max_tokens: int
 
     @property
     def has_llm(self) -> bool:
@@ -63,4 +68,9 @@ def load_settings() -> Settings:
         max_concurrent_researchers=max(1, min(int(os.getenv("SOURCING_MAX_CONCURRENT_RESEARCHERS", "3")), 3)),
         max_model_calls=max(1, min(int(os.getenv("SOURCING_MAX_MODEL_CALLS", "30")), 30)),
         intelligence_stale_after_days=max(1, int(os.getenv("SOURCING_INTELLIGENCE_STALE_DAYS", "180"))),
+        spec_typing_batch_size=max(1, min(int(os.getenv("M3_SPEC_TYPING_BATCH_SIZE", "15")), 60)),
+        spec_alignment_candidates=max(1, min(int(os.getenv("M3_SPEC_ALIGNMENT_CANDIDATES", "12")), 60)),
+        model_timeout_seconds=max(60, min(int(os.getenv("MODEL_TIMEOUT_SECONDS", "600")), 1800)),
+        model_max_output_tokens=max(1024, min(int(os.getenv("MODEL_MAX_OUTPUT_TOKENS", "32000")), 128000)),
+        model_context_max_tokens=max(1024, min(int(os.getenv("MODEL_CONTEXT_MAX_TOKENS", "120000")), 400000)),
     )
