@@ -768,204 +768,117 @@ interface AcceptanceRequest {
 // The end-to-end acceptance runs on the side of the network that can reach the
 // gateway. It is started through the Cloudflare API, so a client whose own
 // network cannot resolve the gateway can still run it.
-export class SourcingAcceptanceWorkflow extends WorkflowEntrypoint<Env, AcceptanceRequest> {
-	async run(event: WorkflowEvent<AcceptanceRequest>, step: WorkflowStep) {
-		try {
-			const result = await step.do(
-				"run-acceptance",
-				{ retries: { limit: 0, delay: "10 seconds", backoff: "exponential" }, timeout: "60 minutes" },
-				async () => {
-					const container = getContainer(this.env.SOURCING_CONTAINER, ACCEPTANCE_INSTANCE);
-					const response = await container.fetch(
-						new Request("http://container/internal/acceptance", {
-							method: "POST",
-							headers: { "content-type": "application/json" },
-							body: JSON.stringify({
-								gateway_url: this.env.CONTAINER_GATEWAY_URL,
-								token: this.env.INTERNAL_GATEWAY_TOKEN,
-								demo_token: this.env.DEMO_ACCESS_TOKEN,
-								runtime_config: {
-									GENESIS_BASE_URL: this.env.GENESIS_BASE_URL,
-									GENESIS_ACCESS_TOKEN: this.env.GENESIS_ACCESS_TOKEN,
-									GENESIS_MODEL_ID: this.env.GENESIS_MODEL_ID,
-									TAVILY_API_KEY: this.env.TAVILY_API_KEY,
-									...(this.env.LANGSMITH_API_KEY ? { LANGSMITH_API_KEY: this.env.LANGSMITH_API_KEY } : {}),
-									...(this.env.LANGSMITH_TRACING ? { LANGSMITH_TRACING: this.env.LANGSMITH_TRACING } : {}),
-									...(this.env.LANGSMITH_PROJECT ? { LANGSMITH_PROJECT: this.env.LANGSMITH_PROJECT } : {}),
-								},
-							}),
-						}),
-					);
-					if (!response.ok) {
-						const body = await response.text().catch(() => "");
-						throw new Error(`the acceptance failed with status ${response.status}: ${body.slice(0, 400)}`);
-					}
-					const payload = (await response.json()) as {
-						status?: string;
-						failures?: string[];
-						stages?: Record<string, unknown>;
-					};
-					return {
-						status: payload.status ?? "FAIL",
-						failures: payload.failures ?? [],
-						// The step output has to be serializable, so the
-						// stage details travel as one JSON string.
-						stages: JSON.stringify(payload.stages ?? {}),
-					};
-				},
-			);
-			const outcome = result as unknown as {
-				status?: string;
-				failures?: string[];
-				stages?: string;
-			};
-			return {
-				status: outcome.status ?? "FAIL",
-				failures: outcome.failures ?? [],
-				stages: outcome.stages ?? "{}",
-			};
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return { status: "FAILED", failures: [message.slice(0, 400)], stages: {} };
-		}
-	}
-}
-
-export class SourcingDecisionWorkflow extends WorkflowEntrypoint<Env, DecisionRequest> {
-	async run(event: WorkflowEvent<DecisionRequest>, step: WorkflowStep) {
-		const { projectId, requirementIds } = event.payload;
-		try {
-			const result = await step.do(
-				"write-decisions",
-				{ retries: { limit: 1, delay: "10 seconds", backoff: "exponential" }, timeout: "30 minutes" },
-				async () => {
-					const container = getContainer(this.env.SOURCING_CONTAINER, CONTAINER_INSTANCE);
-					const response = await container.fetch(
-						new Request("http://container/internal/decide", {
-							method: "POST",
-							headers: { "content-type": "application/json" },
-							body: JSON.stringify({
-								project_id: projectId,
-								gateway_url: this.env.CONTAINER_GATEWAY_URL,
-								token: this.env.INTERNAL_GATEWAY_TOKEN,
-								runtime_config: {
-									GENESIS_BASE_URL: this.env.GENESIS_BASE_URL,
-									GENESIS_ACCESS_TOKEN: this.env.GENESIS_ACCESS_TOKEN,
-									GENESIS_MODEL_ID: this.env.GENESIS_MODEL_ID,
-									...(this.env.LANGSMITH_API_KEY ? { LANGSMITH_API_KEY: this.env.LANGSMITH_API_KEY } : {}),
-									...(this.env.LANGSMITH_TRACING ? { LANGSMITH_TRACING: this.env.LANGSMITH_TRACING } : {}),
-									...(this.env.LANGSMITH_PROJECT ? { LANGSMITH_PROJECT: this.env.LANGSMITH_PROJECT } : {}),
-								},
-								requirement_ids: requirementIds,
-							}),
-						}),
-					);
-					if (!response.ok) {
-						const body = await response.text().catch(() => "");
-						throw new Error(`decision failed with status ${response.status}: ${body.slice(0, 400)}`);
-					}
-					// The step output stays small. The decisions themselves are
-					// stored in D1 by the container.
-					const payload = (await response.json()) as {
-						status?: string;
-						decisions?: number;
-						accepted?: number;
-						rejected?: number;
-					};
-					return {
-						status: payload.status ?? "COMPLETED",
-						decisions: payload.decisions ?? 0,
-						accepted: payload.accepted ?? 0,
-						rejected: payload.rejected ?? 0,
-					};
-				},
-			);
-			const outcome = result as unknown as {
-				status?: string;
-				decisions?: number;
-				accepted?: number;
-				rejected?: number;
-			};
-			return {
-				status: outcome.status ?? "COMPLETED",
-				decisions: outcome.decisions ?? 0,
-				accepted: outcome.accepted ?? 0,
-				rejected: outcome.rejected ?? 0,
-			};
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return { status: "FAILED", error: message.slice(0, 400) };
-		}
-	}
-}
-
 // A stable id for one technical check, so that re-evaluating the same demand
 // revision replaces the row instead of adding a second one.
 async function stableSpecId(projectId: string, requirementId: string, candidateId: string, revision: number): Promise<string> {
-	const payload = [projectId, requirementId, candidateId, String(revision)].join("\u001f");
+	const payload = [projectId, requirementId, candidateId, String(revision)].join("");
 	const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payload));
 	const hex = Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
 	return `spc_${hex.slice(0, 24)}`;
 }
 
-export class SourcingSpecWorkflow extends WorkflowEntrypoint<Env, SpecRequest> {
-	async run(event: WorkflowEvent<SpecRequest>, step: WorkflowStep) {
-		const { projectId, requirementIds, candidateIds } = event.payload;
-		try {
-			const result = await step.do(
-				"evaluate-spec",
-				{ retries: { limit: 1, delay: "10 seconds", backoff: "exponential" }, timeout: "30 minutes" },
-				async () => {
-					const container = getContainer(this.env.SOURCING_CONTAINER, CONTAINER_INSTANCE);
-					const response = await container.fetch(
-						new Request("http://container/internal/evaluate-spec", {
-							method: "POST",
-							headers: { "content-type": "application/json" },
-							body: JSON.stringify({
-								project_id: projectId,
-								gateway_url: this.env.CONTAINER_GATEWAY_URL,
-								token: this.env.INTERNAL_GATEWAY_TOKEN,
-								runtime_config: {
-									GENESIS_BASE_URL: this.env.GENESIS_BASE_URL,
-									GENESIS_ACCESS_TOKEN: this.env.GENESIS_ACCESS_TOKEN,
-									GENESIS_MODEL_ID: this.env.GENESIS_MODEL_ID,
-									...(this.env.LANGSMITH_API_KEY ? { LANGSMITH_API_KEY: this.env.LANGSMITH_API_KEY } : {}),
-									...(this.env.LANGSMITH_TRACING ? { LANGSMITH_TRACING: this.env.LANGSMITH_TRACING } : {}),
-									...(this.env.LANGSMITH_PROJECT ? { LANGSMITH_PROJECT: this.env.LANGSMITH_PROJECT } : {}),
-								},
-								requirement_ids: requirementIds,
-								candidate_ids: candidateIds,
-							}),
-						}),
-					);
-					if (!response.ok) {
-						const body = await response.text().catch(() => "");
-						throw new Error(`spec evaluation failed with status ${response.status}: ${body.slice(0, 400)}`);
-					}
-					// The step output stays small. The assessments themselves are
-					// stored in D1 by the container.
-					const payload = (await response.json()) as {
-						status?: string;
-						assessments?: number;
-						by_overall?: Record<string, number>;
-					};
-					return {
-						status: payload.status ?? "COMPLETED",
-						assessments: payload.assessments ?? 0,
-						by_overall: payload.by_overall ?? {},
-					};
-				},
+// The stage details travel as one JSON string, because a workflow step output
+// has to be serializable.
+function _parseStages(value: string | undefined): Record<string, unknown> {
+	if (!value) return {};
+	try {
+		const parsed = JSON.parse(value) as unknown;
+		return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+	} catch {
+		return {};
+	}
+}
+
+export class SourcingAcceptanceWorkflow extends WorkflowEntrypoint<Env, AcceptanceRequest> {
+	async run(event: WorkflowEvent<AcceptanceRequest>, step: WorkflowStep) {
+		const runtimeConfig = {
+			GENESIS_BASE_URL: this.env.GENESIS_BASE_URL,
+			GENESIS_ACCESS_TOKEN: this.env.GENESIS_ACCESS_TOKEN,
+			GENESIS_MODEL_ID: this.env.GENESIS_MODEL_ID,
+			TAVILY_API_KEY: this.env.TAVILY_API_KEY,
+			...(this.env.LANGSMITH_API_KEY ? { LANGSMITH_API_KEY: this.env.LANGSMITH_API_KEY } : {}),
+			...(this.env.LANGSMITH_TRACING ? { LANGSMITH_TRACING: this.env.LANGSMITH_TRACING } : {}),
+			...(this.env.LANGSMITH_PROJECT ? { LANGSMITH_PROJECT: this.env.LANGSMITH_PROJECT } : {}),
+		};
+		const failures: string[] = [];
+		const stages: Record<string, unknown> = {};
+
+		const runStage = async (stage: string, projectId: string, runId: string) => {
+			const container = getContainer(this.env.SOURCING_CONTAINER, ACCEPTANCE_INSTANCE);
+			const response = await container.fetch(
+				new Request("http://container/internal/acceptance", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({
+						gateway_url: this.env.CONTAINER_GATEWAY_URL,
+						token: this.env.INTERNAL_GATEWAY_TOKEN,
+						demo_token: this.env.DEMO_ACCESS_TOKEN,
+						runtime_config: runtimeConfig,
+						stage,
+						project_id: projectId,
+						run_id: runId,
+					}),
+				}),
 			);
-			const outcome = result as unknown as { status?: string; assessments?: number; by_overall?: Record<string, number> };
-			return {
-				status: outcome.status ?? "COMPLETED",
-				assessments: outcome.assessments ?? 0,
-				by_overall: outcome.by_overall ?? {},
+			if (!response.ok) {
+				const body = await response.text().catch(() => "");
+				throw new Error(`the acceptance stage ${stage} failed with status ${response.status}: ${body.slice(0, 300)}`);
+			}
+			return (await response.json()) as {
+				status?: string;
+				failures?: string[];
+				stages?: string;
+				project_id?: string;
+				run_id?: string;
 			};
+		};
+
+		try {
+			// One step per stage. A single connection cannot stay open for the
+			// whole chain, and each stage has to be able to run in sequence.
+			const prepared = await step.do(
+				"acceptance-prepare",
+				{ retries: { limit: 0, delay: "10 seconds", backoff: "exponential" }, timeout: "30 minutes" },
+				async () => runStage("prepare", "", ""),
+			);
+			const projectId = prepared.project_id ?? "";
+			failures.push(...(prepared.failures ?? []));
+			Object.assign(stages, _parseStages(prepared.stages));
+
+			const researched = await step.do(
+				"acceptance-research",
+				{ retries: { limit: 0, delay: "10 seconds", backoff: "exponential" }, timeout: "40 minutes" },
+				async () => runStage("research", projectId, ""),
+			);
+			failures.push(...(researched.failures ?? []));
+			Object.assign(stages, _parseStages(researched.stages));
+
+			const judged = await step.do(
+				"acceptance-spec",
+				{ retries: { limit: 0, delay: "10 seconds", backoff: "exponential" }, timeout: "40 minutes" },
+				async () => runStage("spec", projectId, ""),
+			);
+			failures.push(...(judged.failures ?? []));
+			Object.assign(stages, _parseStages(judged.stages));
+
+			const decided = await step.do(
+				"acceptance-decide",
+				{ retries: { limit: 0, delay: "10 seconds", backoff: "exponential" }, timeout: "40 minutes" },
+				async () => runStage("decide", projectId, ""),
+			);
+			failures.push(...(decided.failures ?? []));
+			Object.assign(stages, _parseStages(decided.stages));
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			return { status: "FAILED", error: message.slice(0, 400) };
+			failures.push(message.slice(0, 400));
 		}
+		return {
+			status: failures.length === 0 ? "PASS" : "FAIL",
+			failures,
+			// The step output has to be serializable, so the stage details
+			// travel as one JSON string.
+			stages: JSON.stringify(stages),
+		};
 	}
 }
 
