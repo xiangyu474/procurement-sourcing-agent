@@ -183,6 +183,27 @@ def compile_requirement_fragments(
     return CompilerResult(compilation=raw, shaping_issues=tuple(raw.issues))
 
 
+# The fields of one constraint. The model sometimes puts them beside the line
+# item instead of inside a list of constraints.
+_CONSTRAINT_FIELDS = (
+    "constraint_id",
+    "schema_version",
+    "attribute_key",
+    "attribute_definition",
+    "value_type",
+    "operator",
+    "value",
+    "unit",
+    "qualifiers",
+    "importance",
+    "origin",
+    "source_ref",
+    "source_quote",
+    "parse_status",
+    "validation_issues",
+)
+
+
 def _unwrap_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Read a compilation that the model wrapped or stringified.
 
@@ -334,6 +355,13 @@ def _validated_compilation_payload(
         if "name" in raw_requirement and "product_name" not in requirement:
             requirement["product_name"] = raw_requirement["name"]
         _normalize_list_fields(requirement, ("source_refs", "constraints", "open_questions"))
+        # The model sometimes writes the one constraint beside the line item
+        # instead of inside a list. That shape is read, not discarded.
+        flat_constraint = {
+            key: raw_requirement[key] for key in _CONSTRAINT_FIELDS if key in raw_requirement
+        }
+        if flat_constraint and not requirement.get("constraints"):
+            requirement["constraints"] = [flat_constraint]
         quantity = requirement.get("quantity")
         if isinstance(quantity, (int, float)) and not isinstance(quantity, bool):
             requirement["quantity"] = str(quantity)
@@ -342,6 +370,12 @@ def _validated_compilation_payload(
         for constraint_index, raw_constraint in enumerate(requirement.get("constraints", [])):
             constraint = _sanitize_model_payload(
                 raw_constraint, RequirementConstraint, "RequirementConstraint", issues
+            )
+            # The identifiers are the compiler's business, not the model's.
+            constraint.setdefault("requirement_id", str(requirement.get("requirement_id", "")))
+            constraint.setdefault(
+                "constraint_id",
+                f"{requirement.get('requirement_id', 'r')}:c{constraint_index + 1}",
             )
             value = constraint.get("value")
             if (

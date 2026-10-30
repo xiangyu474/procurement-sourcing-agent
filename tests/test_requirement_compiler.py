@@ -338,3 +338,72 @@ def test_the_compiler_asks_again_when_the_model_answers_in_prose():
     assert model.calls == compiler_module.MAX_COMPILER_ATTEMPTS
     assert result.compilation.requirements == []
     assert "without a structured compilation" in result.compilation.issues[0]
+
+
+def test_a_constraint_written_beside_the_line_item_is_read():
+    """The model sometimes puts the one constraint beside the line item."""
+    payload = {
+        "project_id": "p1",
+        "requirements": [
+            {
+                "requirement_id": "r1",
+                "product_name": "5MP 工业网络摄像机",
+                "quantity": "10",
+                "quantity_unit": "套",
+                "source_refs": ["user_text:p1:rev_1:line_1:span_0_20"],
+                "constraint_id": "c1",
+                "attribute_key": "output_resolution",
+                "attribute_definition": "视频输出像素数",
+                "value_type": "NUMBER",
+                "operator": "GTE",
+                "value": "5",
+                "unit": "MP",
+                "importance": "HARD",
+                "origin": "PPT_EXPLICIT",
+                "source_ref": "user_text:p1:rev_1:line_1:span_0_20",
+                "source_quote": "5MP 工业网络摄像机",
+                "parse_status": "RESOLVED",
+            }
+        ],
+    }
+    result = _validated_compilation_payload(payload, project_id="p1", revision=1)
+    assert len(result.requirements) == 1
+    constraints = result.requirements[0].constraints
+    assert len(constraints) == 1
+    assert constraints[0].attribute_key == "output_resolution"
+    assert constraints[0].value == "5"
+    assert constraints[0].unit == "MP"
+    assert constraints[0].requirement_id == "r1"
+    assert constraints[0].parse_status.value == "RESOLVED"
+
+
+def test_a_constraint_without_identifiers_still_belongs_to_its_line_item():
+    payload = {
+        "project_id": "p1",
+        "requirements": [
+            {
+                "requirement_id": "r1",
+                "product_name": "某设备",
+                "constraints": [
+                    {
+                        "attribute_key": "ingress_rating",
+                        "attribute_definition": "防护等级",
+                        "value_type": "STRING",
+                        "operator": "EQ",
+                        "value": "IP66",
+                        "importance": "HARD",
+                        "origin": "PPT_EXPLICIT",
+                        "source_ref": "user_text:p1:rev_1:line_1:span_0_20",
+                        "source_quote": "IP66",
+                        "parse_status": "RESOLVED",
+                    }
+                ],
+                "source_refs": ["user_text:p1:rev_1:line_1:span_0_20"],
+            }
+        ],
+    }
+    result = _validated_compilation_payload(payload, project_id="p1", revision=1)
+    constraints = result.requirements[0].constraints
+    assert len(constraints) == 1
+    assert constraints[0].requirement_id == "r1"
+    assert constraints[0].constraint_id
