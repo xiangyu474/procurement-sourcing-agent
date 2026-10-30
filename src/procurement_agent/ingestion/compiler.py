@@ -322,6 +322,23 @@ def _validated_compilation_payload(
     if "product_category" in normalized and "project_category" not in normalized:
         normalized["project_category"] = normalized.pop("product_category")
 
+    if not normalized.get("requirements"):
+        # The model writes the line item under a few different names. A single
+        # object that names a product is a line item, whatever it is called.
+        for key in list(normalized):
+            value = normalized[key]
+            if not isinstance(value, dict):
+                continue
+            if "product_name" not in value and "name" not in value:
+                continue
+            if key in root_requirement_fields:
+                continue
+            if not any(field in value for field in ("requirement_id", "source_product_code", "quantity", "constraints", "planned_unit_price")):
+                continue
+            item = {name: value[name] for name in list(value) if name in root_requirement_fields or name in _CONSTRAINT_FIELDS}
+            normalized.setdefault("requirements", []).append(item)
+            normalized.pop(key, None)
+            break
     if not normalized.get("requirements") and "product_name" in normalized and any(
         key in normalized for key in ("requirement_id", "source_product_code", "quantity", "constraints")
     ):

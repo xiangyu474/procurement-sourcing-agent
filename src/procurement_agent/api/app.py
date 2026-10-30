@@ -698,9 +698,20 @@ async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = 
         if stage == "compile":
             read = await client.get(f"/api/projects/{project_id}/requirements")
             requirements: list[dict[str, Any]] = []
+            compiled = False
             if read.status_code == 200:
-                requirements = (read.json().get("compilation") or {}).get("requirements") or []
+                body = read.json()
+                compiled = bool(body.get("compilation"))
+                requirements = (body.get("compilation") or {}).get("requirements") or []
             if not requirements:
+                if compiled:
+                    # The compilation finished and produced no purchase line.
+                    return {
+                        "status": "FAIL",
+                        "failures": ["the demand compiled without a purchase line"],
+                        "state": json.dumps({"project_id": project_id}),
+                        "done": True,
+                    }
                 return {"status": "OK", "failures": [], "state": json.dumps({"project_id": project_id}), "done": False}
             constraints = [constraint for item in requirements for constraint in item.get("constraints", [])]
             failures = []

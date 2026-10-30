@@ -407,3 +407,33 @@ def test_a_constraint_without_identifiers_still_belongs_to_its_line_item():
     assert len(constraints) == 1
     assert constraints[0].requirement_id == "r1"
     assert constraints[0].constraint_id
+
+
+def test_a_line_item_written_under_another_name_is_read():
+    """The model writes the line item under several names."""
+    payload = {
+        "project_id": "p1",
+        "requirement": {
+            "requirement_id": "r1",
+            "product_name": "5MP 工业网络摄像机",
+            "quantity": "10",
+            "quantity_unit": "套",
+            "source_refs": ["user_text:p1:rev_1:line_1:span_0_20"],
+            "constraint_id": "c1",
+            "attribute_key": "output_resolution",
+            "attribute_definition": "视频输出像素数",
+            "value_type": "NUMBER",
+            "operator": "GTE",
+            "value": "5",
+            "unit": "MP",
+            "importance": "HARD",
+            "origin": "PPT_EXPLICIT",
+            "source_ref": "user_text:p1:rev_1:line_1:span_0_20",
+            "source_quote": "5MP 工业网络摄像机",
+            "parse_status": "RESOLVED",
+        },
+    }
+    result = _validated_compilation_payload(payload, project_id="p1", revision=1)
+    assert len(result.requirements) == 1
+    assert result.requirements[0].product_name == "5MP 工业网络摄像机"
+    assert len(result.requirements[0].constraints) == 1
