@@ -664,6 +664,9 @@ export class SourcingCompileWorkflow extends WorkflowEntrypoint<Env, CompileRequ
 				{ retries: { limit: 0, delay: "10 seconds", backoff: "exponential" }, timeout: "20 minutes" },
 				async () => {
 					const container = getContainer(this.env.SOURCING_CONTAINER, this.env.CONTAINER_INSTANCE_NAME);
+					// The instance sleeps when it is idle, so it has to be
+					// started before it can answer.
+					await container.start();
 					const response = await container.fetch(
 						new Request("http://container/internal/compile-demand", {
 							method: "POST",
@@ -943,6 +946,9 @@ export class SourcingDecisionWorkflow extends WorkflowEntrypoint<Env, DecisionRe
 				{ retries: { limit: 1, delay: "10 seconds", backoff: "exponential" }, timeout: "30 minutes" },
 				async () => {
 					const container = getContainer(this.env.SOURCING_CONTAINER, this.env.CONTAINER_INSTANCE_NAME);
+					// The instance sleeps when it is idle, so it has to be
+					// started before it can answer.
+					await container.start();
 					const response = await container.fetch(
 						new Request("http://container/internal/decide", {
 							method: "POST",
@@ -1020,6 +1026,9 @@ export class SourcingSpecWorkflow extends WorkflowEntrypoint<Env, SpecRequest> {
 				{ retries: { limit: 1, delay: "10 seconds", backoff: "exponential" }, timeout: "30 minutes" },
 				async () => {
 					const container = getContainer(this.env.SOURCING_CONTAINER, this.env.CONTAINER_INSTANCE_NAME);
+					// The instance sleeps when it is idle, so it has to be
+					// started before it can answer.
+					await container.start();
 					const response = await container.fetch(
 						new Request("http://container/internal/evaluate-spec", {
 							method: "POST",
@@ -1092,6 +1101,9 @@ export class SourcingWorkflow extends WorkflowEntrypoint<Env, RunRequest> {
 				},
 				async () => {
 					const container = getContainer(this.env.SOURCING_CONTAINER, this.env.CONTAINER_INSTANCE_NAME);
+					// The instance sleeps when it is idle, so it has to be
+					// started before it can answer.
+					await container.start();
 					const runtimeConfig = {
 						GENESIS_BASE_URL: this.env.GENESIS_BASE_URL,
 						GENESIS_ACCESS_TOKEN: this.env.GENESIS_ACCESS_TOKEN,
