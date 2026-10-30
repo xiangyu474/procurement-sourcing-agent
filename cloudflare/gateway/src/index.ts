@@ -25,6 +25,14 @@ export interface Env {
 // The container receives the internal token from the Worker at request time so
 // that no secret value is baked into the image or the container configuration.
 
+// The name of the container instance inside the Durable Object.
+//
+// A running container keeps the image it was started with. After a deploy the
+// warm instance therefore still serves the previous image until it sleeps and
+// is started again, which is why a new image needs a new instance name or a
+// wait for the sleep timer.
+const CONTAINER_INSTANCE = "sourcing-v2";
+
 interface ResearchBudgetConfig {
 	max_search_calls: number;
 	max_fetches: number;
@@ -657,7 +665,7 @@ export class SourcingCompileWorkflow extends WorkflowEntrypoint<Env, CompileRequ
 				"compile-demand",
 				{ retries: { limit: 0, delay: "10 seconds", backoff: "exponential" }, timeout: "20 minutes" },
 				async () => {
-					const container = getContainer(this.env.SOURCING_CONTAINER, "m1-intake");
+					const container = getContainer(this.env.SOURCING_CONTAINER, CONTAINER_INSTANCE);
 					const response = await container.fetch(
 						new Request("http://container/internal/compile-demand", {
 							method: "POST",
@@ -762,7 +770,7 @@ export class SourcingAcceptanceWorkflow extends WorkflowEntrypoint<Env, Acceptan
 				"run-acceptance",
 				{ retries: { limit: 0, delay: "10 seconds", backoff: "exponential" }, timeout: "60 minutes" },
 				async () => {
-					const container = getContainer(this.env.SOURCING_CONTAINER, "m1-intake");
+					const container = getContainer(this.env.SOURCING_CONTAINER, CONTAINER_INSTANCE);
 					const response = await container.fetch(
 						new Request("http://container/internal/acceptance", {
 							method: "POST",
@@ -826,7 +834,7 @@ export class SourcingDecisionWorkflow extends WorkflowEntrypoint<Env, DecisionRe
 				"write-decisions",
 				{ retries: { limit: 1, delay: "10 seconds", backoff: "exponential" }, timeout: "30 minutes" },
 				async () => {
-					const container = getContainer(this.env.SOURCING_CONTAINER, "m1-intake");
+					const container = getContainer(this.env.SOURCING_CONTAINER, CONTAINER_INSTANCE);
 					const response = await container.fetch(
 						new Request("http://container/internal/decide", {
 							method: "POST",
@@ -903,7 +911,7 @@ export class SourcingSpecWorkflow extends WorkflowEntrypoint<Env, SpecRequest> {
 				"evaluate-spec",
 				{ retries: { limit: 1, delay: "10 seconds", backoff: "exponential" }, timeout: "30 minutes" },
 				async () => {
-					const container = getContainer(this.env.SOURCING_CONTAINER, "m1-intake");
+					const container = getContainer(this.env.SOURCING_CONTAINER, CONTAINER_INSTANCE);
 					const response = await container.fetch(
 						new Request("http://container/internal/evaluate-spec", {
 							method: "POST",
@@ -975,7 +983,7 @@ export class SourcingWorkflow extends WorkflowEntrypoint<Env, RunRequest> {
 					timeout: "20 minutes",
 				},
 				async () => {
-					const container = getContainer(this.env.SOURCING_CONTAINER, "m1-intake");
+					const container = getContainer(this.env.SOURCING_CONTAINER, CONTAINER_INSTANCE);
 					const runtimeConfig = {
 						GENESIS_BASE_URL: this.env.GENESIS_BASE_URL,
 						GENESIS_ACCESS_TOKEN: this.env.GENESIS_ACCESS_TOKEN,
