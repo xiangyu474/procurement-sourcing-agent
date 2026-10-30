@@ -796,6 +796,9 @@ export class SourcingAcceptanceWorkflow extends WorkflowEntrypoint<Env, Acceptan
 
 		const runStage = async (stage: string, projectId: string, runId: string) => {
 			const container = getContainer(this.env.SOURCING_CONTAINER, ACCEPTANCE_INSTANCE);
+			// The instance sleeps when it is idle, so it has to be started
+			// before it can answer.
+			await container.start();
 			const response = await container.fetch(
 				new Request("http://container/internal/acceptance", {
 					method: "POST",
