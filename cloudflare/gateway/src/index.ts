@@ -794,7 +794,7 @@ export class SourcingAcceptanceWorkflow extends WorkflowEntrypoint<Env, Acceptan
 		const failures: string[] = [];
 		const stages: Record<string, unknown> = {};
 
-		const runStage = async (stage: string, projectId: string) => {
+		const runStage = async (stage: string, projectId: string, runId: string) => {
 			const container = getContainer(this.env.SOURCING_CONTAINER, ACCEPTANCE_INSTANCE);
 			const response = await container.fetch(
 				new Request("http://container/internal/acceptance", {
@@ -807,6 +807,7 @@ export class SourcingAcceptanceWorkflow extends WorkflowEntrypoint<Env, Acceptan
 						runtime_config: runtimeConfig,
 						stage,
 						project_id: projectId,
+						run_id: runId,
 					}),
 				}),
 			);
@@ -817,46 +818,104 @@ export class SourcingAcceptanceWorkflow extends WorkflowEntrypoint<Env, Acceptan
 			return (await response.json()) as {
 				status?: string;
 				failures?: string[];
-				stages?: string;
-				project_id?: string;
+				state?: string;
+				done?: boolean;
 			};
 		};
 
+		// Every container request does one short thing. The waiting is done by
+		// asking again, because a container request that waits is a request
+		// that can be disconnected.
 		try {
-			// One step per stage. A single connection cannot stay open for the
-			// whole chain, and the stages have to run in sequence.
 			const prepared = await step.do(
 				"acceptance-prepare",
-				{ retries: { limit: 0, delay: "10 seconds", backoff: "exponential" }, timeout: "30 minutes" },
-				async () => runStage("prepare", ""),
+				{ retries: { limit: 0, delay: "5 seconds", backoff: "exponential" }, timeout: "10 minutes" },
+				async () => runStage("prepare", "", ""),
 			);
-			const projectId = prepared.project_id ?? "";
+			const projectId = String(_parseStages(prepared.state).project_id ?? "");
 			failures.push(...(prepared.failures ?? []));
-			Object.assign(stages, _parseStages(prepared.stages));
 
-			const researched = await step.do(
-				"acceptance-research",
-				{ retries: { limit: 0, delay: "10 seconds", backoff: "exponential" }, timeout: "40 minutes" },
-				async () => runStage("research", projectId),
-			);
-			failures.push(...(researched.failures ?? []));
-			Object.assign(stages, _parseStages(researched.stages));
+			let compiled: Record<string, unknown> | undefined;
+			for (let attempt = 0; attempt < 60; attempt += 1) {
+				const polled = await step.do(
+					`acceptance-compile-${attempt}`,
+					{ retries: { limit: 0, delay: "5 seconds", backoff: "exponential" }, timeout: "10 minutes" },
+					async () => runStage("compile", projectId, ""),
+				);
+				failures.push(...(polled.failures ?? []));
+				Object.assign(stages, _parseStages(polled.state));
+				if (polled.done) {
+					compiled = _parseStages(polled.state);
+					break;
+				}
+			}
+			if (!compiled) failures.push("the demand did not compile in time");
 
-			const judged = await step.do(
-				"acceptance-spec",
-				{ retries: { limit: 0, delay: "10 seconds", backoff: "exponential" }, timeout: "40 minutes" },
-				async () => runStage("spec", projectId),
+			const started = await step.do(
+				"acceptance-research-start",
+				{ retries: { limit: 0, delay: "5 seconds", backoff: "exponential" }, timeout: "10 minutes" },
+				async () => runStage("research-start", projectId, ""),
 			);
-			failures.push(...(judged.failures ?? []));
-			Object.assign(stages, _parseStages(judged.stages));
+			failures.push(...(started.failures ?? []));
+			const runId = String(_parseStages(started.state).run_id ?? "");
 
-			const decided = await step.do(
-				"acceptance-decide",
-				{ retries: { limit: 0, delay: "10 seconds", backoff: "exponential" }, timeout: "40 minutes" },
-				async () => runStage("decide", projectId),
+			let researched: Record<string, unknown> | undefined;
+			for (let attempt = 0; attempt < 120; attempt += 1) {
+				const polled = await step.do(
+					`acceptance-research-${attempt}`,
+					{ retries: { limit: 0, delay: "5 seconds", backoff: "exponential" }, timeout: "10 minutes" },
+					async () => runStage("research", projectId, runId),
+				);
+				failures.push(...(polled.failures ?? []));
+				Object.assign(stages, _parseStages(polled.state));
+				if (polled.done) {
+					researched = _parseStages(polled.state);
+					break;
+				}
+			}
+			if (!researched) failures.push("the research run did not finish in time");
+
+			await step.do(
+				"acceptance-spec-start",
+				{ retries: { limit: 0, delay: "5 seconds", backoff: "exponential" }, timeout: "10 minutes" },
+				async () => runStage("spec-start", projectId, ""),
 			);
-			failures.push(...(decided.failures ?? []));
-			Object.assign(stages, _parseStages(decided.stages));
+			let judged: Record<string, unknown> | undefined;
+			for (let attempt = 0; attempt < 120; attempt += 1) {
+				const polled = await step.do(
+					`acceptance-spec-${attempt}`,
+					{ retries: { limit: 0, delay: "5 seconds", backoff: "exponential" }, timeout: "10 minutes" },
+					async () => runStage("spec", projectId, ""),
+				);
+				failures.push(...(polled.failures ?? []));
+				Object.assign(stages, _parseStages(polled.state));
+				if (polled.done) {
+					judged = _parseStages(polled.state);
+					break;
+				}
+			}
+			if (!judged) failures.push("the technical check produced no assessment in time");
+
+			await step.do(
+				"acceptance-decide-start",
+				{ retries: { limit: 0, delay: "5 seconds", backoff: "exponential" }, timeout: "10 minutes" },
+				async () => runStage("decide-start", projectId, ""),
+			);
+			let decided: Record<string, unknown> | undefined;
+			for (let attempt = 0; attempt < 120; attempt += 1) {
+				const polled = await step.do(
+					`acceptance-decide-${attempt}`,
+					{ retries: { limit: 0, delay: "5 seconds", backoff: "exponential" }, timeout: "10 minutes" },
+					async () => runStage("decision", projectId, ""),
+				);
+				failures.push(...(polled.failures ?? []));
+				Object.assign(stages, _parseStages(polled.state));
+				if (polled.done) {
+					decided = _parseStages(polled.state);
+					break;
+				}
+			}
+			if (!decided) failures.push("the decision produced no result in time");
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			failures.push(message.slice(0, 400));

@@ -7,7 +7,6 @@ Object binding and authenticates back to the gateway with a shared token.
 
 from __future__ import annotations
 
-import asyncio
 import os
 import time
 from dataclasses import replace
@@ -651,36 +650,32 @@ def _acceptance_pptx() -> bytes:
 
 @app.post("/internal/acceptance")
 async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = Header(default=None)) -> dict[str, Any]:
-    """Run one stage of the end-to-end cloud acceptance.
+    """Run one short stage of the end-to-end cloud acceptance.
 
     The compile, the research, the technical check, and the decision are driven
-    through the public API, exactly as a client drives them. One request
-    covers one stage: a single connection cannot stay open for the whole
-    chain, and the stages have to be able to run in sequence.
+    through the public API, exactly as a client drives them.
+
+    Every request does one short thing and answers. The waiting happens in the
+    workflow, which asks again, because a container request that waits is a
+    request that can be disconnected.
     """
     _require_internal(payload.token or x_internal_token)
     _apply_runtime_config(payload.runtime_config)
-
-    import time
 
     import httpx
 
     base = payload.gateway_url.rstrip("/")
     headers = {"authorization": f"Bearer {payload.demo_token}"}
-    failures: list[str] = []
-    stages: dict[str, Any] = {}
+    state: dict[str, Any] = {}
 
-    async with httpx.AsyncClient(base_url=base, headers=headers, timeout=httpx.Timeout(300)) as client:
+    async with httpx.AsyncClient(base_url=base, headers=headers, timeout=httpx.Timeout(120)) as client:
         project_id = payload.project_id or ""
-        if payload.stage == "prepare":
+        stage = payload.stage
+
+        if stage == "prepare":
             created = await client.post("/api/projects", json={"title": "M3 cloud acceptance"})
             if created.status_code not in (200, 201):
-                return {
-                    "status": "FAIL",
-                    "failures": [f"the project could not be created: {created.status_code}"],
-                    "stages": stages,
-                    "project_id": "",
-                }
+                return {"status": "FAIL", "failures": [f"the project could not be created: {created.status_code}"], "state": {}}
             project_id = str(created.json()["project_id"])
             upload = await client.post(
                 f"/api/projects/{project_id}/upload-sessions",
@@ -691,84 +686,75 @@ async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = 
                 return {
                     "status": "FAIL",
                     "failures": [f"the demand could not be uploaded: {upload.status_code}"],
-                    "stages": stages,
-                    "project_id": project_id,
+                    "state": {"project_id": project_id},
                 }
             await client.post(f"/api/projects/{project_id}/requirement-compile")
-            deadline = time.monotonic() + payload.compile_timeout_seconds
-            requirements: list[dict[str, Any]] = []
-            while time.monotonic() < deadline:
-                read = await client.get(f"/api/projects/{project_id}/requirements")
-                if read.status_code == 200:
-                    requirements = (read.json().get("compilation") or {}).get("requirements") or []
-                    if requirements:
-                        break
-                await asyncio.sleep(10)
-            constraints = [constraint for item in requirements for constraint in item.get("constraints", [])]
-            stages["m1"] = {"requirements": len(requirements), "constraints": len(constraints)}
-            if not requirements:
-                failures.append("the demand did not compile")
-            elif not constraints:
-                failures.append("the compiled demand carries no constraint to check")
-            return {
-                "status": "FAIL" if failures else "OK",
-                "failures": failures,
-                "stages": stages,
-                "project_id": project_id,
-            }
+            return {"status": "OK", "failures": [], "state": {"project_id": project_id}}
 
         if not project_id:
-            return {"status": "FAIL", "failures": ["no project to work on"], "stages": stages, "project_id": ""}
+            return {"status": "FAIL", "failures": ["no project to work on"], "state": {}}
 
-        if payload.stage == "research":
+        if stage == "compile":
+            read = await client.get(f"/api/projects/{project_id}/requirements")
+            requirements: list[dict[str, Any]] = []
+            if read.status_code == 200:
+                requirements = (read.json().get("compilation") or {}).get("requirements") or []
+            if not requirements:
+                return {"status": "OK", "failures": [], "state": {"project_id": project_id}, "done": False}
+            constraints = [constraint for item in requirements for constraint in item.get("constraints", [])]
+            failures = []
+            if not constraints:
+                failures.append("the compiled demand carries no constraint to check")
+            state = {
+                "project_id": project_id,
+                "requirements": len(requirements),
+                "constraints": len(constraints),
+            }
+            return {"status": "FAIL" if failures else "OK", "failures": failures, "state": state, "done": True}
+
+        if stage == "research-start":
             run = await client.post(f"/api/projects/{project_id}/runs", json={"mode": "SOURCING"})
             if run.status_code not in (200, 201, 202):
                 return {
                     "status": "FAIL",
                     "failures": [f"the research run could not be started: {run.status_code}"],
-                    "stages": stages,
-                    "project_id": project_id,
+                    "state": {"project_id": project_id},
                 }
             run_id = str(run.json()["run_id"])
-            deadline = time.monotonic() + payload.research_timeout_seconds
-            research_status = "UNKNOWN"
-            while time.monotonic() < deadline:
-                read = await client.get(f"/api/runs/{run_id}")
-                if read.status_code == 200:
-                    research_status = str(read.json().get("status"))
-                    if research_status in {"COMPLETED", "PARTIAL", "FAILED"}:
-                        break
-                await asyncio.sleep(15)
+            return {"status": "OK", "failures": [], "state": {"project_id": project_id, "run_id": run_id}}
+
+        if stage == "research":
+            run_id = payload.run_id or ""
+            read = await client.get(f"/api/runs/{run_id}")
+            research_status = str(read.json().get("status")) if read.status_code == 200 else "UNKNOWN"
+            if research_status not in {"COMPLETED", "PARTIAL", "FAILED"}:
+                return {"status": "OK", "failures": [], "state": {"project_id": project_id, "run_id": run_id}, "done": False}
             candidates = (await client.get(f"/api/projects/{project_id}/candidates")).json().get("candidates") or []
-            stages["m2"] = {"run_id": run_id, "status": research_status, "candidates": len(candidates)}
+            failures = []
             if research_status == "FAILED":
                 failures.append(f"the research run failed: {run_id}")
-            return {
-                "status": "FAIL" if failures else "OK",
-                "failures": failures,
-                "stages": stages,
+            state = {
                 "project_id": project_id,
                 "run_id": run_id,
+                "research_status": research_status,
+                "candidates": len(candidates),
             }
+            return {"status": "FAIL" if failures else "OK", "failures": failures, "state": state, "done": True}
 
-        if payload.stage == "spec":
+        if stage == "spec-start":
             await client.post(f"/api/projects/{project_id}/spec-assessments", json={})
-            deadline = time.monotonic() + payload.assessment_timeout_seconds
-            assessments: list[dict[str, Any]] = []
-            while time.monotonic() < deadline:
-                read = await client.get(f"/api/projects/{project_id}/spec-assessments")
-                if read.status_code == 200:
-                    assessments = read.json().get("assessments") or []
-                    if assessments:
-                        break
-                await asyncio.sleep(15)
+            return {"status": "OK", "failures": [], "state": {"project_id": project_id}}
+
+        if stage == "spec":
+            read = await client.get(f"/api/projects/{project_id}/spec-assessments")
+            assessments = read.json().get("assessments") or [] if read.status_code == 200 else []
+            if not assessments:
+                return {"status": "OK", "failures": [], "state": {"project_id": project_id}, "done": False}
             by_overall: dict[str, int] = {}
             for assessment in assessments:
                 key = str(assessment.get("hard_spec_overall"))
                 by_overall[key] = by_overall.get(key, 0) + 1
-            stages["m3a"] = {"assessments": len(assessments), "by_overall": by_overall}
-            if not assessments:
-                failures.append("the technical check produced no assessment")
+            failures = []
             for assessment in assessments:
                 overall = assessment.get("hard_spec_overall")
                 if overall not in {"PASS", "FAIL", "UNKNOWN"}:
@@ -781,24 +767,22 @@ async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = 
                             failures.append("a verdict without the calculation")
                     if check.get("status") == "FAIL" and overall != "FAIL":
                         failures.append("a failing check is not reflected in the overall verdict")
-            return {
-                "status": "FAIL" if failures else "OK",
-                "failures": failures,
-                "stages": stages,
+            state = {
                 "project_id": project_id,
+                "assessments": len(assessments),
+                "by_overall": by_overall,
             }
+            return {"status": "FAIL" if failures else "OK", "failures": failures, "state": state, "done": True}
+
+        if stage == "decide-start":
+            await client.post(f"/api/projects/{project_id}/decisions", json={})
+            return {"status": "OK", "failures": [], "state": {"project_id": project_id}}
 
         # The decision stage.
-        await client.post(f"/api/projects/{project_id}/decisions", json={})
-        deadline = time.monotonic() + payload.assessment_timeout_seconds
-        decisions: list[dict[str, Any]] = []
-        while time.monotonic() < deadline:
-            read = await client.get(f"/api/projects/{project_id}/decisions")
-            if read.status_code == 200:
-                decisions = read.json().get("decisions") or []
-                if decisions:
-                    break
-            await asyncio.sleep(15)
+        read = await client.get(f"/api/projects/{project_id}/decisions")
+        decisions = read.json().get("decisions") or [] if read.status_code == 200 else []
+        if not decisions:
+            return {"status": "OK", "failures": [], "state": {"project_id": project_id}, "done": False}
         assessments = (await client.get(f"/api/projects/{project_id}/spec-assessments")).json().get("assessments") or []
         assessment_by_key = {
             (item.get("requirement_id"), item.get("product_candidate_id")): item
@@ -808,6 +792,7 @@ async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = 
             evidence_id for item in assessments for evidence_id in item.get("evidence_ids") or []
         }
         accepted = rejected = 0
+        failures = []
         for decision in decisions:
             key = (decision.get("requirement_id"), decision.get("product_candidate_id"))
             assessment = assessment_by_key.get(key)
@@ -827,15 +812,13 @@ async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = 
                 rejected += 1
                 if not decision.get("violations"):
                     failures.append("a rejected decision does not name a violation")
-        stages["m3c"] = {"decisions": len(decisions), "accepted": accepted, "rejected": rejected}
-        if not decisions:
-            failures.append("the decision produced no result")
-        return {
-            "status": "FAIL" if failures else "OK",
-            "failures": failures,
-            "stages": stages,
+        state = {
             "project_id": project_id,
+            "decisions": len(decisions),
+            "accepted": accepted,
+            "rejected": rejected,
         }
+        return {"status": "FAIL" if failures else "OK", "failures": failures, "state": state, "done": True}
 
 
 @app.post("/internal/execute")
