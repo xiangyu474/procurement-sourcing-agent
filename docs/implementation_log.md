@@ -385,3 +385,29 @@ Two gaps were found by the check and closed:
 - The model price cannot be verified from here. The gateway lists eighteen models with their context windows but no price fields, and its billing, account, and balance endpoints answer 404. The token usage is measured instead: one technical check over the real M2 output costs 8 model calls, 18154 prompt tokens, 86933 completion tokens, and 563 seconds.
 
 That last number carries a lesson: the completion tokens are 4.8 times the prompt tokens, because the model is a reasoning model and most of the output is thinking. A budget that only counts the prompt will be wrong.
+
+### The cloud acceptance, run from the side that can reach the gateway
+
+The local network blocks `*.workers.dev`, so the acceptance now also runs inside the container, on Cloudflare's side, where the gateway is reachable. A workflow starts it and the report comes back in the workflow instance output.
+
+Making that work took four fixes, each of them a fact worth keeping:
+
+- **A running container keeps the image it was started with.** After a deploy the warm instance still served the previous image, so the new container endpoint answered 404. The instance name is now a configuration value, and bringing a new image into service means bumping it.
+- **The acceptance waits in the workflow, not in the container.** One container request that carried the compile, the research, the technical check, and the decision was disconnected after two and a half minutes. Every request now does one short thing, and the workflow asks again until the stage reports that it is done.
+- **The acceptance needs its own container instance.** It drives the public API, and the public API starts workflows that call a container, so with one instance the acceptance waited for a container that was waiting for it.
+- **The compiler answers with several shapes.** The model writes the line item in a list, beside the fields of the constraint, or under a single top-level key. Reading only one of them emptied the compilation and the acceptance reported "no recognizable demand". All three shapes are read now.
+
+**The result.** The acceptance ran on Cloudflare's side and passed:
+
+| Stage | Result |
+|---|---|
+| M1 | 1 requirement, 1 constraint, compiled |
+| M2 | the research run finished COMPLETED, 21 candidates |
+| M3-A | 21 assessments: 5 PASS, 16 UNKNOWN |
+| M3-C | 21 decisions: 5 shortlist, 16 investigate, all 21 accepted, none rejected |
+
+The five passes are real verdicts, each with its calculation and its evidence: `CAM-CIC-5000-20-G`, `TRI050S-MC`, and `TRI050S-QC` meet the requirement of at least 5 MP with the trace `5 MP GTE 5 MP` and a cited evidence ID. The sixteen unknowns name the claim they refused and why.
+
+The decisions follow the verdicts: the five that passed are shortlist with a verified pass, the sixteen that could not be judged are investigate with an unverified verdict. No decision invented an evidence identifier, no unknown was written down as a pass, and no rejected verdict was accepted.
+
+The script `scripts/run_cloud_acceptance.py` starts the workflow through the Cloudflare API and prints the report. The other acceptance scripts, which drive the same gateway over HTTP, remain the better choice when the network allows it.
