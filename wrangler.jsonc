@@ -49,6 +49,11 @@
 			"name": "procurement-sourcing-decision",
 			"binding": "DECISION_WORKFLOW",
 			"class_name": "SourcingDecisionWorkflow"
+		},
+		{
+			"name": "procurement-sourcing-acceptance",
+			"binding": "ACCEPTANCE_WORKFLOW",
+			"class_name": "SourcingAcceptanceWorkflow"
 		}
 	],
 	"d1_databases": [

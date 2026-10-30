@@ -19,6 +19,7 @@ export interface Env {
 	COMPILE_WORKFLOW: Workflow<CompileRequest>;
 	SPEC_WORKFLOW: Workflow<SpecRequest>;
 	DECISION_WORKFLOW: Workflow<DecisionRequest>;
+	ACCEPTANCE_WORKFLOW: Workflow<AcceptanceRequest>;
 }
 
 // The container receives the internal token from the Worker at request time so
@@ -745,6 +746,76 @@ interface SpecRequest {
 interface DecisionRequest {
 	projectId: string;
 	requirementIds: string[];
+}
+
+interface AcceptanceRequest {
+	title: string;
+}
+
+// The end-to-end acceptance runs on the side of the network that can reach the
+// gateway. It is started through the Cloudflare API, so a client whose own
+// network cannot resolve the gateway can still run it.
+export class SourcingAcceptanceWorkflow extends WorkflowEntrypoint<Env, AcceptanceRequest> {
+	async run(event: WorkflowEvent<AcceptanceRequest>, step: WorkflowStep) {
+		try {
+			const result = await step.do(
+				"run-acceptance",
+				{ retries: { limit: 0, delay: "10 seconds", backoff: "exponential" }, timeout: "60 minutes" },
+				async () => {
+					const container = getContainer(this.env.SOURCING_CONTAINER, "m1-intake");
+					const response = await container.fetch(
+						new Request("http://container/internal/acceptance", {
+							method: "POST",
+							headers: { "content-type": "application/json" },
+							body: JSON.stringify({
+								gateway_url: this.env.CONTAINER_GATEWAY_URL,
+								token: this.env.INTERNAL_GATEWAY_TOKEN,
+								demo_token: this.env.DEMO_ACCESS_TOKEN,
+								runtime_config: {
+									GENESIS_BASE_URL: this.env.GENESIS_BASE_URL,
+									GENESIS_ACCESS_TOKEN: this.env.GENESIS_ACCESS_TOKEN,
+									GENESIS_MODEL_ID: this.env.GENESIS_MODEL_ID,
+									TAVILY_API_KEY: this.env.TAVILY_API_KEY,
+									...(this.env.LANGSMITH_API_KEY ? { LANGSMITH_API_KEY: this.env.LANGSMITH_API_KEY } : {}),
+									...(this.env.LANGSMITH_TRACING ? { LANGSMITH_TRACING: this.env.LANGSMITH_TRACING } : {}),
+									...(this.env.LANGSMITH_PROJECT ? { LANGSMITH_PROJECT: this.env.LANGSMITH_PROJECT } : {}),
+								},
+							}),
+						}),
+					);
+					if (!response.ok) {
+						const body = await response.text().catch(() => "");
+						throw new Error(`the acceptance failed with status ${response.status}: ${body.slice(0, 400)}`);
+					}
+					const payload = (await response.json()) as {
+						status?: string;
+						failures?: string[];
+						stages?: Record<string, unknown>;
+					};
+					return {
+						status: payload.status ?? "FAIL",
+						failures: payload.failures ?? [],
+						// The step output has to be serializable, so the
+						// stage details travel as one JSON string.
+						stages: JSON.stringify(payload.stages ?? {}),
+					};
+				},
+			);
+			const outcome = result as unknown as {
+				status?: string;
+				failures?: string[];
+				stages?: string;
+			};
+			return {
+				status: outcome.status ?? "FAIL",
+				failures: outcome.failures ?? [],
+				stages: outcome.stages ?? "{}",
+			};
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return { status: "FAILED", failures: [message.slice(0, 400)], stages: {} };
+		}
+	}
 }
 
 export class SourcingDecisionWorkflow extends WorkflowEntrypoint<Env, DecisionRequest> {

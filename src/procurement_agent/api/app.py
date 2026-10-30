@@ -7,6 +7,7 @@ Object binding and authenticates back to the gateway with a shared token.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from dataclasses import replace
@@ -123,6 +124,23 @@ class DecisionRequest(BaseModel):
     token: str
     runtime_config: dict[str, str] = Field(default_factory=dict)
     requirement_ids: list[str] = Field(default_factory=list, max_length=50)
+
+
+class AcceptanceRequest(BaseModel):
+    """Internal request for the end-to-end cloud acceptance.
+
+    The acceptance runs inside the container, on the side of the network that
+    can reach the gateway. It drives the public API the way a client does, and
+    it checks what comes back.
+    """
+
+    gateway_url: str
+    token: str
+    demo_token: str
+    runtime_config: dict[str, str] = Field(default_factory=dict)
+    compile_timeout_seconds: int = 1200
+    research_timeout_seconds: int = 2400
+    assessment_timeout_seconds: int = 2400
 
 
 def _apply_runtime_config(runtime_config: dict[str, str]) -> None:
@@ -601,6 +619,182 @@ async def decide(payload: DecisionRequest, x_internal_token: str | None = Header
         "rejected": summary["rejected"],
         "by_recommendation": summary["by_recommendation"],
         "violations": summary["violations"],
+    }
+
+
+def _acceptance_pptx() -> bytes:
+    """Build the small presentation the acceptance uses."""
+    from io import BytesIO
+
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    textbox = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(6), Inches(1))
+    textbox.text_frame.text = "采购需求：5MP 工业网络摄像机，采购数量 10 套，预计采购单价 100 元/套。"
+    table = slide.shapes.add_table(2, 3, Inches(1), Inches(2), Inches(6), Inches(2)).table
+    table.cell(0, 0).text = "产品名称"
+    table.cell(0, 1).text = "采购数量（套）"
+    table.cell(0, 2).text = "预计采购单价（元/套）"
+    table.cell(1, 0).text = "5MP 工业网络摄像机"
+    table.cell(1, 1).text = "10"
+    table.cell(1, 2).text = "100"
+    buffer = BytesIO()
+    presentation.save(buffer)
+    return buffer.getvalue()
+
+
+@app.post("/internal/acceptance")
+async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = Header(default=None)) -> dict[str, Any]:
+    """Run the whole chain on the deployed gateway and check the result.
+
+    The compile, the research, the technical check, and the decision are driven
+    through the public API, exactly as a client drives them. The checks are the
+    ones the acceptance scripts make.
+    """
+    _require_internal(payload.token or x_internal_token)
+    _apply_runtime_config(payload.runtime_config)
+
+    import time
+
+    import httpx
+
+    base = payload.gateway_url.rstrip("/")
+    headers = {"authorization": f"Bearer {payload.demo_token}"}
+    stages: dict[str, Any] = {}
+    failures: list[str] = []
+
+    async with httpx.AsyncClient(base_url=base, headers=headers, timeout=httpx.Timeout(300)) as client:
+        created = await client.post("/api/projects", json={"title": "M3 cloud acceptance"})
+        if created.status_code != 200:
+            return {"status": "FAIL", "failures": [f"the project could not be created: {created.status_code}"], "stages": stages}
+        project_id = str(created.json()["project_id"])
+        stages["project_id"] = project_id
+
+        upload = await client.post(
+            f"/api/projects/{project_id}/upload-sessions",
+            data={"purpose": "REQUIREMENT"},
+            files={"file": ("acceptance.pptx", _acceptance_pptx(), "application/vnd.openxmlformats-officedocument.presentationml.presentation")},
+        )
+        if upload.status_code not in (200, 201):
+            failures.append(f"the demand could not be uploaded: {upload.status_code}")
+            return {"status": "FAIL", "failures": failures, "stages": stages}
+        await client.post(f"/api/projects/{project_id}/requirement-compile")
+
+        deadline = time.monotonic() + payload.compile_timeout_seconds
+        requirements: list[dict[str, Any]] = []
+        while time.monotonic() < deadline:
+            read = await client.get(f"/api/projects/{project_id}/requirements")
+            if read.status_code == 200:
+                requirements = (read.json().get("compilation") or {}).get("requirements") or []
+                if requirements:
+                    break
+            await asyncio.sleep(10)
+        constraints = [constraint for item in requirements for constraint in item.get("constraints", [])]
+        stages["m1"] = {"requirements": len(requirements), "constraints": len(constraints)}
+        if not requirements:
+            failures.append("the demand did not compile")
+            return {"status": "FAIL", "failures": failures, "stages": stages}
+        if not constraints:
+            failures.append("the compiled demand carries no constraint to check")
+
+        run = await client.post(f"/api/projects/{project_id}/runs", json={"mode": "SOURCING"})
+        if run.status_code != 200:
+            failures.append(f"the research run could not be started: {run.status_code}")
+            return {"status": "FAIL", "failures": failures, "stages": stages}
+        run_id = str(run.json()["run_id"])
+        deadline = time.monotonic() + payload.research_timeout_seconds
+        research_status = "UNKNOWN"
+        while time.monotonic() < deadline:
+            read = await client.get(f"/api/runs/{run_id}")
+            if read.status_code == 200:
+                research_status = str(read.json().get("status"))
+                if research_status in {"COMPLETED", "PARTIAL", "FAILED"}:
+                    break
+            await asyncio.sleep(15)
+        candidates = (await client.get(f"/api/projects/{project_id}/candidates")).json().get("candidates") or []
+        stages["m2"] = {"run_id": run_id, "status": research_status, "candidates": len(candidates)}
+        if research_status == "FAILED":
+            failures.append(f"the research run failed: {run_id}")
+            return {"status": "FAIL", "failures": failures, "stages": stages}
+
+        await client.post(f"/api/projects/{project_id}/spec-assessments", json={})
+        deadline = time.monotonic() + payload.assessment_timeout_seconds
+        assessments: list[dict[str, Any]] = []
+        while time.monotonic() < deadline:
+            read = await client.get(f"/api/projects/{project_id}/spec-assessments")
+            if read.status_code == 200:
+                assessments = read.json().get("assessments") or []
+                if assessments:
+                    break
+            await asyncio.sleep(15)
+        by_overall: dict[str, int] = {}
+        for assessment in assessments:
+            key = str(assessment.get("hard_spec_overall"))
+            by_overall[key] = by_overall.get(key, 0) + 1
+        stages["m3a"] = {"assessments": len(assessments), "by_overall": by_overall}
+        if not assessments:
+            failures.append("the technical check produced no assessment")
+            return {"status": "FAIL", "failures": failures, "stages": stages}
+        for assessment in assessments:
+            overall = assessment.get("hard_spec_overall")
+            if overall not in {"PASS", "FAIL", "UNKNOWN"}:
+                failures.append(f"the overall verdict is not one of the three values: {overall}")
+            for check in (assessment.get("assessment") or {}).get("checks") or []:
+                if check.get("status") in {"PASS", "FAIL"}:
+                    if check.get("reason_code") != "VERIFIED_COMPARISON":
+                        failures.append(f"a verdict without a verified comparison: {check.get('reason_code')}")
+                    if not check.get("operation"):
+                        failures.append("a verdict without the calculation")
+                if check.get("status") == "FAIL" and overall != "FAIL":
+                    failures.append("a failing check is not reflected in the overall verdict")
+
+        await client.post(f"/api/projects/{project_id}/decisions", json={})
+        deadline = time.monotonic() + payload.assessment_timeout_seconds
+        decisions: list[dict[str, Any]] = []
+        while time.monotonic() < deadline:
+            read = await client.get(f"/api/projects/{project_id}/decisions")
+            if read.status_code == 200:
+                decisions = read.json().get("decisions") or []
+                if decisions:
+                    break
+            await asyncio.sleep(15)
+        assessment_by_key = {
+            (item.get("requirement_id"), item.get("product_candidate_id")): item
+            for item in assessments
+        }
+        known_evidence = {
+            evidence_id for item in assessments for evidence_id in item.get("evidence_ids") or []
+        }
+        accepted = rejected = 0
+        for decision in decisions:
+            key = (decision.get("requirement_id"), decision.get("product_candidate_id"))
+            assessment = assessment_by_key.get(key)
+            if assessment is None:
+                failures.append(f"a decision has no assessment: {key}")
+                continue
+            if decision.get("accepted"):
+                accepted += 1
+                if assessment.get("hard_spec_overall") == "FAIL" and decision.get("recommendation") == "SHORTLIST":
+                    failures.append("a model with a failed hard requirement reached the short list")
+                if assessment.get("hard_spec_overall") == "UNKNOWN" and decision.get("technical_verdict") == "VERIFIED_PASS":
+                    failures.append("an unknown was written down as a verified pass")
+                for evidence_id in decision.get("evidence_ids") or []:
+                    if evidence_id not in known_evidence:
+                        failures.append(f"an accepted decision cites the unknown evidence {evidence_id}")
+            else:
+                rejected += 1
+                if not decision.get("violations"):
+                    failures.append("a rejected decision does not name a violation")
+        stages["m3c"] = {"decisions": len(decisions), "accepted": accepted, "rejected": rejected}
+        if not decisions:
+            failures.append("the decision produced no result")
+
+    return {
+        "status": "FAIL" if failures else "PASS",
+        "failures": failures,
+        "stages": stages,
     }
 
 
