@@ -326,3 +326,19 @@ The cloud acceptance could not be run from this machine. The enterprise DNS now 
 | `procurement-sourcing-gateway.xiangyu474.workers.dev` | 128.242.240.91, a sinkhole |
 
 The same machine reached the Worker earlier in the same session, so the block was enabled during the session rather than being the normal state. The Cloudflare side is fine: the build for `af318a4` deployed successfully, and the Cloudflare API answers normally. A watcher runs the three cloud acceptance scripts as soon as the network answers again.
+
+### M3-B: price comparability, history analytics, and the equivalence fusion
+
+**Status: done. 33 new tests; the suite is 205 passed.**
+
+`src/procurement_agent/domain/pricing.py` holds the price contracts. `PriceObservation` is one number with the context needed to compare it: what kind of number it is, its currency, its unit, its tax basis, and what it belongs to.
+
+`src/procurement_agent/services/price_analysis.py` decides whether two prices can be compared. The pairs of kinds that answer a buyer's question are explicit. Two prices of one kind compare with each other, so a lowest price exists. A formal quotation compares with the budget, which is the saving, and with the historical transaction, which is the offer against the past. A public listing compares with nothing but another public listing: it is a price somebody posted, not an offer, so it never produces a saving.
+
+`src/procurement_agent/services/history_analytics.py` computes the distribution of what was bought before, from the real fields of the imported rows: the count, the minimum, the maximum, the median, the mean, the two quartiles, and the purchase volume. A row without a unit price is counted and reported but does not enter the distribution. The rows of the simulated suppliers stay in their own group and are never named after a public company. The unit of the imported price column is not part of a row, so the caller states it; without it the history cannot be compared with a budget that states one.
+
+`src/procurement_agent/services/product_equivalence.py` fuses the history and the public leads. The key is a confirmed product equivalence, never the supplier name. An unconfirmed relation is kept out of the index, so two records that share a supplier name but no confirmed equivalence are never joined.
+
+`src/procurement_agent/services/price_context.py` brings the three together for one requirement. A requirement without a history still gets a context; the history part says there is none.
+
+Two rules came out of writing the tests. A set of prices that mixes kinds has no meaningful cheapest member, so the whole set is reported as not comparable and no lowest price is named. And the price series is analysed per kind, so a project with both history and public listings still gets the answer each of them supports.

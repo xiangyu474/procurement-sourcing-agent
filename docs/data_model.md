@@ -32,6 +32,7 @@ grep -h "CREATE INDEX IF NOT EXISTS\|CREATE UNIQUE INDEX IF NOT EXISTS" \
 | `domain/requirements.py` 领域类型 | 20，其中 9 个枚举，11 个模型 |
 | `domain/sourcing.py` 领域类型 | 30，其中 10 个枚举，20 个模型 |
 | `domain/spec_alignment.py` 领域类型 | 12，其中 4 个枚举，8 个模型 |
+| `domain/pricing.py` 领域类型 | 7，其中 3 个枚举，4 个模型 |
 | `domain/units.py` 领域类型 | 2 |
 | R2 key 前缀 | 4 |
 
@@ -440,6 +441,31 @@ M3-A 把需求侧和产品侧接到同一套值类型上，中间只隔一层对
 - **为什么需要**：结论要能被复核，也要在需求修订后仍然留着旧版本。
 - **怎么用**：唯一键是「项目 + 需求 + 候选 + 需求修订号」。同一修订号重算覆盖旧行；需求修订后新增行，旧行不动。
 - **预期行为**：`hard_spec_overall` 只允许 `PASS`/`FAIL`/`UNKNOWN`。`assessment_json` 里是逐条判定、计算过程和原因码。`evidence_ids_json` 是这次判定引用过的证据。
+
+## 价格领域模型
+
+M3-B 把「一个价格数字」和「两个价格能不能比」拆开。
+
+### `PriceObservation`
+
+- **设计理念**：一个价格数字，连同比价所需的口径。
+- **为什么需要**：同一个数字可能是预算、历史成交价、网页挂牌价或正式报价。只给数字不给口径，比价就是胡说。
+- **怎么用**：`price_basis` 说明它是哪一类；`currency`、`unit`、`tax_basis` 说明它的尺度；`requirement_id`、`sku`、`product_equivalence_key` 说明它对应什么。
+- **预期行为**：`value` 必须是十进制字符串。`is_synthetic_supplier` 标记这一行是否来自模拟历史。
+
+### `PriceComparison` 与 `PriceFinding`
+
+- **设计理念**：比价的结果，和「这个需求的价格分析」。
+- **为什么需要**：不可比时必须说清差在哪，并且不给最低价、不给节支率。
+- **怎么用**：`PriceComparison` 是两个价格的比较；`PriceFinding` 是一条需求的价格结论，含最低价、节支、被排除的观察值和理由。
+- **预期行为**：只有 `VERIFIED` 级的比较才会给出差额和百分比。`PriceFinding` 的 `lowest_value` 只在价格同口径时出现，`saving` 只在最低价和预算可比时出现。
+
+### `PriceStatistics` 与 `HistoryAnalysis`
+
+- **设计理念**：历史价分布，和一个需求的历史上下文。
+- **为什么需要**：买家要知道「以前买过多少、什么价」，但没有历史时也要能继续。
+- **怎么用**：`PriceStatistics` 是同一口径下的分布（最小、最大、中位、均值、四分位、采购量）；`HistoryAnalysis` 是这一条需求的历史。
+- **预期行为**：没有历史时 `available` 为 False。模拟供应商单独列出，永不并入公网企业。
 
 ### 单位换算表
 
