@@ -88,6 +88,7 @@ Container 镜像由 Cloudflare 托管构建环境构建（`Dockerfile`），本�
 - 一次严格计划映射的 live 本地研究返回 `PARTIAL / BUDGET_EXHAUSTED`：**2 个 Researcher tasks、4 次搜索、4 次抓取、3 个候选、6 条来源支持 Claims、15 次模型调用**；找到了精确型号 `IPC501-5M-B` 与 `T-BC-IP5M-Z-2` 的公开资料。候选仍是未核实 Longlist，像素口径、身份和现售情况都未作采购结论。其他 live 尝试也曾出现模型超时或没有精确型号；均据实标为 PARTIAL。
 - **系统的预期行为**（状态词表、关键行为、失败时的表现、验收方式、已知限制）整理在 `docs/expected_behavior.md`，供交付后的交接使用。
 - **M3 的技术核验已接通云端**：`POST /api/projects/{id}/spec-assessments` 触发，`GET /api/projects/{id}/spec-assessments` 读回。判定结果存进 D1 的 `spec_assessments` 表，唯一键是「项目 + 需求 + 候选 + 需求修订号」。
+- **M3 的决策与闸门已接通云端**：`POST /api/projects/{id}/decisions` 触发，`GET /api/projects/{id}/decisions` 读回。决策存进 D1 的 `sourcing_decisions` 表，**被闸门拒绝的决策也留着**，连同被拒的原因。
 - **M3 已启动**：实施计划见 `docs/m3_plan.md`，DSL 速查见 `docs/requirement_dsl.md`。M3-A1 已完成：需求与产品共用的对齐/评估契约、单位换算白名单，以及一个纯 Python 的约束计算器（不联网、不调模型），能对每条约束给出 PASS/FAIL/UNKNOWN、原因码和计算过程。
 - 最新本地验证：`pytest` **124 passed**，`npx tsc --noEmit`、Python `compileall` 和 Ruff 检查均通过。回归测试覆盖复用决策不猜关联、越界抓取的安全拒绝、多个工具调用的合并、JSON 字符串形状的读回、单任务预算上限、页面读不出来时的可恢复处理，以及研究器散文回答后的强制结构化补问。
 
