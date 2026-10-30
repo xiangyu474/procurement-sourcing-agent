@@ -851,6 +851,7 @@ export class SourcingAcceptanceWorkflow extends WorkflowEntrypoint<Env, Acceptan
 					compiled = _parseStages(polled.state);
 					break;
 				}
+				await step.sleep(`acceptance-compile-wait-${attempt}`, "20 seconds");
 			}
 			if (!compiled) failures.push("the demand did not compile in time");
 
@@ -875,6 +876,7 @@ export class SourcingAcceptanceWorkflow extends WorkflowEntrypoint<Env, Acceptan
 					researched = _parseStages(polled.state);
 					break;
 				}
+				await step.sleep(`acceptance-research-wait-${attempt}`, "30 seconds");
 			}
 			if (!researched) failures.push("the research run did not finish in time");
 
@@ -896,6 +898,7 @@ export class SourcingAcceptanceWorkflow extends WorkflowEntrypoint<Env, Acceptan
 					judged = _parseStages(polled.state);
 					break;
 				}
+				await step.sleep(`acceptance-spec-wait-${attempt}`, "30 seconds");
 			}
 			if (!judged) failures.push("the technical check produced no assessment in time");
 
@@ -917,15 +920,17 @@ export class SourcingAcceptanceWorkflow extends WorkflowEntrypoint<Env, Acceptan
 					decided = _parseStages(polled.state);
 					break;
 				}
+				await step.sleep(`acceptance-decide-wait-${attempt}`, "30 seconds");
 			}
 			if (!decided) failures.push("the decision produced no result in time");
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			failures.push(message.slice(0, 400));
 		}
+		const uniqueFailures = [...new Set(failures)];
 		return {
-			status: failures.length === 0 ? "PASS" : "FAIL",
-			failures,
+			status: uniqueFailures.length === 0 ? "PASS" : "FAIL",
+			failures: uniqueFailures,
 			// The step output has to be serializable, so the stage details
 			// travel as one JSON string.
 			stages: JSON.stringify(stages),
