@@ -1702,8 +1702,8 @@ export default {
 							demand_revision, hard_spec_overall, overall_reason_codes_json, hard_constraint_count,
 							calculator_version, dsl_schema_version, assessment_json, evidence_ids_json, evaluated_at, created_at,
 						 judgment_version, review_reason, input_digest, model_config_json, prompt_versions_json)
-						 
-						  DO UPDATE SET
+						 VALUES (?1, 'default', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+						 ON CONFLICT(workspace_id, project_id, requirement_id, product_candidate_id, demand_revision, judgment_version) DO UPDATE SET
 							product_model_ref = excluded.product_model_ref,
 							hard_spec_overall = excluded.hard_spec_overall,
 							overall_reason_codes_json = excluded.overall_reason_codes_json,
