@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
@@ -47,6 +48,7 @@ Rules:
 - attribute_key is a lowercase snake_case identifier that names the quantity the attribute measures, not the wording of the source. attribute_definition says what the attribute measures, in a few words.
 - Do not merge two claims that measure different quantities. Do not drop a qualifier such as a mode, a variant, or a condition.
 - Copy the claim_id exactly as it is given.
+- Type a claim when it states one of the target attributes, even when the wording differs. Leave out the claims that state something else, and answer with an empty list when none of them states a target attribute.
 - If a claim states something that cannot be given a comparable value, answer with value_type NUMBER and value null only if the source states a number; otherwise leave value_type out.
 """
 
@@ -54,6 +56,7 @@ _TRUE_WORDS = {"是", "有", "支持", "yes", "true", "√", "已"}
 _FALSE_WORDS = {"否", "无", "不支持", "no", "false", "×", "未"}
 
 TYPING_BATCH_SIZE = 15
+TYPING_CONCURRENCY = 3
 
 
 def _claim_payload(claims: Sequence[ClaimDraft]) -> list[dict[str, Any]]:
@@ -77,6 +80,7 @@ def _propose(
     model: BaseChatModel,
     batch_size: int = TYPING_BATCH_SIZE,
     config: dict[str, Any] | None = None,
+    concurrency: int = TYPING_CONCURRENCY,
 ) -> dict[str, Any]:
     """Ask the model to type the claims, a batch at a time.
 
@@ -86,16 +90,22 @@ def _propose(
     """
     typed: dict[str, Any] = {}
     step = max(1, batch_size)
-    for start in range(0, len(claims), step):
-        batch_claims = claims[start: start + step]
-        typed.update(
-            _propose_batch(
-                claims=batch_claims,
-                target_attributes=target_attributes,
-                model=model,
-                config=config,
+    batches = [claims[start: start + step] for start in range(0, len(claims), step)]
+    # The batches do not depend on each other, so they run together.
+    with ThreadPoolExecutor(max_workers=max(1, min(concurrency, len(batches)))) as pool:
+        results = list(
+            pool.map(
+                lambda batch: _propose_batch(
+                    claims=batch,
+                    target_attributes=target_attributes,
+                    model=model,
+                    config=config,
+                ),
+                batches,
             )
         )
+    for result in results:
+        typed.update(result)
     return typed
 
 
@@ -203,16 +213,24 @@ def type_claims(
     evidence: Mapping[str, str] | None = None,
     batch_size: int = TYPING_BATCH_SIZE,
     config: dict[str, Any] | None = None,
+    fast_model: BaseChatModel | None = None,
+    concurrency: int = TYPING_CONCURRENCY,
 ) -> list[ProductAttributeClaim]:
-    """Type the research claims and check every reading against its quotation."""
+    """Type the research claims and check every reading against its quotation.
+
+    The typing step reads a number out of a quotation and the code checks the
+    number against that quotation, so it does not need the model to think at
+    length. When a faster model is given, it is used for this step only.
+    """
     if not claims:
         return []
     proposals = _propose(
         claims=claims,
         target_attributes=target_attributes,
-        model=model,
+        model=fast_model or model,
         batch_size=batch_size,
         config=config,
+        concurrency=concurrency,
     )
     typed: list[ProductAttributeClaim] = []
     for claim in claims:

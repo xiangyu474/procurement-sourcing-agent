@@ -43,6 +43,7 @@ class Settings:
     model_timeout_seconds: int
     model_max_output_tokens: int
     model_context_max_tokens: int
+    model_reasoning_effort: str | None
 
     @property
     def has_llm(self) -> bool:
@@ -73,4 +74,5 @@ def load_settings() -> Settings:
         model_timeout_seconds=max(60, min(int(os.getenv("MODEL_TIMEOUT_SECONDS", "600")), 1800)),
         model_max_output_tokens=max(1024, min(int(os.getenv("MODEL_MAX_OUTPUT_TOKENS", "32000")), 128000)),
         model_context_max_tokens=max(1024, min(int(os.getenv("MODEL_CONTEXT_MAX_TOKENS", "120000")), 400000)),
+        model_reasoning_effort=_optional("MODEL_REASONING_EFFORT"),
     )

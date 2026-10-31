@@ -20,9 +20,17 @@ from procurement_agent.domain.spec_alignment import (
     SemanticAlignment,
     SpecAssessment,
 )
-from procurement_agent.services.spec_alignment import ALIGNMENT_BATCH_SIZE, align_requirement
+from procurement_agent.services.spec_alignment import (
+    ALIGNMENT_BATCH_SIZE,
+    ALIGNMENT_CONCURRENCY,
+    align_requirement,
+)
 from procurement_agent.services.spec_calculator import evaluate_requirement_product
-from procurement_agent.services.spec_typing import TYPING_BATCH_SIZE, type_claims
+from procurement_agent.services.spec_typing import (
+    TYPING_BATCH_SIZE,
+    TYPING_CONCURRENCY,
+    type_claims,
+)
 
 
 def _candidate_model_ref(candidate: ResearchCandidate, model_by_product: Mapping[str, str]) -> str | None:
@@ -70,6 +78,9 @@ def evaluate_candidates(
     typing_batch_size: int | None = None,
     alignment_batch_size: int | None = None,
     config: dict[str, Any] | None = None,
+    typing_model: BaseChatModel | None = None,
+    typing_concurrency: int | None = None,
+    alignment_concurrency: int | None = None,
 ) -> list[SpecAssessment]:
     """Evaluate every requirement against every candidate that belongs to it.
 
@@ -93,6 +104,8 @@ def evaluate_candidates(
             evidence=evidence,
             batch_size=typing_batch_size or TYPING_BATCH_SIZE,
             config=config,
+            fast_model=typing_model,
+            concurrency=typing_concurrency or TYPING_CONCURRENCY,
         )
 
     assessments: list[SpecAssessment] = []
@@ -109,6 +122,29 @@ def evaluate_candidates(
             key = product_ref or candidate.product_id or candidate.candidate_id
             groups.setdefault(key, []).append(candidate)
 
+        # Every model of the requirement is aligned in one go, one call per
+        # model, and the calls run together.
+        group_alignments: dict[tuple[str, str], SemanticAlignment] = {}
+        if model is not None:
+            group_alignments = align_requirement(
+                constraints=requirement.constraints,
+                candidates=[
+                    (
+                        group[0].candidate_id,
+                        _claims_for_candidate(
+                            group[0],
+                            typed_claims,
+                            _candidate_model_ref(group[0], product_models),
+                        ),
+                    )
+                    for group in groups.values()
+                ],
+                model=model,
+                batch_size=alignment_batch_size or ALIGNMENT_BATCH_SIZE,
+                config=config,
+                concurrency=alignment_concurrency or ALIGNMENT_CONCURRENCY,
+            )
+
         for group_key, group in groups.items():
             model_ref = _candidate_model_ref(group[0], product_models)
             typed = _claims_for_candidate(
@@ -117,19 +153,10 @@ def evaluate_candidates(
                 model_ref,
             )
             representative = group[0].candidate_id
-            alignments: dict[tuple[str, str], SemanticAlignment] = {}
-            if model is not None:
-                alignments = align_requirement(
-                    constraints=requirement.constraints,
-                    candidates=[(representative, typed)],
-                    model=model,
-                    batch_size=alignment_batch_size or ALIGNMENT_BATCH_SIZE,
-                    config=config,
-                )
             candidate_alignments = [
-                alignments[(constraint.constraint_id, representative)]
+                group_alignments[(constraint.constraint_id, representative)]
                 for constraint in requirement.constraints
-                if (constraint.constraint_id, representative) in alignments
+                if (constraint.constraint_id, representative) in group_alignments
             ]
             for candidate in group:
                 assessments.append(

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
@@ -56,7 +57,8 @@ APPROVED_ALIASES: dict[str, frozenset[str]] = {
     "max_input_power": frozenset({"max_input_power", "input_power"}),
 }
 
-ALIGNMENT_BATCH_SIZE = 12
+ALIGNMENT_BATCH_SIZE = 1
+ALIGNMENT_CONCURRENCY = 3
 
 SYSTEM_PROMPT = """You decide whether a requirement constraint and a product claim measure the same thing.
 
@@ -204,6 +206,15 @@ def canonical_alignment(
     )
 
 
+def _stage_config(config: dict[str, Any] | None, tag: str) -> dict[str, Any]:
+    """Mark a call with its stage, so the cost of each stage can be told apart."""
+    merged = dict(config or {})
+    tags = list(merged.get("tags") or [])
+    tags.append(tag)
+    merged["tags"] = tags
+    return merged
+
+
 def _payload(
     constraints: Sequence[RequirementConstraint],
     candidates: Sequence[tuple[str, Sequence[ProductAttributeClaim]]],
@@ -272,7 +283,7 @@ def propose_alignments(
                     else []
                 ),
                 AlignmentBatch,
-                config=config,
+                config=_stage_config(config, "m3-alignment"),
             )
         except Exception:
             # The provider failed. Without an alignment the constraints stay
@@ -302,6 +313,7 @@ def align_requirement(
     model: BaseChatModel,
     batch_size: int = ALIGNMENT_BATCH_SIZE,
     config: dict[str, Any] | None = None,
+    concurrency: int = ALIGNMENT_CONCURRENCY,
 ) -> dict[tuple[str, str], SemanticAlignment]:
     """Align every constraint with every candidate and check the proposals.
 
@@ -311,15 +323,23 @@ def align_requirement(
     """
     proposals: list[AlignmentProposal] = []
     step = max(1, batch_size)
-    for start in range(0, len(candidates), step):
-        proposals.extend(
-            propose_alignments(
-                constraints=constraints,
-                candidates=candidates[start: start + step],
-                model=model,
-                config=config,
+    batches = [candidates[start: start + step] for start in range(0, len(candidates), step)]
+    # The batches do not depend on each other, so they run together. One
+    # candidate per call keeps the judgement focused and the prompt small.
+    with ThreadPoolExecutor(max_workers=max(1, min(concurrency, len(batches)))) as pool:
+        results = list(
+            pool.map(
+                lambda batch: propose_alignments(
+                    constraints=constraints,
+                    candidates=batch,
+                    model=model,
+                    config=config,
+                ),
+                batches,
             )
         )
+    for result in results:
+        proposals.extend(result)
     by_constraint = {constraint.constraint_id: constraint for constraint in constraints}
     alignments: dict[tuple[str, str], SemanticAlignment] = {}
     for proposal in proposals:

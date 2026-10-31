@@ -18,18 +18,33 @@ from langchain_openai import ChatOpenAI
 from procurement_agent.infra import Settings, load_settings
 
 
-def build_chat_model(settings: Settings, *, timeout: int = 45) -> ChatOpenAI:
-    """Create the chat model client from environment-backed settings."""
+def build_chat_model(
+    settings: Settings,
+    *,
+    timeout: int = 45,
+    reasoning_effort: str | None = None,
+) -> ChatOpenAI:
+    """Create the chat model client from environment-backed settings.
+
+    The reasoning effort is a setting of the endpoint. Turning it off makes a
+    call about half as long and roughly halves the completion tokens, which
+    suits a step whose answer is checked by code. It is not suited to a step
+    that has to weigh two meanings of a measurement.
+    """
     if not settings.has_llm:
         raise RuntimeError(
             "chat model is not configured: set GENESIS_BASE_URL, GENESIS_ACCESS_TOKEN, and GENESIS_MODEL_ID"
         )
+    options: dict[str, Any] = {}
+    if reasoning_effort:
+        options["reasoning_effort"] = reasoning_effort
     return ChatOpenAI(
         base_url=settings.llm_base_url,
         api_key=settings.llm_api_key,
         model=settings.llm_model,
         timeout=timeout,
         max_retries=0,
+        **options,
     )
 
 

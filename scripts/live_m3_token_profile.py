@@ -36,9 +36,11 @@ class TokenCounter(BaseCallbackHandler):
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
         self._started: float | None = None
+        self._stage = "unknown"
 
     def on_llm_start(self, serialized: dict[str, Any], prompts: list[Any], **kwargs: Any) -> None:
         self._started = time.monotonic()
+        self._stage = (kwargs.get("tags") or ["unknown"])[-1]
 
     def on_llm_end(self, response: Any, **kwargs: Any) -> None:
         # A streamed answer reports its usage in the result, not on the message.
@@ -62,16 +64,25 @@ class TokenCounter(BaseCallbackHandler):
                 "prompt_tokens": int(prompt or 0),
                 "completion_tokens": int(completion or 0),
                 "usage_observed": isinstance(usage, dict),
+                "stage": getattr(self, "_stage", "unknown"),
                 "seconds": round(time.monotonic() - (self._started or time.monotonic()), 1),
             }
         )
 
     def summary(self) -> dict[str, Any]:
+        by_stage: dict[str, Any] = {}
+        for call in self.calls:
+            entry = by_stage.setdefault(call.get("stage", "unknown"), {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "seconds": 0.0})
+            entry["calls"] += 1
+            entry["prompt_tokens"] += call["prompt_tokens"]
+            entry["completion_tokens"] += call["completion_tokens"]
+            entry["seconds"] = round(entry["seconds"] + call["seconds"], 1)
         prompt = sum(call["prompt_tokens"] for call in self.calls)
         completion = sum(call["completion_tokens"] for call in self.calls)
         seconds = sum(call["seconds"] for call in self.calls)
         return {
             "calls": len(self.calls),
+            "by_stage": by_stage,
             "prompt_tokens": prompt,
             "completion_tokens": completion,
             "seconds": round(seconds, 1),

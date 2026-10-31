@@ -465,6 +465,14 @@ async def evaluate_spec(payload: SpecEvaluationRequest, x_internal_token: str | 
     try:
         # The typing and the alignment hold one model call open for minutes.
         model = build_chat_model(evaluation_settings, timeout=evaluation_settings.model_timeout_seconds)
+        # The typing step reads a number out of a quotation and the code checks
+        # it, so it does not need the model to think at length. The alignment
+        # step weighs two meanings of a measurement, so it keeps the reasoning.
+        typing_model = build_chat_model(
+            evaluation_settings,
+            timeout=evaluation_settings.model_timeout_seconds,
+            reasoning_effort=evaluation_settings.model_reasoning_effort,
+        )
         assessments = evaluate_candidates(
             requirements=requirements,
             candidates=candidates,
@@ -474,6 +482,7 @@ async def evaluate_spec(payload: SpecEvaluationRequest, x_internal_token: str | 
             unresolved_demand=unresolved,
             typing_batch_size=evaluation_settings.spec_typing_batch_size,
             alignment_batch_size=evaluation_settings.spec_alignment_candidates,
+            typing_model=typing_model,
         )
     except Exception as exc:
         error_type = type(exc).__name__
