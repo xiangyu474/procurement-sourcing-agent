@@ -78,7 +78,13 @@ REUSE/REFRESH, copy the exact Requirement ID that the lead targets; if that
 association is unclear, choose IGNORE rather than guessing. If no relevant entry
 exists, return an empty reuse_decisions list. For each standardized
 item, create a product-datasheet question aimed at finding the exact
-order/model code; a product family/series name is not an exact model. No search
+order/model code; a product family/series name is not an exact model. Ask for
+the measurement the requirement names, as the buyer would receive it. When a
+measurement has two common readings, such as sensor pixels and video output
+resolution, or input power and rated output power, ask for both in the same
+question so the later comparison can be made on the right one. A question that
+only asks for "the resolution" leaves it open whether the source means the
+sensor or the output. No search
 result count implies market size, capacity, or market share. Do not put
 project IDs, historical supplier names, quantities, planned prices, budgets, or
 order details in public search queries. Copy each requirement_id exactly from the input; never omit it. Example (IDs are illustrative): for requirement `req_demo`, a question must contain `requirement_id: "req_demo"`, a closed `channel` enum, `expected_evidence`, and a short rationale. Return only the requested structured plan fields. One-shot shape example (IDs are placeholders; copy actual input IDs):

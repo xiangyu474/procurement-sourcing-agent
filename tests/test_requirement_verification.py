@@ -278,3 +278,16 @@ def test_the_compiler_prompt_asks_for_a_specification_constraint():
 
     assert "Never leave a stated specification only inside the product name." in SYSTEM_PROMPT
     assert "output_resolution" in SYSTEM_PROMPT
+
+
+def test_the_compiler_prompt_picks_the_reading_a_buyer_means():
+    from procurement_agent.ingestion.compiler import SYSTEM_PROMPT
+
+    assert "take the delivered performance rather than an internal detail" in SYSTEM_PROMPT
+
+
+def test_the_research_asks_for_the_measurement_the_requirement_names():
+    from procurement_agent.services.sourcing_research import PLAN_SYSTEM_PROMPT
+
+    assert "Ask for" in PLAN_SYSTEM_PROMPT
+    assert "sensor pixels and video output" in PLAN_SYSTEM_PROMPT
