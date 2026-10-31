@@ -39,7 +39,8 @@ def _cloudflare_token() -> str:
     """
     # The CLI refreshes the token when it makes an authenticated call, so it
     # is asked for the account rather than for its version.
-    subprocess.run(["cf", "auth", "whoami"], capture_output=True, text=True)
+    cf = "cf.cmd" if os.name == "nt" else "cf"
+    subprocess.run([cf, "auth", "whoami"], capture_output=True, text=True)
     config = Path(os.path.expandvars(r"%APPDATA%")) / "xdg.config" / "cloudflare" / "config" / "default.json"
     if not config.exists():
         raise SystemExit("The Cloudflare CLI is not signed in; run `cf login` first.")
