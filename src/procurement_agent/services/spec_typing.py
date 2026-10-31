@@ -125,6 +125,15 @@ def _propose(
     return typed
 
 
+def _stage_config(config: dict[str, Any] | None, tag: str) -> dict[str, Any]:
+    """Mark a call with its stage, so the cost of each stage can be told apart."""
+    merged = dict(config or {})
+    tags = list(merged.get("tags") or [])
+    tags.append(tag)
+    merged["tags"] = tags
+    return merged
+
+
 def _propose_batch(
     *,
     claims: Sequence[ClaimDraft],
@@ -156,7 +165,7 @@ def _propose_batch(
                     else []
                 ),
                 TypedClaimBatch,
-                config=config,
+                config=_stage_config(config, "m3-typing"),
             )
         except Exception:
             # The provider failed. The claims of this batch stay untyped, so the
