@@ -19,7 +19,8 @@ describe("ProjectNav", () => {
 				onSelect={() => {}}
 			/>,
 		);
-		fireEvent.change(screen.getByLabelText("项目名称"), { target: { value: "新项目" } });
+		fireEvent.change(screen.getByLabelText("新项目名称"), { target: { value: "新项目" } });
+		expect(screen.getByText("用编号打开")).toBeTruthy();
 		fireEvent.click(screen.getByRole("button", { name: "创建" }));
 		expect(onCreate).toHaveBeenCalledWith("新项目");
 		const item = screen.getByRole("button", { name: new RegExp(longName) });

@@ -1,0 +1,33 @@
+:root {
+	--bg: #ffffff;
+	--rail: #f6f7f9;
+	--ink: #1c1e21;
+	--muted: #5c6570;
+	--line: #e2e5ea;
+	--line-strong: #d0d4db;
+	--select: #f3f6fa;
+	--accent: #3d6d99;
+	--pass: #0e6842;
+	--fail: #9d332c;
+	--unknown: #3a5270;
+	--short: #1d4e89;
+	--partial: #7a4f00;
+	--running: #1d4e89;
+	--focus: #1d4e89;
+	--space-1: 4px;
+	--space-2: 8px;
+	--space-3: 12px;
+	--space-4: 16px;
+	--space-5: 24px;
+	--space-6: 32px;
+	--radius: 2px;
+	--font: "WenQuanYi Micro Hei", "Droid Sans Fallback", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+	--text-meta: 12px;
+	--text-ui: 14px;
+	--text-body: 16px;
+	--text-title: 20px;
+	--leading-meta: 1.45;
+	--leading-ui: 1.6;
+	--leading-body: 1.7;
+	--leading-title: 1.4;
+}

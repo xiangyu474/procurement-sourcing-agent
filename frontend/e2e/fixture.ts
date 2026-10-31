@@ -5,7 +5,7 @@
  */
 import type { Page, Route } from "@playwright/test";
 
-type Mode = "partial" | "compile-failed";
+type Mode = "partial" | "completed" | "failed" | "compile-failed";
 
 const LONG_TITLE = "集团总部2026年度工业视觉与网络摄像机框架寻源（含多园区、多品牌、超长名称不应撑破项目栏）";
 const LONG_PPTX = "华北区域工业相机及配套镜头年度框架采购技术规格书终版修订-供应商名称也很长.pptx";
@@ -135,14 +135,15 @@ export function installFixture(page: Page, mode: Mode): Promise<unknown> {
 		}
 		if (request.method() === "GET" && path === `/api/runs/${state.runId}`) {
 			state.runReads += 1;
-			const status = state.runReads >= 2 ? "PARTIAL" : "RUNNING";
+			const terminal = mode === "completed" ? "COMPLETED" : mode === "failed" ? "FAILED" : "PARTIAL";
+			const status = state.runReads >= 2 ? terminal : "RUNNING";
 			await fulfill(200, {
 				id: state.runId,
 				project_id: state.id,
 				status,
-				current_stage: status === "PARTIAL" ? "PARTIAL" : "WEB_RESEARCH",
+				current_stage: status === "RUNNING" ? "WEB_RESEARCH" : status,
 				artifact_key: null,
-				last_error: null,
+				last_error: status === "FAILED" ? "MODEL_TIMEOUT" : null,
 				created_at: "2026-10-31T00:03:00.000Z",
 				updated_at: "2026-10-31T00:04:00.000Z",
 			});
@@ -163,7 +164,7 @@ export function installFixture(page: Page, mode: Mode): Promise<unknown> {
 		if (request.method() === "GET" && path === `/api/runs/${state.runId}/research`) {
 			await fulfill(200, {
 				metrics: {
-					stop_reason_code: "BUDGET_EXHAUSTED",
+					stop_reason_code: mode === "failed" ? "MODEL_TIMEOUT" : mode === "completed" ? null : "BUDGET_EXHAUSTED",
 					prompt_tokens: 12345,
 					completion_tokens: 67,
 					warnings: ["Supervisor token note"],

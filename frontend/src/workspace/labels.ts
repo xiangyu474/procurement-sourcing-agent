@@ -1,6 +1,6 @@
 import { latestSource } from "../api/adapter";
 import type { Project } from "../api/types";
-import type { HistoryNote } from "./useWorkspace";
+import type { HistoryNote } from "./types";
 
 export function textDemandLabel(project: Project): string | null {
 	const source = latestSource(project.sources, (item) => item.source_type === "USER_TEXT" && item.purpose === "REQUIREMENT");

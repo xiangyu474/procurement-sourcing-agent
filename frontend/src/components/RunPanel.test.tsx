@@ -28,8 +28,16 @@ describe("RunPanel", () => {
 		);
 		expect(screen.getByTestId("run-status").textContent).toContain("部分完成");
 		expect(screen.getByRole("alert").textContent).toContain("已保留目前得到的结果。本次公开查阅的次数已用完。");
-		expect(screen.getByText("运行 run-123")).toBeTruthy();
+		expect(screen.getByTestId("run-version").textContent).not.toContain("run-123");
+		expect(screen.getByTestId("run-id").textContent).toContain("run-123");
 		expect(document.body.textContent).not.toMatch(/Supervisor|Researcher|DSL|token/i);
+	});
+
+	it("names an in-progress public search without the run id", () => {
+		render(<RunPanel run={run({ status: "RUNNING", current_stage: "WEB_RESEARCH" })} events={[]} stopReason={null} />);
+		expect(screen.getByTestId("run-status").textContent).toContain("正在查阅公开资料");
+		expect(screen.getByTestId("run-version").textContent).toContain("开始");
+		expect(screen.getByTestId("run-version").textContent).not.toContain("run-123");
 	});
 
 	it("does not explain a finished run", () => {

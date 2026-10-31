@@ -1,6 +1,17 @@
 import { useState, type FormEvent } from "react";
 import type { LocalProject } from "../storage";
 
+function statusText(label: string): string {
+	return label === "未完成" ? "未能完成" : label;
+}
+
+function statusTone(label: string): string {
+	if (label === "进行中" || label === "整理需求") return "st-run";
+	if (label === "部分完成") return "st-partial";
+	if (label === "未完成" || label === "未能完成") return "st-fail";
+	return "";
+}
+
 export function ProjectNav(props: {
 	projects: LocalProject[];
 	activeProjectId: string | null;
@@ -30,7 +41,8 @@ export function ProjectNav(props: {
 		<nav className="nav" aria-label="项目">
 			<form className="create" onSubmit={create}>
 				<input
-					aria-label="项目名称"
+					aria-label="新项目名称"
+					placeholder="新项目名称"
 					value={title}
 					onChange={(event) => setTitle(event.target.value)}
 					disabled={props.busy}
@@ -40,30 +52,38 @@ export function ProjectNav(props: {
 				</button>
 			</form>
 			<div className="project-list">
-				{props.projects.map((project) => (
-					<button
-						key={project.projectId}
-						type="button"
-						className={project.projectId === props.activeProjectId ? "project active" : "project"}
-						aria-current={project.projectId === props.activeProjectId ? "true" : undefined}
-						onClick={() => props.onSelect(project.projectId)}
-					>
-						<span className="project-name">{project.title}</span>
-						<span className="project-status">{project.lastStatusLabel}</span>
-					</button>
-				))}
+				{props.projects.map((project) => {
+					const label = statusText(project.lastStatusLabel);
+					const tone = statusTone(project.lastStatusLabel);
+					return (
+						<button
+							key={project.projectId}
+							type="button"
+							className={project.projectId === props.activeProjectId ? "project current" : "project"}
+							aria-current={project.projectId === props.activeProjectId ? "true" : undefined}
+							onClick={() => props.onSelect(project.projectId)}
+						>
+							<span className="project-name">{project.title}</span>
+							<span className={tone ? `project-status ${tone}` : "project-status"}>{label}</span>
+						</button>
+					);
+				})}
 			</div>
-			<form className="open" onSubmit={open}>
-				<input
-					aria-label="项目编号"
-					value={openId}
-					onChange={(event) => setOpenId(event.target.value)}
-					disabled={props.busy}
-				/>
-				<button type="submit" disabled={props.busy || !openId.trim()}>
-					打开
-				</button>
-			</form>
+			<details className="by-id">
+				<summary>用编号打开</summary>
+				<form onSubmit={open}>
+					<input
+						aria-label="项目编号"
+						placeholder="项目编号"
+						value={openId}
+						onChange={(event) => setOpenId(event.target.value)}
+						disabled={props.busy}
+					/>
+					<button type="submit" disabled={props.busy || !openId.trim()}>
+						打开
+					</button>
+				</form>
+			</details>
 		</nav>
 	);
 }
