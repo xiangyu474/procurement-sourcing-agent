@@ -493,6 +493,13 @@ M3-B 把「一个价格数字」和「两个价格能不能比」拆开。
 - **怎么用**：`PriceStatistics` 是同一口径下的分布（最小、最大、中位、均值、四分位、采购量）；`HistoryAnalysis` 是这一条需求的历史。
 - **预期行为**：没有历史时 `available` 为 False。模拟供应商单独列出，永不并入公网企业。
 
+### `judgment_cache` 与 `judgment_cache_conflicts`
+
+- **设计理念**：把语义判定存下来，同一份内容只判一次。
+- **为什么需要**：语义判断在这个端点上不确定，同一份数据跑两次会给出不同答案。
+- **怎么用**：`input_digest` 是内容的哈希（声明 + 证据哈希 + 规则版本；约束 + 已类型化声明 + 规则版本；对齐 + 已类型化声明 + 计算器版本 + 聚合规则版本）。`payload_json` 是结果。`versions_json`、`model_config_json`、`evidence_hashes_json`、`source_run_id` 让每条判定可追溯。
+- **预期行为**：同一 digest **第一个写入的答案生效**（`ON CONFLICT DO NOTHING`），并发不会互相覆盖。同一 digest 出现**不同答案**时写进 `judgment_cache_conflicts`，不覆盖、不隐藏。判定版本在 `spec_assessments.judgment_version`，同内容重跑保持版本，显式复核产生新版本并保留旧判断与复核原因。
+
 ### 单位换算表
 
 - **设计理念**：一份白名单，决定哪些单位能换算到同一刻度。
@@ -536,7 +543,8 @@ M2 的证据层仍然是确定性的。网页快照的哈希、引文是否在�
 | 每一次工具调用 | `research_actions` |
 | 模型调用耗时、token、trace | `research_run_costs` |
 | 候选与证据 | `project_candidates`、`project_candidate_evidence` |
-| 技术核验结果 | `spec_assessments` |
+| 技术核验结果 | `spec_assessments`（带判定版本） |
+| 缓存的语义判定 | `judgment_cache`、`judgment_cache_conflicts` |
 | 采购决策与闸门结果 | `sourcing_decisions` |
 
 **R2 里存原文。** 上传的文件、网页快照正文、标准化历史数据。

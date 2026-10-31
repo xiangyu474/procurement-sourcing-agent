@@ -454,3 +454,38 @@ So the pass counts that were quoted earlier, one and then thirty-two, are not a 
 The conclusion for the milestone: the judgement is a semantic call, and it is not repeatable on this endpoint. A buyer who runs the same project twice must not get two different answers. The fix is not a faster model, it is a stored verdict: cache the assessment under the requirement revision, the claim set, the alignment setting and the calculator version, and read it back instead of judging again. The calculator specification asks for exactly that.
 
 One thing to know: a local run fills the LangSmith trace quota quickly, and the endpoint then answers 429 for the trace upload. The traces are only affected, not the work.
+
+### The versioned cache of the semantic judgements
+
+**Status: done. 27 new tests; the suite is 260 passed.**
+
+The semantic judgement is not reproducible on this endpoint. The same code, the same data, and the same requirement, run twice, gave a different answer for four of the eight models, and a temperature of zero did not fix it. The fix is to keep the judgement instead of making it again.
+
+Three layers are cached, and each one is found by the digest of the content that produced it:
+
+| Layer | The key carries |
+|---|---|
+| The typing of a claim | the claim, the hash of the snapshot it rests on, the typing rules, the model configuration |
+| The alignment of a constraint with a candidate | the constraint, the typed claims of the candidate, the alignment rules, the model configuration |
+| The assessment of a requirement against a candidate | the alignments, the typed claims, the calculator version, the aggregation rule version |
+
+The rule versions are digests of the prompt and the schema that produce them, so changing a prompt invalidates the layer it belongs to without anyone having to remember to bump a number. The keys are content digests, so the same content in another project is found, and a key never contains a project, a model name, or a piece of text.
+
+Two things are remembered that are easy to miss:
+
+- A claim that was typed and produced no comparable value is a result too. It is kept, so the claim is not asked again, and the outcome does not change between runs.
+- The first answer for a digest wins, so two runs that judge the same thing at the same time cannot overwrite each other. A later different answer for the same digest is kept as a conflict in `judgment_cache_conflicts`, instead of being hidden by the first answer.
+
+The measurement over the real M2 output, 39 candidates and 115 claims:
+
+| | First run | Second run |
+|---|---|---|
+| Wall clock | 360.0 s | **0.0 s** |
+| Model calls | 16 | **0** |
+| Prompt tokens | 29,050 | 0 |
+| Completion tokens | 168,014 | 0 |
+| Assessments | 39 | 39, the same verdicts |
+
+A judgement is versioned. A re-run of the same content keeps its version; an explicit review creates a new version with the reason for the review and leaves the old judgement in place. The decision snapshot is never changed by the cache.
+
+The frozen regression set holds the real inputs of the four models that flipped, with the verdicts read off the raw evidence by hand: `IPS05-R10-OIA4` and `NBN-80052-BA` pass, `TRI050S-MC` stays unknown because no claim states the output resolution, and `TRI055N` stays unknown because the source states the resolution as a pixel size, which is not a number the quotation check can confirm.
