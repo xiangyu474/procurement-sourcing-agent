@@ -23,6 +23,7 @@ def build_chat_model(
     *,
     timeout: int = 45,
     reasoning_effort: str | None = None,
+    temperature: float | None = None,
 ) -> ChatOpenAI:
     """Create the chat model client from environment-backed settings.
 
@@ -38,6 +39,9 @@ def build_chat_model(
     options: dict[str, Any] = {}
     if reasoning_effort:
         options["reasoning_effort"] = reasoning_effort
+    if temperature is not None:
+        # A temperature of zero makes the same input give the same answer.
+        options["temperature"] = temperature
     return ChatOpenAI(
         base_url=settings.llm_base_url,
         api_key=settings.llm_api_key,

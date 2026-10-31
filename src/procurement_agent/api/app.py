@@ -464,7 +464,11 @@ async def evaluate_spec(payload: SpecEvaluationRequest, x_internal_token: str | 
 
     try:
         # The typing and the alignment hold one model call open for minutes.
-        model = build_chat_model(evaluation_settings, timeout=evaluation_settings.model_timeout_seconds)
+        model = build_chat_model(
+            evaluation_settings,
+            timeout=evaluation_settings.model_timeout_seconds,
+            temperature=evaluation_settings.model_temperature,
+        )
         # The typing step reads a number out of a quotation and the code checks
         # it, so it does not need the model to think at length. The alignment
         # step weighs two meanings of a measurement, so it keeps the reasoning.
@@ -472,6 +476,7 @@ async def evaluate_spec(payload: SpecEvaluationRequest, x_internal_token: str | 
             evaluation_settings,
             timeout=evaluation_settings.model_timeout_seconds,
             reasoning_effort=evaluation_settings.model_reasoning_effort,
+            temperature=evaluation_settings.model_temperature,
         )
         assessments = evaluate_candidates(
             requirements=requirements,
@@ -589,7 +594,11 @@ async def decide(payload: DecisionRequest, x_internal_token: str | None = Header
             price_findings[requirement.requirement_id] = price_context.findings
 
     try:
-        model = build_chat_model(decision_settings, timeout=decision_settings.model_timeout_seconds)
+        model = build_chat_model(
+            decision_settings,
+            timeout=decision_settings.model_timeout_seconds,
+            temperature=decision_settings.model_temperature,
+        )
         decisions = decide_candidates(
             project_id=payload.project_id,
             assessments=assessments,

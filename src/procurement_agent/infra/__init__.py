@@ -44,6 +44,7 @@ class Settings:
     model_max_output_tokens: int
     model_context_max_tokens: int
     model_reasoning_effort: str | None
+    model_temperature: float | None
 
     @property
     def has_llm(self) -> bool:
@@ -75,4 +76,5 @@ def load_settings() -> Settings:
         model_max_output_tokens=max(1024, min(int(os.getenv("MODEL_MAX_OUTPUT_TOKENS", "32000")), 128000)),
         model_context_max_tokens=max(1024, min(int(os.getenv("MODEL_CONTEXT_MAX_TOKENS", "120000")), 400000)),
         model_reasoning_effort=_optional("MODEL_REASONING_EFFORT"),
+        model_temperature=float(os.getenv("MODEL_TEMPERATURE", "0")) if os.getenv("MODEL_TEMPERATURE") else None,
     )

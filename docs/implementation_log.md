@@ -382,7 +382,7 @@ The cloud acceptance for all three is still waiting on the local network to reac
 Two gaps were found by the check and closed:
 
 - The token and time limits were constants in the code. They are now settings: `MODEL_TIMEOUT_SECONDS`, `MODEL_MAX_OUTPUT_TOKENS`, `M3_SPEC_TYPING_BATCH_SIZE`, and `M3_SPEC_ALIGNMENT_CANDIDATES`. The typing, the alignment, and the decision all take a run configuration, so a caller can attach a token counter or a model call budget.
-- The model price cannot be verified from here. The gateway lists eighteen models with their context windows but no price fields, and its billing, account, and balance endpoints answer 404. The token usage is measured instead: one technical check over the real M2 output costs 8 model calls, 18154 prompt tokens, 86933 completion tokens, and 563 seconds.
+- The model price cannot be verified from here. The gateway lists eighteen models with their context windows but no price fields, and its billing, account, and balance endpoints answer 404. The token usage is measured instead: one technical check over the real M2 output costs about 22 model calls, 31 thousand prompt tokens, and 48 thousand completion tokens. The wall clock of that check was measured between 197 and 410 seconds on the same data, so only the token counts are quoted.
 
 That last number carries a lesson: the completion tokens are 4.8 times the prompt tokens, because the model is a reasoning model and most of the output is thinking. A budget that only counts the prompt will be wrong.
 
@@ -414,7 +414,9 @@ The script `scripts/run_cloud_acceptance.py` starts the workflow through the Clo
 
 ### The technical check was slow, and now it is not
 
-The M3-A check took 563 seconds for 39 candidates and 99 claims. It now takes 197 seconds, and the verdicts are better.
+The M3-A check spent most of its time in the model's reasoning. Three changes
+made one call cheaper; the end-to-end wall clock is not a reliable measure,
+because the provider's load moves it more than the change does.
 
 Three changes, each measured on the real M2 output:
 
@@ -424,13 +426,31 @@ Three changes, each measured on the real M2 output:
 
 | | Before | After |
 |---|---|---|
-| Wall clock | 563 s | **197 s** |
-| Model calls | 8 | 22 |
-| Completion tokens | 86,933 | 47,874 |
-| Verdicts | 1 pass | **30 passes** |
+| Completion tokens of one typing call | 3,690 | **1,642** |
+| Thinking characters of one typing call | 11,271 | **0** |
+| Time of one typing call | 22.6 s | **11.0 s** |
+| Model calls for 39 candidates | 8 | 22 |
+| Verdict | not reproducible | not reproducible |
 
-The verdicts improved because the research now asks for the output resolution, which is the change of the two prompts. The completion tokens fell even though the call count rose, because the thinking was the bulk of the output.
+Those first three rows are the reliable ones: the same request, the same prompt, measured twice. The end-to-end wall clock is not a reliable measure, because the provider's load moves it more than the change does. The same code measured 197, 245, 306, 336, 347, 367, 378 and 410 seconds on the same data.
 
-The measured cost of the endpoint without the reasoning is on a single typing-shaped request: 22.6 seconds and 3,690 completion tokens by default, 11.0 seconds and 1,642 with the reasoning off. The alignment keeps the reasoning, because it has to weigh two meanings of a measurement.
+**The verdicts are not reproducible, and that is the finding.** The same code, the same data, and the same requirement, run twice, gave a different answer for four of the eight models:
+
+| Model | First run | Second run |
+|---|---|---|
+| CAM-CIC-5000-20-G | PASS | PASS |
+| CAM-CIC-5000R-14-G | PASS | PASS |
+| IPS05-R10-OIA4 | PASS | UNKNOWN |
+| NBE-5703-AL | PASS | PASS |
+| NBN-80052-BA | PASS | UNKNOWN |
+| TRI050S-CC | PASS | PASS |
+| TRI050S-MC | UNKNOWN | PASS |
+| TRI055N | PASS | UNKNOWN |
+
+The count of passing candidate rows was 34 in one run and 12 in the next. A temperature of zero does not fix it: with the temperature pinned, two of the eight models still moved. The endpoint does not sample the reasoning deterministically.
+
+So the pass counts that were quoted earlier, one and then thirty-two, are not a comparison. The code, the prompts, the demand and the provider load all changed between those runs. What they measured was the run-to-run spread.
+
+The conclusion for the milestone: the judgement is a semantic call, and it is not repeatable on this endpoint. A buyer who runs the same project twice must not get two different answers. The fix is not a faster model, it is a stored verdict: cache the assessment under the requirement revision, the claim set, the alignment setting and the calculator version, and read it back instead of judging again. The calculator specification asks for exactly that.
 
 One thing to know: a local run fills the LangSmith trace quota quickly, and the endpoint then answers 429 for the trace upload. The traces are only affected, not the work.
