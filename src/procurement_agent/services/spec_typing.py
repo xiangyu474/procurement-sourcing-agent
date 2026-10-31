@@ -59,6 +59,22 @@ TYPING_BATCH_SIZE = 15
 TYPING_CONCURRENCY = 3
 
 
+def typing_rules_version() -> str:
+    """The digest of the prompt and the schema that type the claims.
+
+    Changing either of them changes the version, so the cache of this layer
+    stops being used without anyone having to remember a number.
+    """
+    from procurement_agent.domain.judgment_cache import digest
+
+    return digest(
+        {
+            "prompt": SYSTEM_PROMPT,
+            "schema": TypedClaimBatch.model_json_schema(),
+        }
+    )
+
+
 def _claim_payload(claims: Sequence[ClaimDraft]) -> list[dict[str, Any]]:
     return [
         {

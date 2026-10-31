@@ -1307,6 +1307,116 @@ export default {
 				});
 			}
 
+			const cacheLookupMatch = url.pathname.match(/^\/internal\/judgment-cache\/lookup$/);
+			if (cacheLookupMatch && request.method === "POST") {
+				const body = (await request.json().catch(() => ({}))) as {
+					layer?: string;
+					digests?: string[];
+				};
+				const layer = String(body.layer ?? "");
+				const digests = (body.digests ?? []).map((item) => String(item)).slice(0, 2000);
+				if (!digests.length) return json({ payloads: {} });
+				const { results } = await env.DB.prepare(
+					`SELECT input_digest, payload_json FROM judgment_cache
+					 WHERE workspace_id = 'default' AND layer = ?1 AND input_digest IN (${digests.map((_, index) => `?${index + 2}`).join(",")})`,
+				).bind(layer, ...digests).all<{ input_digest: string; payload_json: string }>();
+				const payloads: Record<string, unknown> = {};
+				for (const row of results) {
+					try {
+						payloads[row.input_digest] = JSON.parse(row.payload_json) as unknown;
+					} catch {
+						// A row that cannot be read is a row that is treated as
+						// absent, so the judgement is made again.
+					}
+				}
+				return json({ payloads });
+			}
+
+			const cacheStoreMatch = url.pathname.match(/^\/internal\/judgment-cache\/store$/);
+			if (cacheStoreMatch && request.method === "POST") {
+				const body = (await request.json().catch(() => ({}))) as {
+					entries?: {
+						layer?: string;
+						input_digest?: string;
+						payload?: unknown;
+						versions?: Record<string, string>;
+						model_config?: Record<string, unknown>;
+						evidence_hashes?: string[];
+						source_run_id?: string;
+						source_project_id?: string;
+						verdict?: string;
+						reason_codes?: string[];
+					}[];
+				};
+				const now = new Date().toISOString();
+				const inserts: D1PreparedStatement[] = [];
+				const conflicts: D1PreparedStatement[] = [];
+				for (const entry of body.entries ?? []) {
+					const layer = String(entry.layer ?? "");
+					const digest = String(entry.input_digest ?? "");
+					if (!layer || !digest) continue;
+					const payloadJson = JSON.stringify(entry.payload ?? {});
+					inserts.push(env.DB.prepare(
+						`INSERT INTO judgment_cache (
+							id, workspace_id, layer, input_digest, payload_json, versions_json, model_config_json,
+							evidence_hashes_json, source_run_id, source_project_id, verdict, reason_codes_json, created_at, updated_at)
+						 VALUES (?1, 'default', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)
+						 ON CONFLICT(workspace_id, layer, input_digest) DO NOTHING`,
+					)
+						.bind(
+							`jc_${layer.toLowerCase()}_${digest.slice(0, 32)}`,
+							layer,
+							digest,
+							payloadJson,
+							JSON.stringify(entry.versions ?? {}),
+							JSON.stringify(entry.model_config ?? {}),
+							JSON.stringify(entry.evidence_hashes ?? []),
+							entry.source_run_id ?? null,
+							entry.source_project_id ?? null,
+							entry.verdict ?? null,
+							JSON.stringify(entry.reason_codes ?? []),
+							now,
+						));
+					// A second answer for the same content is a conflict, and it
+					// is kept instead of being hidden by the first answer.
+					conflicts.push(env.DB.prepare(
+						`INSERT INTO judgment_cache_conflicts (
+							id, workspace_id, layer, input_digest, payload_json, model_config_json, reason_codes_json,
+							source_run_id, source_project_id, created_at)
+						 SELECT ?1, 'default', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
+						 WHERE EXISTS (
+							SELECT 1 FROM judgment_cache
+							 WHERE workspace_id = 'default' AND layer = ?2 AND input_digest = ?3
+						   AND payload_json <> ?4)
+						 ON CONFLICT DO NOTHING`,
+					)
+						.bind(
+							`jcc_${layer.toLowerCase()}_${digest.slice(0, 32)}_${now.replace(/[^0-9]/g, "")}`,
+							layer,
+							digest,
+							payloadJson,
+							JSON.stringify(entry.model_config ?? {}),
+							JSON.stringify(entry.reason_codes ?? []),
+							entry.source_run_id ?? null,
+							entry.source_project_id ?? null,
+							now,
+						));
+				}
+				if (inserts.length) await env.DB.batch(inserts);
+				if (conflicts.length) await env.DB.batch(conflicts);
+				const counted = await env.DB.prepare(
+					`SELECT COUNT(*) AS count FROM judgment_cache WHERE workspace_id = 'default'`,
+				).first<{ count: number }>();
+				const countedConflicts = await env.DB.prepare(
+					`SELECT COUNT(*) AS count FROM judgment_cache_conflicts WHERE workspace_id = 'default'`,
+				).first<{ count: number }>();
+				return json({
+					stored: inserts.length,
+					conflicts: countedConflicts?.count ?? 0,
+					entries: counted?.count ?? 0,
+				});
+			}
+
 			const specContextMatch = url.pathname.match(/^\/internal\/projects\/([^/]+)\/spec-context$/);
 			if (specContextMatch && request.method === "GET") {
 				const projectId = decodeURIComponent(specContextMatch[1]);
@@ -1390,6 +1500,17 @@ export default {
 				for (const row of candidateRows) {
 					if (row.product_id && row.product_model) modelByProduct[row.product_id] = row.product_model;
 				}
+
+				// The hash of the snapshot a claim rests on belongs in the
+				// cache key, so a claim whose evidence changed is judged again.
+				const evidenceIds = [...new Set(claims.map((claim) => claim.evidence_id))].filter(Boolean);
+				const evidenceHashes: Record<string, string> = {};
+				if (evidenceIds.length > 0) {
+					const { results: evidenceRows } = await env.DB.prepare(
+						`SELECT id, content_sha256 FROM research_evidence WHERE workspace_id = 'default' AND id IN (${evidenceIds.map((_, index) => `?${index + 1}`).join(",")})`,
+					).bind(...evidenceIds).all<{ id: string; content_sha256: string }>();
+					for (const row of evidenceRows) evidenceHashes[row.id] = row.content_sha256;
+				}
 				return json({
 					project_id: projectId,
 					demand_revision: compilationRow.demand_revision,
@@ -1398,6 +1519,7 @@ export default {
 					candidates,
 					claims,
 					model_by_product: modelByProduct,
+					evidence_hashes: evidenceHashes,
 				});
 			}
 
@@ -1521,6 +1643,7 @@ export default {
 				const projectId = decodeURIComponent(specResultsMatch[1]);
 				const body = (await request.json()) as {
 					demand_revision?: number;
+					review_reason?: string;
 					assessments?: {
 						requirement_id?: string;
 						product_candidate_id?: string;
@@ -1531,16 +1654,40 @@ export default {
 						calculator_version?: string;
 						dsl_schema_version?: string;
 						evaluated_at?: string;
+						input_digest?: string;
+						model_config?: Record<string, unknown>;
+						prompt_versions?: Record<string, string>;
 						assessment?: unknown;
 					}[];
 				};
 				const revision = Number(body.demand_revision ?? 1);
 				const now = new Date().toISOString();
 				const statements = [];
+				const reviewReason = String(body.review_reason ?? "").trim();
 				for (const item of body.assessments ?? []) {
 					const requirementId = String(item.requirement_id ?? "");
 					const candidateId = String(item.product_candidate_id ?? "");
 					if (!requirementId || !candidateId) continue;
+					// A judgement is versioned. A re-run of the same content keeps its
+					// version; an explicit review creates a new one and leaves the old
+					// judgement in place.
+					const existingRows = await env.DB.prepare(
+						`SELECT judgment_version, input_digest FROM spec_assessments
+						 WHERE workspace_id = 'default' AND project_id = ?1 AND requirement_id = ?2
+						   AND product_candidate_id = ?3 AND demand_revision = ?4
+						 ORDER BY judgment_version DESC`,
+					).bind(projectId, requirementId, candidateId, revision).all<{
+						judgment_version: number; input_digest: string | null;
+					}>();
+					const existing = existingRows.results;
+					const sameContent = existing.find((row) => row.input_digest === (item.input_digest ?? null));
+					let judgmentVersion = sameContent?.judgment_version ?? 1;
+					if (!sameContent && existing.length > 0) {
+						judgmentVersion = Math.max(...existing.map((row) => row.judgment_version ?? 1)) + 1;
+					}
+					if (reviewReason && sameContent) {
+						judgmentVersion = Math.max(...existing.map((row) => row.judgment_version ?? 1)) + 1;
+					}
 					const assessment = item.assessment ?? {};
 					const evidenceIds = new Set<string>();
 					const checks = (assessment as { checks?: { evidence_ids?: string[] }[] }).checks ?? [];
@@ -1551,9 +1698,10 @@ export default {
 						`INSERT INTO spec_assessments (
 							id, workspace_id, project_id, requirement_id, product_candidate_id, product_model_ref,
 							demand_revision, hard_spec_overall, overall_reason_codes_json, hard_constraint_count,
-							calculator_version, dsl_schema_version, assessment_json, evidence_ids_json, evaluated_at, created_at)
-						 VALUES (?1, 'default', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
-						 ON CONFLICT(workspace_id, project_id, requirement_id, product_candidate_id, demand_revision) DO UPDATE SET
+							calculator_version, dsl_schema_version, assessment_json, evidence_ids_json, evaluated_at, created_at,
+						 judgment_version, review_reason, input_digest, model_config_json, prompt_versions_json)
+						 
+						  DO UPDATE SET
 							product_model_ref = excluded.product_model_ref,
 							hard_spec_overall = excluded.hard_spec_overall,
 							overall_reason_codes_json = excluded.overall_reason_codes_json,
@@ -1563,7 +1711,11 @@ export default {
 							assessment_json = excluded.assessment_json,
 							evidence_ids_json = excluded.evidence_ids_json,
 							evaluated_at = excluded.evaluated_at,
-							created_at = excluded.created_at`,
+							created_at = excluded.created_at,
+							review_reason = excluded.review_reason,
+							input_digest = excluded.input_digest,
+							model_config_json = excluded.model_config_json,
+							prompt_versions_json = excluded.prompt_versions_json`,
 					)
 						.bind(
 							await stableSpecId(projectId, requirementId, candidateId, revision),
@@ -1581,6 +1733,11 @@ export default {
 							JSON.stringify([...evidenceIds]),
 							String(item.evaluated_at ?? now),
 							now,
+							judgmentVersion,
+							reviewReason || null,
+							item.input_digest ?? null,
+							JSON.stringify(item.model_config ?? {}),
+							JSON.stringify(item.prompt_versions ?? {}),
 						));
 				}
 				if (statements.length > 0) await env.DB.batch(statements);

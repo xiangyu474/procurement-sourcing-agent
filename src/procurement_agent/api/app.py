@@ -114,6 +114,7 @@ class SpecEvaluationRequest(BaseModel):
     runtime_config: dict[str, str] = Field(default_factory=dict)
     requirement_ids: list[str] = Field(default_factory=list, max_length=50)
     candidate_ids: list[str] = Field(default_factory=list, max_length=300)
+    review_reason: str | None = Field(default=None, max_length=500)
 
 
 class DecisionRequest(BaseModel):
@@ -433,7 +434,12 @@ async def evaluate_spec(payload: SpecEvaluationRequest, x_internal_token: str | 
 
     from procurement_agent.domain.requirements import Requirement
     from procurement_agent.domain.sourcing import ClaimDraft, ResearchCandidate
-    from procurement_agent.services.spec_evaluation import evaluate_candidates, summarize
+    from procurement_agent.services.judgment_cache import JudgmentCacheClient
+    from procurement_agent.services.spec_evaluation import (
+        default_versions,
+        evaluate_candidates_with_digests,
+        summarize,
+    )
 
     async with httpx.AsyncClient(timeout=120) as client:
         context_response = await client.get(
@@ -462,6 +468,18 @@ async def evaluate_spec(payload: SpecEvaluationRequest, x_internal_token: str | 
         context.get("unstructured_requirements") or [],
     )
 
+    # The cache lives in the database the gateway owns, so the container asks
+    # the gateway for it and hands the new judgements back.
+    cache = JudgmentCacheClient(payload.gateway_url, payload.token)
+    model_config = {
+        "model": evaluation_settings.llm_model,
+        "temperature": evaluation_settings.model_temperature,
+        "reasoning_effort": evaluation_settings.model_reasoning_effort,
+        "typing_batch_size": evaluation_settings.spec_typing_batch_size,
+        "alignment_candidates": evaluation_settings.spec_alignment_candidates,
+    }
+    versions = default_versions(model_config)
+
     try:
         # The typing and the alignment hold one model call open for minutes.
         model = build_chat_model(
@@ -478,7 +496,7 @@ async def evaluate_spec(payload: SpecEvaluationRequest, x_internal_token: str | 
             reasoning_effort=evaluation_settings.model_reasoning_effort,
             temperature=evaluation_settings.model_temperature,
         )
-        assessments = evaluate_candidates(
+        assessments, assessment_digests = evaluate_candidates_with_digests(
             requirements=requirements,
             candidates=candidates,
             claims=claims,
@@ -488,6 +506,12 @@ async def evaluate_spec(payload: SpecEvaluationRequest, x_internal_token: str | 
             typing_batch_size=evaluation_settings.spec_typing_batch_size,
             alignment_batch_size=evaluation_settings.spec_alignment_candidates,
             typing_model=typing_model,
+            evidence_hashes=context.get("evidence_hashes") or {},
+            cache=cache,
+            versions=versions,
+            model_config=model_config,
+            source_project_id=payload.project_id,
+            source_run_id=context.get("run_id"),
         )
     except Exception as exc:
         error_type = type(exc).__name__
@@ -514,6 +538,11 @@ async def evaluate_spec(payload: SpecEvaluationRequest, x_internal_token: str | 
             "calculator_version": assessment.calculator_version,
             "dsl_schema_version": assessment.dsl_schema_version,
             "evaluated_at": assessment.evaluated_at.isoformat(),
+            "input_digest": assessment_digests.get(
+                (assessment.requirement_id, assessment.product_candidate_id), ""
+            ),
+            "model_config": model_config,
+            "prompt_versions": versions.as_dict(),
             "assessment": assessment.model_dump(mode="json"),
         }
         for assessment in assessments
@@ -522,7 +551,11 @@ async def evaluate_spec(payload: SpecEvaluationRequest, x_internal_token: str | 
         stored = await client.post(
             f"{payload.gateway_url.rstrip('/')}/internal/projects/{payload.project_id}/spec-results",
             headers={"x-internal-token": payload.token},
-            json={"demand_revision": context.get("demand_revision", 1), "assessments": serialized},
+            json={
+                "demand_revision": context.get("demand_revision", 1),
+                "review_reason": payload.review_reason,
+                "assessments": serialized,
+            },
         )
         if not stored.is_success:
             raise HTTPException(

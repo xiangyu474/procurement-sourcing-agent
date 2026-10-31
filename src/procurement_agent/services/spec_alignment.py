@@ -78,6 +78,23 @@ Rules:
 """
 
 
+def alignment_rules_version() -> str:
+    """The digest of the prompt, the schema, and the alias table.
+
+    Changing any of them changes the version, so the cache of this layer stops
+    being used without anyone having to remember a number.
+    """
+    from procurement_agent.domain.judgment_cache import digest
+
+    return digest(
+        {
+            "prompt": SYSTEM_PROMPT,
+            "schema": AlignmentBatch.model_json_schema(),
+            "aliases": {key: sorted(value) for key, value in APPROVED_ALIASES.items()},
+        }
+    )
+
+
 def alias_groups() -> dict[str, frozenset[str]]:
     """The approved alias groups, keyed by every member."""
     groups: dict[str, frozenset[str]] = {}

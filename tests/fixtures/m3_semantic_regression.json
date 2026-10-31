@@ -1,0 +1,866 @@
+{
+  "note": "Frozen inputs of the four models whose verdict moved between two runs of the same code. The expected verdicts were read off the raw evidence by hand.",
+  "source_run_id": "4ca31b39-a755-4794-af49-20954ccfdbe3",
+  "requirement": {
+    "requirement_id": "r1",
+    "project_id": "m3-regression",
+    "product_name": "5MP 工业网络摄像机",
+    "constraints": [
+      {
+        "constraint_id": "c1",
+        "requirement_id": "r1",
+        "schema_version": "1.0",
+        "attribute_key": "output_resolution",
+        "attribute_definition": "视频输出像素数",
+        "value_type": "NUMBER",
+        "operator": "GTE",
+        "value": "5",
+        "unit": "MP",
+        "qualifiers": {},
+        "importance": "HARD",
+        "origin": "PPT_EXPLICIT",
+        "source_ref": "pptx:project=m3-regression:source=s1:file=acceptance.pptx:slide=1:shape=0:paragraph=1",
+        "source_quote": "5MP 工业网络摄像机",
+        "parse_status": "RESOLVED",
+        "revision": 1,
+        "validation_issues": []
+      }
+    ]
+  },
+  "models": {
+    "IPS05-R10-OIA4": {
+      "claims": [
+        {
+          "claim_id": "clm_2baeb07504f65dda4be261e5",
+          "attribute": "Max resolution (5MP)",
+          "value": "up to 2560 x 1920 (~5 MP)",
+          "unit": "pixels",
+          "source_quote": "Support multiple streams, up to 2560 x 1920 resolution",
+          "evidence_id": "ev_1fc84d018f217cf4a66fd66e",
+          "evidence_hash": "bf6ff66dc1a1f5c80236ddb0ccb1c8e4bb4c9d6bf00e60f403a386e7f7832924",
+          "subject_ref": "prd_e8b4a673849f23bc9dc32332"
+        },
+        {
+          "claim_id": "clm_72bbec4375296161db337e8f",
+          "attribute": "product part number",
+          "value": "IPS05-R10-OIA4 (listed under Product Part Number in ordering information)",
+          "unit": null,
+          "source_quote": "Camera IPS05-R10-OIA4 ILL Pro4 5MP Corner",
+          "evidence_id": "ev_bdf17828792ca5304577e8bb",
+          "evidence_hash": "5379b922c67049439f4da967d19b7be8c8cb8d14dbf4f1ca603307eb103e55c3",
+          "subject_ref": "prd_e8b4a673849f23bc9dc32332"
+        },
+        {
+          "claim_id": "clm_a1a53f465b730a95415bb614",
+          "attribute": "Environmental ratings (industrial-suitability indicator)",
+          "value": "IK11, IP66/67, NEMA 250 4X rated",
+          "unit": null,
+          "source_quote": "IK11, IP66/677, NEMA 250 4X rated",
+          "evidence_id": "ev_1fc84d018f217cf4a66fd66e",
+          "evidence_hash": "bf6ff66dc1a1f5c80236ddb0ccb1c8e4bb4c9d6bf00e60f403a386e7f7832924",
+          "subject_ref": "prd_e8b4a673849f23bc9dc32332"
+        },
+        {
+          "claim_id": "clm_e6658e6ce197900f5a3a755e",
+          "attribute": "video output resolution",
+          "value": "5 MP (product described as '5MP Corner' in official datasheet ordering table)",
+          "unit": "MP",
+          "source_quote": "Camera IPS05-R10-OIA4 ILL Pro4 5MP Corner Illustra Pro Gen4 5MP Corner, 2.3mm, IK11, IP68, TDN w/IR, Mic, Spk",
+          "evidence_id": "ev_bdf17828792ca5304577e8bb",
+          "evidence_hash": "5379b922c67049439f4da967d19b7be8c8cb8d14dbf4f1ca603307eb103e55c3",
+          "subject_ref": "prd_e8b4a673849f23bc9dc32332"
+        }
+      ]
+    },
+    "NBN-80052-BA": {
+      "claims": [
+        {
+          "claim_id": "clm_0adbfe53e8a6ec35770457e2",
+          "attribute": "sensor_resolution",
+          "value": "5 Megapixel (distributor spec table)",
+          "unit": null,
+          "source_quote": "Resolution | 5 Megapixel",
+          "evidence_id": "ev_aaf4b13c7c91454a6717abe9",
+          "evidence_hash": "8d73e74245b768129b925eef072dcd96db600f060ee250e820b6ec3c9855e3ba",
+          "subject_ref": "prd_21cc097af1e2e5d3eb94b6e4"
+        },
+        {
+          "claim_id": "clm_16ec0eea57a742b73aaed613",
+          "attribute": "product_type",
+          "value": "Network Camera, Series 8000, Box form factor, lens not included",
+          "unit": null,
+          "source_quote": "Product Type: Network Camera  Product Series: 8000",
+          "evidence_id": "ev_ca18dc9e6c862f68836d43b4",
+          "evidence_hash": "a38e765e771d950e97784ed6a51bbe7b1c9f3f0250cf12333022d68d1833cb11",
+          "subject_ref": "prd_21cc097af1e2e5d3eb94b6e4"
+        },
+        {
+          "claim_id": "clm_2d9c2889c4bdcbfa89c601df",
+          "attribute": "resolution",
+          "value": "5 Megapixel effective camera resolution",
+          "unit": "MP",
+          "source_quote": "Effective Camera Resolution: 5 Megapixel",
+          "evidence_id": "ev_ca18dc9e6c862f68836d43b4",
+          "evidence_hash": "a38e765e771d950e97784ed6a51bbe7b1c9f3f0250cf12333022d68d1833cb11",
+          "subject_ref": "prd_21cc097af1e2e5d3eb94b6e4"
+        },
+        {
+          "claim_id": "clm_2e0485f670dc1e08c9291fc1",
+          "attribute": "resolution",
+          "value": "5 Megapixel",
+          "unit": "MP",
+          "source_quote": "Resolution | 5 Megapixel",
+          "evidence_id": "ev_aaf4b13c7c91454a6717abe9",
+          "evidence_hash": "8d73e74245b768129b925eef072dcd96db600f060ee250e820b6ec3c9855e3ba",
+          "subject_ref": "prd_be5cbf587ab9c4a19c59dfa0"
+        },
+        {
+          "claim_id": "clm_309ac53827fcf388c56b4193",
+          "attribute": "resolution",
+          "value": "Capturing 16:9 images at 5 megapixel resolution (3K)",
+          "unit": "MP",
+          "source_quote": "Capturing 16:9 images at 5 megapixel resolution (3K) even under extreme low-light conditions",
+          "evidence_id": "ev_a473d4326b1f3bdc885c67ed",
+          "evidence_hash": "41e3cb50dc70ed4d6196c12b860a349148e331598678ce7af67ea01fab31449c",
+          "subject_ref": "prd_be5cbf587ab9c4a19c59dfa0"
+        },
+        {
+          "claim_id": "clm_39d87987429d4f517f2f7788",
+          "attribute": "resolution",
+          "value": "5MP",
+          "unit": null,
+          "source_quote": "Bosch 5MP Indoor Box Dinion IP 8000 MP Starlight Camera",
+          "evidence_id": "ev_57454ecef1de0b2542e4ea35",
+          "evidence_hash": "1fc6a1bf0baa84e600d65616f12878c53f3bd17c3f080e6014c5434da0f94478",
+          "subject_ref": "prd_be5cbf587ab9c4a19c59dfa0"
+        },
+        {
+          "claim_id": "clm_3c65ff293287328f58a7a341",
+          "attribute": "resolution",
+          "value": "5MP (3K) resolution at 30 fps",
+          "unit": null,
+          "source_quote": "5MP (3K) high detail at fast speeds (30 fps)",
+          "evidence_id": "ev_f109826dd11093e8269960f9",
+          "evidence_hash": "29bb97eaf833d78d70f14dd1e22bc7d64f0f8ddd70f5292a7cea3700a3530749",
+          "subject_ref": "prd_21cc097af1e2e5d3eb94b6e4"
+        },
+        {
+          "claim_id": "clm_4599e8a217586feb828347a2",
+          "attribute": "resolution",
+          "value": "High-performance 5MP box camera with exceptional low-light imaging",
+          "unit": null,
+          "source_quote": "High-performance 5MP box camera with exceptional low-light imaging",
+          "evidence_id": "ev_64e4136e9e852c92a4e1fc08",
+          "evidence_hash": "223eb1f51298e6274595d1316d8509cc87b65e2005b144ef41632bad8d879ce1",
+          "subject_ref": "prd_be5cbf587ab9c4a19c59dfa0"
+        },
+        {
+          "claim_id": "clm_48a9ca850a00559484916de6",
+          "attribute": "feature set (fixed indoor box, no lens)",
+          "value": "H.264, WDR, IVA, No Lens",
+          "unit": null,
+          "source_quote": "H.264, WDR, IVA, No Lens",
+          "evidence_id": "ev_57454ecef1de0b2542e4ea35",
+          "evidence_hash": "1fc6a1bf0baa84e600d65616f12878c53f3bd17c3f080e6014c5434da0f94478",
+          "subject_ref": "prd_be5cbf587ab9c4a19c59dfa0"
+        },
+        {
+          "claim_id": "clm_49e4db44434a677d601e8d19",
+          "attribute": "resolution",
+          "value": "5MP fixed box camera (no lens)",
+          "unit": "MP",
+          "source_quote": "NBN-80052-BA Fixed camera 5MP High-performance 5MP box camera with exceptional low-light imaging.",
+          "evidence_id": "ev_91131d9e72b46339e049e670",
+          "evidence_hash": "01f70a92d02d43dc620258c5eb57d2aec0a5a77192c22a31350b30902bafd521",
+          "subject_ref": "prd_21cc097af1e2e5d3eb94b6e4"
+        },
+        {
+          "claim_id": "clm_5ed23e506c9b05362eb92651",
+          "attribute": "features/interface",
+          "value": "5MP; PoE; IAE; IDNR; ROI (E-PTZ); IVA; H.264 quad-streaming",
+          "unit": null,
+          "source_quote": "5MP; PoE; IAE; IDNR; ROI (E-PTZ); IVA; H.264 quad-streaming",
+          "evidence_id": "ev_91131d9e72b46339e049e670",
+          "evidence_hash": "01f70a92d02d43dc620258c5eb57d2aec0a5a77192c22a31350b30902bafd521",
+          "subject_ref": "prd_21cc097af1e2e5d3eb94b6e4"
+        },
+        {
+          "claim_id": "clm_64c6a985cff9ed5d9a6e8fd0",
+          "attribute": "availability_status",
+          "value": "Listed as Discontinued by third-party retailer a1securitycameras.com",
+          "unit": null,
+          "source_quote": "Discontinued",
+          "evidence_id": "ev_cc4816612d09e66f6e9db492",
+          "evidence_hash": "4117ab57c5306afe7da8c4e9d68a479701f8d1d3458910627f0f9d04bf2bc52a",
+          "subject_ref": "prd_21cc097af1e2e5d3eb94b6e4"
+        },
+        {
+          "claim_id": "clm_65aab6fddd53192b53aa25df",
+          "attribute": "resolution",
+          "value": "5 megapixel resolution (3K) at 16:9",
+          "unit": null,
+          "source_quote": "Capturing 16:9 images at 5 megapixel resolution (3K)",
+          "evidence_id": "ev_7562f2c15d1734d80ad11e38",
+          "evidence_hash": "c822f784e3f02b7bd427ea98a0a2a6adba4d100b89750e87c7c50d5fcb56dc7b",
+          "subject_ref": "prd_be5cbf587ab9c4a19c59dfa0"
+        },
+        {
+          "claim_id": "clm_7b54d80cdcf9e94be4e22c99",
+          "attribute": "operating temperature",
+          "value": "-20°C to +50°C (-4°F to 122°F)",
+          "unit": "°C",
+          "source_quote": "Operating Temperature | -20°C to +50°C (-4°F to 122°F)",
+          "evidence_id": "ev_7562f2c15d1734d80ad11e38",
+          "evidence_hash": "c822f784e3f02b7bd427ea98a0a2a6adba4d100b89750e87c7c50d5fcb56dc7b",
+          "subject_ref": "prd_be5cbf587ab9c4a19c59dfa0"
+        },
+        {
+          "claim_id": "clm_85f87bfec44f895bc4b287a9",
+          "attribute": "image_device",
+          "value": "1/1.8” CMOS",
+          "unit": null,
+          "source_quote": "| Image Device | 1/1.8” CMOS |",
+          "evidence_id": "ev_6e2a06951e768e3245ef41ce",
+          "evidence_hash": "90f69b5a8e745e18ba9a7f5014be10948c1840ef662d0273bf0cab76c6ce3cf2",
+          "subject_ref": "prd_21cc097af1e2e5d3eb94b6e4"
+        },
+        {
+          "claim_id": "clm_983b2d71160e8989a15c2282",
+          "attribute": "fps_at_max_resolution",
+          "value": "30fps at 5MP",
+          "unit": null,
+          "source_quote": "Max. FPS and Resolution: | 30fps at 5MP",
+          "evidence_id": "ev_d1c003b57644d14f69802868",
+          "evidence_hash": "5578d6bf486ee7ec4d8cc5758fc261534989a6c5c6ab73ac3ee0caf6b896cb4a",
+          "subject_ref": "prd_21cc097af1e2e5d3eb94b6e4"
+        },
+        {
+          "claim_id": "clm_a194043f610465ce6d8a791c",
+          "attribute": "order_number_listing",
+          "value": "Ordering table of the datasheet lists order number NBN-80052-BA for the fixed 5 MP camera",
+          "unit": null,
+          "source_quote": "Order number NBN-80052-BA",
+          "evidence_id": "ev_bf016e138caadda72550c119",
+          "evidence_hash": "b93bb04580f7cd5b821ac98737f1e5bef5705fc01ecb1bc6250019529b8c59f1",
+          "subject_ref": "prd_21cc097af1e2e5d3eb94b6e4"
+        },
+        {
+          "claim_id": "clm_ad0f6c123af7f4adefcab37b",
+          "attribute": "product_series",
+          "value": "DINION IP STARLIGHT 8000 MP Series",
+          "unit": null,
+          "source_quote": "Bosch DINION IP STARLIGHT 8000 MP Series",
+          "evidence_id": "ev_d1c003b57644d14f69802868",
+          "evidence_hash": "5578d6bf486ee7ec4d8cc5758fc261534989a6c5c6ab73ac3ee0caf6b896cb4a",
+          "subject_ref": "prd_21cc097af1e2e5d3eb94b6e4"
+        },
+        {
+          "claim_id": "clm_b471ec32e74f287ef832fbb9",
+          "attribute": "product_description",
+          "value": "High-performance 5MP box camera with exceptional low-light imaging",
+          "unit": null,
+          "source_quote": "High-performance 5MP box camera with exceptional low-light imaging",
+          "evidence_id": "ev_bf016e138caadda72550c119",
+          "evidence_hash": "b93bb04580f7cd5b821ac98737f1e5bef5705fc01ecb1bc6250019529b8c59f1",
+          "subject_ref": "prd_21cc097af1e2e5d3eb94b6e4"
+        },
+        {
+          "claim_id": "clm_c2c72c493d935720a056a4e9",
+          "attribute": "Interface",
+          "value": "PoE (Power over Ethernet), H.264 quad-streaming",
+          "unit": null,
+          "source_quote": "5MP; PoE; IAE; IDNR; ROI (E-PTZ); IVA; H.264 quad-streaming",
+          "evidence_id": "ev_d11e6ac742f72cbacc2c7da8",
+          "evidence_hash": "9e6ca67585e102207f83a138a44e91a1b9bdc5d99ff16740462fab36d799e365",
+          "subject_ref": "prd_be5cbf587ab9c4a19c59dfa0"
+        },
+        {
+          "claim_id": "clm_c5c3c7a9371c938ef7062ebf",
+          "attribute": "replacement status",
+          "value": "Listed as discontinued with no direct replacement",
+          "unit": null,
+          "source_quote": "Replacement:  There is no direct replacement.",
+          "evidence_id": "ev_bb1da97e5b47a342d4bbc1fc",
+          "evidence_hash": "157d181e6160d0d137cb4cfa58734abc41081e746f9c815e945610155d8c796f",
+          "subject_ref": "prd_21cc097af1e2e5d3eb94b6e4"
+        },
+        {
+          "claim_id": "clm_c67233ac580486ae439f4e67",
+          "attribute": "order_code",
+          "value": "Order number NBN-80052-BA (Fixed camera 5MP)",
+          "unit": null,
+          "source_quote": "Order number NBN-80052-BA",
+          "evidence_id": "ev_64e4136e9e852c92a4e1fc08",
+          "evidence_hash": "223eb1f51298e6274595d1316d8509cc87b65e2005b144ef41632bad8d879ce1",
+          "subject_ref": "prd_be5cbf587ab9c4a19c59dfa0"
+        },
+        {
+          "claim_id": "clm_cc8b9282a1f9cb47f19d3e1c",
+          "attribute": "interface_power",
+          "value": "12vDC, PoE",
+          "unit": null,
+          "source_quote": "Voltage | 12vDC, PoE",
+          "evidence_id": "ev_aaf4b13c7c91454a6717abe9",
+          "evidence_hash": "8d73e74245b768129b925eef072dcd96db600f060ee250e820b6ec3c9855e3ba",
+          "subject_ref": "prd_be5cbf587ab9c4a19c59dfa0"
+        },
+        {
+          "claim_id": "clm_d349338f0aebc7ac4aae8937",
+          "attribute": "environmental_rating",
+          "value": "Environmental: Indoor (per third-party listing; no IP class or operating-temperature range shown on fetched page)",
+          "unit": null,
+          "source_quote": "Environmental: | Indoor |",
+          "evidence_id": "ev_cc4816612d09e66f6e9db492",
+          "evidence_hash": "4117ab57c5306afe7da8c4e9d68a479701f8d1d3458910627f0f9d04bf2bc52a",
+          "subject_ref": "prd_21cc097af1e2e5d3eb94b6e4"
+        },
+        {
+          "claim_id": "clm_d59bfc402437b81a92a02617",
+          "attribute": "Lens-mount variants",
+          "value": "5MP CS-mount 4.1-9mm lens LVF-5005C-S4109 and 5MP C-mount 12-50mm lens LVF-5005N-S1250 as documented accessory order numbers",
+          "unit": null,
+          "source_quote": "Varifocal lens, 4.1-9mm, 5MP, CS mount",
+          "evidence_id": "ev_d11e6ac742f72cbacc2c7da8",
+          "evidence_hash": "9e6ca67585e102207f83a138a44e91a1b9bdc5d99ff16740462fab36d799e365",
+          "subject_ref": "prd_be5cbf587ab9c4a19c59dfa0"
+        },
+        {
+          "claim_id": "clm_df37889f17f3a9675c8d8771",
+          "attribute": "power_interface",
+          "value": "Power 12vDC, PoE",
+          "unit": null,
+          "source_quote": "Voltage | 12vDC, PoE",
+          "evidence_id": "ev_aaf4b13c7c91454a6717abe9",
+          "evidence_hash": "8d73e74245b768129b925eef072dcd96db600f060ee250e820b6ec3c9855e3ba",
+          "subject_ref": "prd_21cc097af1e2e5d3eb94b6e4"
+        },
+        {
+          "claim_id": "clm_dfa5b0cb31f6438fcbb98651",
+          "attribute": "network/protocol interoperability",
+          "value": "Conforms to ONVIF Profile S",
+          "unit": null,
+          "source_quote": "The camera conforms to the ONVIF Profile S specifications.",
+          "evidence_id": "ev_f109826dd11093e8269960f9",
+          "evidence_hash": "29bb97eaf833d78d70f14dd1e22bc7d64f0f8ddd70f5292a7cea3700a3530749",
+          "subject_ref": "prd_21cc097af1e2e5d3eb94b6e4"
+        },
+        {
+          "claim_id": "clm_f1292e2e349e67b28e85494a",
+          "attribute": "resolution",
+          "value": "5 Megapixel",
+          "unit": "MP",
+          "source_quote": "| Resolution | 5 Megapixel |",
+          "evidence_id": "ev_6e2a06951e768e3245ef41ce",
+          "evidence_hash": "90f69b5a8e745e18ba9a7f5014be10948c1840ef662d0273bf0cab76c6ce3cf2",
+          "subject_ref": "prd_21cc097af1e2e5d3eb94b6e4"
+        },
+        {
+          "claim_id": "clm_f5a1cf5a1660ad50af86e133",
+          "attribute": "exact_order_code",
+          "value": "Exact order code NBN-80052-BA identified together with a data sheet reference",
+          "unit": null,
+          "source_quote": "NBN-80052-BA Data Sheet",
+          "evidence_id": "ev_a473d4326b1f3bdc885c67ed",
+          "evidence_hash": "41e3cb50dc70ed4d6196c12b860a349148e331598678ce7af67ea01fab31449c",
+          "subject_ref": "prd_be5cbf587ab9c4a19c59dfa0"
+        }
+      ]
+    },
+    "TRI050S-MC": {
+      "claims": [
+        {
+          "claim_id": "clm_3bf4cc30b70ccdc4374d67e5",
+          "attribute": "resolution",
+          "value": "5.0 MP, 2448 x 2048 px",
+          "unit": null,
+          "source_quote": "5.0 MP, 2448 x 2048 px",
+          "evidence_id": "ev_1d840ab4004f1c7b0a48a401",
+          "evidence_hash": "f32b3e0aebbae7da8502f78eec5985467f81663ee26734fc7b61828abf92b991",
+          "subject_ref": "prd_95e1daa3f0f23d7238196bd5"
+        },
+        {
+          "claim_id": "clm_b7d390af23d3b708ff92fb00",
+          "attribute": "variant_config",
+          "value": "Mono, C-mount, M12 GigE connector",
+          "unit": null,
+          "source_quote": "TRI050S-MC | Mono | C-mount | M12",
+          "evidence_id": "ev_1d840ab4004f1c7b0a48a401",
+          "evidence_hash": "f32b3e0aebbae7da8502f78eec5985467f81663ee26734fc7b61828abf92b991",
+          "subject_ref": "prd_95e1daa3f0f23d7238196bd5"
+        }
+      ]
+    },
+    "TRI055N": {
+      "claims": [
+        {
+          "claim_id": "clm_007964a5e71750baec0c2b55",
+          "attribute": "availability_statement",
+          "value": "camera is now available to order; no orderable variant suffixes or SKU/order-code table printed",
+          "unit": null,
+          "source_quote": "The Triton TRI055N camera is now available to order. For specifications, EMVA 1288 performance data, and ordering information, visit the Triton 5.0 MP AR0521 product page or contact LUCID Sales.",
+          "evidence_id": "ev_61ab428491fbcdeccafba7c8",
+          "evidence_hash": "6f6426fb6d4aba95c568fde5233d8718d0513d14b414078817f12aac9af73d45",
+          "subject_ref": "prd_8d9fcb331fe9bf927dfd44be"
+        },
+        {
+          "claim_id": "clm_0702a02dc865c803cc3d37ce",
+          "attribute": "sensor_resolution",
+          "value": "5.0 MP (5.0-megapixel) with onsemi AR0521 CMOS image sensor",
+          "unit": null,
+          "source_quote": "a new 5.0-megapixel model featuring onsemi’s AR0521 CMOS image sensor",
+          "evidence_id": "ev_c98c1c26f25d68f183309b6d",
+          "evidence_hash": "4eb2a33a287656e29277ec5e1b552650a58a3d6ba18639127ef3a05aada06eda",
+          "subject_ref": "prd_8d9fcb331fe9bf927dfd44be"
+        },
+        {
+          "claim_id": "clm_0ae8e716c568a6e234de1bb7",
+          "attribute": "sensor & resolution",
+          "value": "5.0-megapixel Triton GigE model featuring onsemi's AR0521 CMOS image sensor",
+          "unit": null,
+          "source_quote": "has expanded its Triton® GigE camera series with a new 5.0-megapixel model featuring onsemi’s AR0521 CMOS image sensor",
+          "evidence_id": "ev_1e39f559edc12a862167d2df",
+          "evidence_hash": "5dbdb0bbead799d04f5f8ef23904c6a7555bae0a76aaaf502e6fa93ec7c0548c",
+          "subject_ref": "prd_8d9fcb331fe9bf927dfd44be"
+        },
+        {
+          "claim_id": "clm_0b97b49d375d36b9b08cf4d9",
+          "attribute": "video_output_resolution",
+          "value": "5.0 MP (Triton TRI055N with onsemi rolling shutter CMOS sensor)",
+          "unit": null,
+          "source_quote": "5.0 MP backside-illuminated AR0521 rolling shutter CMOS sensor",
+          "evidence_id": "ev_e60bc243a871f89f98e44ef0",
+          "evidence_hash": "de731c3816e74152679d2ba6dec9e1587db3e480a0269a8dfffc50ce2288e067",
+          "subject_ref": "prd_0c8e48c9f50ad58a7d19ad3d"
+        },
+        {
+          "claim_id": "clm_1191b0102331e3d9860fcf9e",
+          "attribute": "ordering availability",
+          "value": "now available to order",
+          "unit": null,
+          "source_quote": "The Triton TRI055N camera is now available to order",
+          "evidence_id": "ev_c98c1c26f25d68f183309b6d",
+          "evidence_hash": "4eb2a33a287656e29277ec5e1b552650a58a3d6ba18639127ef3a05aada06eda",
+          "subject_ref": "prd_8d9fcb331fe9bf927dfd44be"
+        },
+        {
+          "claim_id": "clm_129fd7037f04336baa756d62",
+          "attribute": "video output pixels",
+          "value": "5.0 MP",
+          "unit": "MP",
+          "source_quote": "| TRI055N | 5.0 MP | 2592 x 1944 px",
+          "evidence_id": "ev_c85f0f8dd6b1800c8035c338",
+          "evidence_hash": "016d004046be7247cff3e1e48aa2bbda2f71bcdcea9181bce0836b5864640815",
+          "subject_ref": "prd_8d9fcb331fe9bf927dfd44be"
+        },
+        {
+          "claim_id": "clm_19975fa74e416123b04b230b",
+          "attribute": "Availability",
+          "value": "now available to order (manufacturer statement; no distributor/stock confirmation)",
+          "unit": null,
+          "source_quote": "The Triton TRI055N camera is now available to order.",
+          "evidence_id": "ev_2da51d1e4d649478ded0c96f",
+          "evidence_hash": "b2b0926ecbf768e2512defa913678222f67e15feec0b6a4acde374bbfc5ee765",
+          "subject_ref": "prd_0c8e48c9f50ad58a7d19ad3d"
+        },
+        {
+          "claim_id": "clm_1ed5bbc92d6b81f34f917cd1",
+          "attribute": "connectors_and_ingress_protection",
+          "value": "secure M12 Ethernet and M8 GPIO connectors; IP67; -20°C to 55°C",
+          "unit": null,
+          "source_quote": "secure M12 Ethernet and M8 GPIO connectors, IP67 protection, and operating temperature range of -20°C to 55°C",
+          "evidence_id": "ev_c98c1c26f25d68f183309b6d",
+          "evidence_hash": "4eb2a33a287656e29277ec5e1b552650a58a3d6ba18639127ef3a05aada06eda",
+          "subject_ref": "prd_8d9fcb331fe9bf927dfd44be"
+        },
+        {
+          "claim_id": "clm_20474b6864c28f43b7fbd57e",
+          "attribute": "current offering status",
+          "value": "Announced Aug 7, 2026; per press release: \"The Triton TRI055N camera is now available to order.\"",
+          "unit": null,
+          "source_quote": "The Triton TRI055N camera is now available to order.",
+          "evidence_id": "ev_1e39f559edc12a862167d2df",
+          "evidence_hash": "5dbdb0bbead799d04f5f8ef23904c6a7555bae0a76aaaf502e6fa93ec7c0548c",
+          "subject_ref": "prd_8d9fcb331fe9bf927dfd44be"
+        },
+        {
+          "claim_id": "clm_240081ef74c06247f2f24801",
+          "attribute": "Image sensor and resolution",
+          "value": "5.0 MP backside-illuminated onsemi AR0521 CMOS sensor",
+          "unit": "MP",
+          "source_quote": "the 5.0 MP backside-illuminated onsemi AR0521 CMOS sensor",
+          "evidence_id": "ev_2da51d1e4d649478ded0c96f",
+          "evidence_hash": "b2b0926ecbf768e2512defa913678222f67e15feec0b6a4acde374bbfc5ee765",
+          "subject_ref": "prd_0c8e48c9f50ad58a7d19ad3d"
+        },
+        {
+          "claim_id": "clm_25f62199f8e8129a31364c2b",
+          "attribute": "sensor_and_resolution",
+          "value": "5.0 MP backside-illuminated onsemi AR0521 CMOS sensor, delivering 2592 × 1944 resolution at up to 22.1 frames per second",
+          "unit": null,
+          "source_quote": "5.0 MP backside-illuminated onsemi AR0521 CMOS sensor, delivering 2592 × 1944 resolution at up to 22.1 frames per second",
+          "evidence_id": "ev_61ab428491fbcdeccafba7c8",
+          "evidence_hash": "6f6426fb6d4aba95c568fde5233d8718d0513d14b414078817f12aac9af73d45",
+          "subject_ref": "prd_8d9fcb331fe9bf927dfd44be"
+        },
+        {
+          "claim_id": "clm_2bfc07d2e934dbbf8babf4df",
+          "attribute": "sensor resolution",
+          "value": "5.0 MP backside-illuminated onsemi AR0521 CMOS sensor",
+          "unit": "MP",
+          "source_quote": "5.0 MP backside-illuminated onsemi AR0521 CMOS sensor",
+          "evidence_id": "ev_fc2163622beeb2c7b3297f1a",
+          "evidence_hash": "ec04c4b44e00e0cae8a482d6e366d89dae06ff11dab382f49baffc50d259b413",
+          "subject_ref": "prd_0c8e48c9f50ad58a7d19ad3d"
+        },
+        {
+          "claim_id": "clm_31334cb128e6b13e36924698",
+          "attribute": "environmental_protection",
+          "value": "IP67 protection with operating temperature range of -20°C to 55°C",
+          "unit": null,
+          "source_quote": "IP67 protection, and operating temperature range of -20°C to 55°C",
+          "evidence_id": "ev_61ab428491fbcdeccafba7c8",
+          "evidence_hash": "6f6426fb6d4aba95c568fde5233d8718d0513d14b414078817f12aac9af73d45",
+          "subject_ref": "prd_8d9fcb331fe9bf927dfd44be"
+        },
+        {
+          "claim_id": "clm_31b45569e7f8b0d8710276ec",
+          "attribute": "environmental_rating_and_connectors",
+          "value": "IP67 protection, operating temperature -20°C to 55°C, M12 Ethernet and M8 GPIO connectors",
+          "unit": null,
+          "source_quote": "secure M12 Ethernet and M8 GPIO connectors, IP67 protection, and operating temperature range of -20°C to 55°C",
+          "evidence_id": "ev_61ab428491fbcdeccafba7c8",
+          "evidence_hash": "6f6426fb6d4aba95c568fde5233d8718d0513d14b414078817f12aac9af73d45",
+          "subject_ref": "prd_0c8e48c9f50ad58a7d19ad3d"
+        },
+        {
+          "claim_id": "clm_3c0f6211b315907e539a7132",
+          "attribute": "ordering_information",
+          "value": "Ordering information on the Triton 5.0 MP AR0521 product page",
+          "unit": null,
+          "source_quote": "For specifications, EMVA 1288 performance data, and ordering information, visit the Triton 5.0 MP AR0521 product page",
+          "evidence_id": "ev_283b89c97ebd6f5b44c832d1",
+          "evidence_hash": "21b0cd31d12caf0faf879ddf72c3c12228b705c0d6c15e53a95643b1c9cad3b3",
+          "subject_ref": "prd_0c8e48c9f50ad58a7d19ad3d"
+        },
+        {
+          "claim_id": "clm_3d78e1ddd0f699c7f88b63a5",
+          "attribute": "image_sensor",
+          "value": "5.0 MP backside-illuminated onsemi AR0521 CMOS sensor, 2592 × 1944 resolution at up to 22.1 fps",
+          "unit": null,
+          "source_quote": "5.0 MP backside-illuminated onsemi AR0521 CMOS sensor, delivering 2592 × 1944 resolution at up to 22.1 frames per second",
+          "evidence_id": "ev_61ab428491fbcdeccafba7c8",
+          "evidence_hash": "6f6426fb6d4aba95c568fde5233d8718d0513d14b414078817f12aac9af73d45",
+          "subject_ref": "prd_0c8e48c9f50ad58a7d19ad3d"
+        },
+        {
+          "claim_id": "clm_3f514a9c5acd6365c069f09f",
+          "attribute": "sensor",
+          "value": "5.0 MP backside-illuminated onsemi AR0521 CMOS sensor, 1/2.5-inch rolling shutter with global reset",
+          "unit": null,
+          "source_quote": "The Triton TRI055N camera features the 5.0 MP backside-illuminated onsemi AR0521 CMOS sensor",
+          "evidence_id": "ev_ae344dc5f9ca7921bcea3620",
+          "evidence_hash": "4310b3cbedf774c500be03379a2388b27d098093a59d1c046e8a0252be3ea950",
+          "subject_ref": "prd_8d9fcb331fe9bf927dfd44be"
+        },
+        {
+          "claim_id": "clm_401f841fad714ce810295fd2",
+          "attribute": "network interface",
+          "value": "GigE industrial network camera",
+          "unit": null,
+          "source_quote": "Compact 5.0 MP Triton GigE Camera",
+          "evidence_id": "ev_dd8e43b7e8acb73491d921b3",
+          "evidence_hash": "8104593fc02012290f0ba7f1e38e79f93fe11666b03e7c4efa385157fbacb53a",
+          "subject_ref": "prd_0c8e48c9f50ad58a7d19ad3d"
+        },
+        {
+          "claim_id": "clm_40ac474622d2d281cc2e5471",
+          "attribute": "interface_and_protection",
+          "value": "M12 Ethernet connector with M8 GPIO; IP67 protection",
+          "unit": null,
+          "source_quote": "secure M12 Ethernet and M8 GPIO connectors, IP67 protection",
+          "evidence_id": "ev_283b89c97ebd6f5b44c832d1",
+          "evidence_hash": "21b0cd31d12caf0faf879ddf72c3c12228b705c0d6c15e53a95643b1c9cad3b3",
+          "subject_ref": "prd_0c8e48c9f50ad58a7d19ad3d"
+        },
+        {
+          "claim_id": "clm_453a5ba6bd8a4c10d447c4f8",
+          "attribute": "resolution_frame_rate",
+          "value": "2,592 × 1,944 resolution at up to 22.1 frames per second",
+          "unit": null,
+          "source_quote": "delivering 2,592 × 1,944 resolution at up to 22.1 frames per second",
+          "evidence_id": "ev_7407908d4a6146047e762a64",
+          "evidence_hash": "2c8892a8f2d1f8396ec2bdd80dec5f881163a2b4a76807a94c4b3a07a34421d0",
+          "subject_ref": "prd_0c8e48c9f50ad58a7d19ad3d"
+        },
+        {
+          "claim_id": "clm_4849412c37e7a5c7838e4739",
+          "attribute": "video output resolution and frame rate",
+          "value": "2592 × 1944 at up to 22.1 fps (≈5.0 MP class)",
+          "unit": null,
+          "source_quote": "delivering 2592 × 1944 resolution at up to 22.1 frames per second",
+          "evidence_id": "ev_2da51d1e4d649478ded0c96f",
+          "evidence_hash": "b2b0926ecbf768e2512defa913678222f67e15feec0b6a4acde374bbfc5ee765",
+          "subject_ref": "prd_8d9fcb331fe9bf927dfd44be"
+        },
+        {
+          "claim_id": "clm_5a06104375ced797c8c49fef",
+          "attribute": "product_category",
+          "value": "Ethernet machine vision camera",
+          "unit": null,
+          "source_quote": "Ethernet machine vision cameras optimized for speed, reliability, and integration",
+          "evidence_id": "ev_e60bc243a871f89f98e44ef0",
+          "evidence_hash": "de731c3816e74152679d2ba6dec9e1587db3e480a0269a8dfffc50ce2288e067",
+          "subject_ref": "prd_0c8e48c9f50ad58a7d19ad3d"
+        },
+        {
+          "claim_id": "clm_5a4b18f48d44f6b59a09e40a",
+          "attribute": "resolution and frame rate",
+          "value": "2,592 × 1,944 at up to 22.1 frames per second",
+          "unit": "fps",
+          "source_quote": "delivering 2,592 × 1,944 resolution at up to 22.1 frames per second",
+          "evidence_id": "ev_c34e23a6035ae8e11192a847",
+          "evidence_hash": "3e6f3fe762b00606b89211d19a1d0f7d668825271a3e3730fe664abc7d0d976a",
+          "subject_ref": "prd_8d9fcb331fe9bf927dfd44be"
+        },
+        {
+          "claim_id": "clm_5be675e136ba42db6965da86",
+          "attribute": "network_interface",
+          "value": "Triton GigE camera series; M12 Ethernet connector",
+          "unit": null,
+          "source_quote": "its Triton® GigE camera series",
+          "evidence_id": "ev_283b89c97ebd6f5b44c832d1",
+          "evidence_hash": "21b0cd31d12caf0faf879ddf72c3c12228b705c0d6c15e53a95643b1c9cad3b3",
+          "subject_ref": "prd_8d9fcb331fe9bf927dfd44be"
+        },
+        {
+          "claim_id": "clm_5c17e0c896eddd48533c53ad",
+          "attribute": "resolution",
+          "value": "5.0 MP resolution with onsemi AR0521 CMOS sensor",
+          "unit": "MP",
+          "source_quote": "5.0 MP backside-illuminated AR0521 rolling shutter CMOS sensor",
+          "evidence_id": "ev_dd8e43b7e8acb73491d921b3",
+          "evidence_hash": "8104593fc02012290f0ba7f1e38e79f93fe11666b03e7c4efa385157fbacb53a",
+          "subject_ref": "prd_0c8e48c9f50ad58a7d19ad3d"
+        },
+        {
+          "claim_id": "clm_5ec01b367accba1edce798a6",
+          "attribute": "orderability",
+          "value": "available to order",
+          "unit": null,
+          "source_quote": "The Triton TRI055N camera is now available to order.",
+          "evidence_id": "ev_283b89c97ebd6f5b44c832d1",
+          "evidence_hash": "21b0cd31d12caf0faf879ddf72c3c12228b705c0d6c15e53a95643b1c9cad3b3",
+          "subject_ref": "prd_0c8e48c9f50ad58a7d19ad3d"
+        },
+        {
+          "claim_id": "clm_66bf1952bb49507714c88e51",
+          "attribute": "sensor",
+          "value": "5.0 MP backside-illuminated onsemi AR0521 CMOS sensor",
+          "unit": null,
+          "source_quote": "features the 5.0 MP backside-illuminated onsemi AR0521 CMOS sensor",
+          "evidence_id": "ev_7407908d4a6146047e762a64",
+          "evidence_hash": "2c8892a8f2d1f8396ec2bdd80dec5f881163a2b4a76807a94c4b3a07a34421d0",
+          "subject_ref": "prd_0c8e48c9f50ad58a7d19ad3d"
+        },
+        {
+          "claim_id": "clm_7b7fd096ab579e212b167fc6",
+          "attribute": "interface_connectors",
+          "value": "M12 Ethernet and M8 GPIO connectors, IP67 protection",
+          "unit": null,
+          "source_quote": "secure M12 Ethernet and M8 GPIO connectors, IP67 protection, and operating temperature range of -20°C to 55°C",
+          "evidence_id": "ev_96f3cc3f718128bdc4507fd5",
+          "evidence_hash": "099745a19ccfab0bd51d96fd79b486043fb4db6d95171382e61b7b808b1db9b8",
+          "subject_ref": "prd_0c8e48c9f50ad58a7d19ad3d"
+        },
+        {
+          "claim_id": "clm_90512ee8e29947b049a18f4f",
+          "attribute": "resolution",
+          "value": "5.0 MP camera with onsemi AR0521 CMOS sensor (GigE)",
+          "unit": "MP",
+          "source_quote": "Compact 5.0 MP Triton GigE Camera with onsemi AR0521 CMOS Sensor",
+          "evidence_id": "ev_283b89c97ebd6f5b44c832d1",
+          "evidence_hash": "21b0cd31d12caf0faf879ddf72c3c12228b705c0d6c15e53a95643b1c9cad3b3",
+          "subject_ref": "prd_0c8e48c9f50ad58a7d19ad3d"
+        },
+        {
+          "claim_id": "clm_910be8199e87a013d3e571bf",
+          "attribute": "environmental_rating",
+          "value": "IP67 protection, operating temperature range of -20°C to 55°C",
+          "unit": null,
+          "source_quote": "IP67 protection, and operating temperature range of -20°C to 55°C",
+          "evidence_id": "ev_96f3cc3f718128bdc4507fd5",
+          "evidence_hash": "099745a19ccfab0bd51d96fd79b486043fb4db6d95171382e61b7b808b1db9b8",
+          "subject_ref": "prd_0c8e48c9f50ad58a7d19ad3d"
+        },
+        {
+          "claim_id": "clm_96b4567c956eda5c8807821d",
+          "attribute": "sensor_resolution",
+          "value": "5.0-megapixel model",
+          "unit": "megapixels",
+          "source_quote": "5.0-megapixel model featuring onsemi’s AR0521 CMOS image sensor",
+          "evidence_id": "ev_c34e23a6035ae8e11192a847",
+          "evidence_hash": "3e6f3fe762b00606b89211d19a1d0f7d668825271a3e3730fe664abc7d0d976a",
+          "subject_ref": "prd_0c8e48c9f50ad58a7d19ad3d"
+        },
+        {
+          "claim_id": "clm_a59b2d1684b07cc6276a4395",
+          "attribute": "sensor_resolution",
+          "value": "5.0 MP onsemi AR0521 CMOS sensor delivering 2592 × 1944 resolution at up to 22.1 fps",
+          "unit": null,
+          "source_quote": "features the 5.0 MP backside-illuminated onsemi AR0521 CMOS sensor, delivering 2592 × 1944 resolution at up to 22.1 frames per second",
+          "evidence_id": "ev_2da51d1e4d649478ded0c96f",
+          "evidence_hash": "b2b0926ecbf768e2512defa913678222f67e15feec0b6a4acde374bbfc5ee765",
+          "subject_ref": "prd_8d9fcb331fe9bf927dfd44be"
+        },
+        {
+          "claim_id": "clm_a9ce89d05daf7493eac9c292",
+          "attribute": "interface_connectors",
+          "value": "M12 Ethernet and M8 GPIO connectors",
+          "unit": null,
+          "source_quote": "secure M12 Ethernet and M8 GPIO connectors",
+          "evidence_id": "ev_96f3cc3f718128bdc4507fd5",
+          "evidence_hash": "099745a19ccfab0bd51d96fd79b486043fb4db6d95171382e61b7b808b1db9b8",
+          "subject_ref": "prd_0c8e48c9f50ad58a7d19ad3d"
+        },
+        {
+          "claim_id": "clm_af425d77355742083306835b",
+          "attribute": "interface and connectors",
+          "value": "Triton GigE series camera with M12 Ethernet, M8 GPIO, IP67, -20°C to 55°C",
+          "unit": null,
+          "source_quote": "secure M12 Ethernet and M8 GPIO connectors, IP67 protection, and operating temperature range of -20°C to 55°C",
+          "evidence_id": "ev_fc2163622beeb2c7b3297f1a",
+          "evidence_hash": "ec04c4b44e00e0cae8a482d6e366d89dae06ff11dab382f49baffc50d259b413",
+          "subject_ref": "prd_0c8e48c9f50ad58a7d19ad3d"
+        },
+        {
+          "claim_id": "clm_b04ed96720bd2932d4f88259",
+          "attribute": "sensor",
+          "value": "onsemi AR0521 CMOS",
+          "unit": null,
+          "source_quote": "onsemi AR0521 CMOS",
+          "evidence_id": "ev_31730ac5c34a17fbc7c04ded",
+          "evidence_hash": "430b89bc2a21049934ab09bb606667997b41687946c698ebd7416785f87dc606",
+          "subject_ref": "prd_8d9fcb331fe9bf927dfd44be"
+        },
+        {
+          "claim_id": "clm_b49d23776d34337cd6b991d2",
+          "attribute": "resolution",
+          "value": "5.0 MP",
+          "unit": "megapixels",
+          "source_quote": "Compact 5.0 MP Triton GigE Camera",
+          "evidence_id": "ev_283b89c97ebd6f5b44c832d1",
+          "evidence_hash": "21b0cd31d12caf0faf879ddf72c3c12228b705c0d6c15e53a95643b1c9cad3b3",
+          "subject_ref": "prd_0c8e48c9f50ad58a7d19ad3d"
+        },
+        {
+          "claim_id": "clm_b62cf144565b882d252257e3",
+          "attribute": "sensor_resolution",
+          "value": "5.0 MP backside-illuminated onsemi AR0521 CMOS sensor, 2592 × 1944 resolution at up to 22.1 frames per second",
+          "unit": null,
+          "source_quote": "5.0 MP backside-illuminated onsemi AR0521 CMOS sensor, delivering 2592 × 1944 resolution at up to 22.1 frames per second",
+          "evidence_id": "ev_61ab428491fbcdeccafba7c8",
+          "evidence_hash": "6f6426fb6d4aba95c568fde5233d8718d0513d14b414078817f12aac9af73d45",
+          "subject_ref": "prd_8d9fcb331fe9bf927dfd44be"
+        },
+        {
+          "claim_id": "clm_b7e43380dc3f1bf65977621e",
+          "attribute": "variants_mount_interface",
+          "value": "Listed as Mono / Color, C-mount, M12 GigE Vision",
+          "unit": null,
+          "source_quote": "Rolling | C | Mono / Color | M12 GigE Vision",
+          "evidence_id": "ev_31730ac5c34a17fbc7c04ded",
+          "evidence_hash": "430b89bc2a21049934ab09bb606667997b41687946c698ebd7416785f87dc606",
+          "subject_ref": "prd_8d9fcb331fe9bf927dfd44be"
+        },
+        {
+          "claim_id": "clm_c6539e4dedf133ce280acab5",
+          "attribute": "sensor",
+          "value": "5.0 MP backside-illuminated onsemi AR0521 CMOS, 1/2.5-inch rolling shutter, 2.2 µm pixels",
+          "unit": null,
+          "source_quote": "features the 5.0 MP backside-illuminated onsemi AR0521 CMOS sensor",
+          "evidence_id": "ev_2da51d1e4d649478ded0c96f",
+          "evidence_hash": "b2b0926ecbf768e2512defa913678222f67e15feec0b6a4acde374bbfc5ee765",
+          "subject_ref": "prd_8d9fcb331fe9bf927dfd44be"
+        },
+        {
+          "claim_id": "clm_d6564f0665eb61ce8807cdbf",
+          "attribute": "sensor_resolution",
+          "value": "5.0 MP camera with AR0521 sensor (per page title)",
+          "unit": null,
+          "source_quote": "Compact 5.0 MP Triton GigE Camera with AR0521 Sensor",
+          "evidence_id": "ev_614d7a9ec617e963911d6707",
+          "evidence_hash": "75701b6e77bf57500211049f68bb9957c354c9f6aa20071553a285505f423af0",
+          "subject_ref": "prd_0c8e48c9f50ad58a7d19ad3d"
+        },
+        {
+          "claim_id": "clm_d6fa0ae6b7bb8825b6ae24dc",
+          "attribute": "resolution",
+          "value": "5.0 MP",
+          "unit": null,
+          "source_quote": "features the 5.0 MP backside-illuminated onsemi AR0521 CMOS sensor",
+          "evidence_id": "ev_c34e23a6035ae8e11192a847",
+          "evidence_hash": "3e6f3fe762b00606b89211d19a1d0f7d668825271a3e3730fe664abc7d0d976a",
+          "subject_ref": "prd_8d9fcb331fe9bf927dfd44be"
+        },
+        {
+          "claim_id": "clm_e1cf10df3e011de29167a93c",
+          "attribute": "resolution and frame rate",
+          "value": "2592 × 1944 resolution at up to 22.1 frames per second",
+          "unit": "px / fps",
+          "source_quote": "delivering 2592 × 1944 resolution at up to 22.1 frames per second",
+          "evidence_id": "ev_ae344dc5f9ca7921bcea3620",
+          "evidence_hash": "4310b3cbedf774c500be03379a2388b27d098093a59d1c046e8a0252be3ea950",
+          "subject_ref": "prd_8d9fcb331fe9bf927dfd44be"
+        },
+        {
+          "claim_id": "clm_f5e00c750f39d10cd4fa1ee0",
+          "attribute": "image_sensor",
+          "value": "onsemi AR0521 CMOS, 1/2.5-inch rolling shutter",
+          "unit": null,
+          "source_quote": "5.0 MP backside-illuminated onsemi AR0521 CMOS sensor",
+          "evidence_id": "ev_c34e23a6035ae8e11192a847",
+          "evidence_hash": "3e6f3fe762b00606b89211d19a1d0f7d668825271a3e3730fe664abc7d0d976a",
+          "subject_ref": "prd_0c8e48c9f50ad58a7d19ad3d"
+        },
+        {
+          "claim_id": "clm_fa138b9bbb88eeae6bbb4448",
+          "attribute": "interface_connectors",
+          "value": "Secure M12 Ethernet and M8 GPIO connectors; IP67 protection; operating range -20°C to 55°C",
+          "unit": null,
+          "source_quote": "secure M12 Ethernet and M8 GPIO connectors, IP67 protection, and operating temperature range of -20°C to 55°C",
+          "evidence_id": "ev_614d7a9ec617e963911d6707",
+          "evidence_hash": "75701b6e77bf57500211049f68bb9957c354c9f6aa20071553a285505f423af0",
+          "subject_ref": "prd_0c8e48c9f50ad58a7d19ad3d"
+        },
+        {
+          "claim_id": "clm_fe707c51a91069c75a19ad8c",
+          "attribute": "network_connector",
+          "value": "secure M12 Ethernet and M8 GPIO connectors",
+          "unit": null,
+          "source_quote": "secure M12 Ethernet and M8 GPIO connectors",
+          "evidence_id": "ev_2da51d1e4d649478ded0c96f",
+          "evidence_hash": "b2b0926ecbf768e2512defa913678222f67e15feec0b6a4acde374bbfc5ee765",
+          "subject_ref": "prd_8d9fcb331fe9bf927dfd44be"
+        }
+      ]
+    }
+  },
+  "expected": {
+    "IPS05-R10-OIA4": {
+      "verdict": "PASS",
+      "reason": "The source calls this model a 5MP corner camera, so it delivers five megapixels."
+    },
+    "NBN-80052-BA": {
+      "verdict": "PASS",
+      "reason": "The source says it captures 16:9 images at 5 megapixel resolution, which is the delivered resolution."
+    },
+    "TRI050S-MC": {
+      "verdict": "UNKNOWN",
+      "reason": "Only two claims were found and neither states the output resolution."
+    },
+    "TRI055N": {
+      "verdict": "UNKNOWN",
+      "reason": "The source states the resolution as a pixel size of 2,592 by 1,944, which is not a number the quotation check can confirm."
+    }
+  }
+}

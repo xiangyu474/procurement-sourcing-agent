@@ -41,6 +41,9 @@ from procurement_agent.domain.units import convert_between, normalize_unit
 
 CALCULATOR_VERSION = "0.1.0"
 DSL_SCHEMA_VERSION = "1.0"
+# The rule that turns the per-constraint verdicts into the overall verdict.
+# A change here invalidates the cached assessments.
+AGGREGATION_RULE_VERSION = "hard-aggregate-1.0"
 
 
 @dataclass(frozen=True)
