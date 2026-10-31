@@ -1047,6 +1047,7 @@ export class SourcingSpecWorkflow extends WorkflowEntrypoint<Env, SpecRequest> {
 								},
 								requirement_ids: requirementIds,
 								candidate_ids: candidateIds,
+								review_reason: reviewReason,
 							}),
 						}),
 					);
