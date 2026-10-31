@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -31,7 +32,13 @@ API_ROOT = f"https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}"
 
 
 def _cloudflare_token() -> str:
-    """Read the OAuth token the Cloudflare CLI is signed in with."""
+    """Read the OAuth token the Cloudflare CLI is signed in with.
+
+    The CLI refreshes the token when it runs, so it is asked first: the token
+    in the file can be an hour old, and the API answers 401 for that.
+    """
+    npx = "npx.cmd" if os.name == "nt" else "npx"
+    subprocess.run([npx, "wrangler", "--version"], capture_output=True, text=True)
     config = Path(os.path.expandvars(r"%APPDATA%")) / "xdg.config" / "cloudflare" / "config" / "default.json"
     if not config.exists():
         raise SystemExit("The Cloudflare CLI is not signed in; run `cf login` first.")
@@ -70,7 +77,7 @@ def _wait(client: httpx.Client, instance_id: str, timeout: int = 5400) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--title", default="cloud acceptance from the api")
-    parser.add_argument("--timeout", type=int, default=5400)
+    parser.add_argument("--timeout", type=int, default=10800)
     args = parser.parse_args()
 
     token = _cloudflare_token()
