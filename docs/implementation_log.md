@@ -411,3 +411,26 @@ The five passes are real verdicts, each with its calculation and its evidence: `
 The decisions follow the verdicts: the five that passed are shortlist with a verified pass, the sixteen that could not be judged are investigate with an unverified verdict. No decision invented an evidence identifier, no unknown was written down as a pass, and no rejected verdict was accepted.
 
 The script `scripts/run_cloud_acceptance.py` starts the workflow through the Cloudflare API and prints the report. The other acceptance scripts, which drive the same gateway over HTTP, remain the better choice when the network allows it.
+
+### The technical check was slow, and now it is not
+
+The M3-A check took 563 seconds for 39 candidates and 99 claims. It now takes 197 seconds, and the verdicts are better.
+
+Three changes, each measured on the real M2 output:
+
+- **The typing step does not need the model to think at length.** It reads a number out of a quotation and the code checks that number against the quotation, so it runs with the reasoning off. The setting is `MODEL_REASONING_EFFORT`, and it is empty by default, which keeps the endpoint's own behaviour.
+- **The typing prompt asks for the claims that state one of the attributes the requirement names.** The claims about something else are not typed at all.
+- **The batches run together.** The typing batches and the alignment batches do not depend on each other. The alignment now asks one question per model instead of one question for every model, which keeps each judgement focused and the prompt small.
+
+| | Before | After |
+|---|---|---|
+| Wall clock | 563 s | **197 s** |
+| Model calls | 8 | 22 |
+| Completion tokens | 86,933 | 47,874 |
+| Verdicts | 1 pass | **30 passes** |
+
+The verdicts improved because the research now asks for the output resolution, which is the change of the two prompts. The completion tokens fell even though the call count rose, because the thinking was the bulk of the output.
+
+The measured cost of the endpoint without the reasoning is on a single typing-shaped request: 22.6 seconds and 3,690 completion tokens by default, 11.0 seconds and 1,642 with the reasoning off. The alignment keeps the reasoning, because it has to weigh two meanings of a measurement.
+
+One thing to know: a local run fills the LangSmith trace quota quickly, and the endpoint then answers 429 for the trace upload. The traces are only affected, not the work.
