@@ -5,11 +5,11 @@ window.Proto = {
 	},
 	state() {
 		const value = new URLSearchParams(location.search).get("state") || "empty";
-		const known = ["empty", "input", "running", "completed", "partial", "failed", "denied"];
+		const known = ["empty", "input", "running", "completed", "partial", "failed", "denied", "noreport"];
 		return known.includes(value) ? value : "empty";
 	},
 	rows(state) {
-		if (state === "completed") return window.FIXTURE.full;
+		if (state === "completed" || state === "noreport") return window.FIXTURE.full;
 		if (state === "partial") return window.FIXTURE.partial;
 		return [];
 	},

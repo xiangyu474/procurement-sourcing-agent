@@ -49,7 +49,7 @@ window.FIXTURE = {
 			prices: [
 				{ kind: "公网参考价", text: "页面标价 96 元/台。不是正式询价报价。" },
 				{ kind: "历史成交价", text: "历史文件已导入，但没有对上这个型号。" },
-				{ kind: "正式询价报价", text: "还没有。" },
+				{ kind: "正式报价", text: "还没有。" },
 			],
 			evidence: {
 				title: "IPC-B125-APF 规格摘要",
@@ -75,7 +75,7 @@ window.FIXTURE = {
 				retrieved: "2026-10-28",
 				excerpt: "4MP 网络摄像机，支持 PoE。",
 			},
-			gap: "查阅在预算用完时停止，下面这条没有打开到来源。",
+			gap: "需求写的是 5MP，页面写的是 4MP。这一条保持为还不能判断。",
 		},
 		{
 			id: "c4",
