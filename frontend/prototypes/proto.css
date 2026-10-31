@@ -1,0 +1,30 @@
+.proto {
+	position: sticky;
+	top: 0;
+	z-index: 5;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px 12px;
+	align-items: center;
+	padding: 8px 16px;
+	background: #161616;
+	color: #f4f4f4;
+	font: 13px/1.4 "WenQuanYi Micro Hei", "Droid Sans Fallback", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.proto strong { font-weight: 600; }
+
+.proto span { color: #bdbdbd; }
+
+.proto a {
+	color: inherit;
+	text-decoration: none;
+	border: 1px solid #4a4a4a;
+	padding: 2px 8px;
+}
+
+.proto a[aria-current="true"] {
+	background: #f4f4f4;
+	color: #161616;
+	border-color: #f4f4f4;
+}

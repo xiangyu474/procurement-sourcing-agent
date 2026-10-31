@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>原型 · 对照</title>
+		<link rel="stylesheet" href="proto.css" />
+		<link rel="stylesheet" href="inspector.css" />
+	</head>
+	<body>
+		<div class="proto">
+			<strong>原型 · 对照</strong>
+			<span>夹具，不连接服务</span>
+			<a href="?state=empty">空项目</a>
+			<a href="?state=input">填写需求</a>
+			<a href="?state=running">寻源中</a>
+			<a href="?state=completed">已结束</a>
+			<a href="?state=partial">部分完成</a>
+			<a href="?state=failed">未能完成</a>
+			<a href="?state=denied">访问被拒绝</a>
+			<a href="index.html">三个方向</a>
+		</div>
+		<div id="app" class="shell"></div>
+		<script src="fixtures.js"></script>
+		<script src="proto.js"></script>
+		<script src="inspector.js"></script>
+	</body>
+</html>
