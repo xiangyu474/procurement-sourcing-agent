@@ -2237,6 +2237,7 @@ export default {
 				const body = (await request.json().catch(() => ({}))) as {
 					requirement_ids?: string[];
 					candidate_ids?: string[];
+					review_reason?: string;
 				};
 				// The typing and the alignment hold one model call open for
 				// minutes, so the evaluation runs as a workflow and the client
@@ -2246,6 +2247,7 @@ export default {
 						projectId,
 						requirementIds: body.requirement_ids ?? [],
 						candidateIds: body.candidate_ids ?? [],
+						reviewReason: String(body.review_reason ?? "").slice(0, 500),
 					},
 				});
 				return json({
