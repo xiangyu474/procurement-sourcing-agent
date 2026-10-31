@@ -798,6 +798,13 @@ async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = 
             failures = []
             if research_status == "FAILED":
                 failures.append(f"the research run failed: {run_id}")
+            elif not candidates:
+                # The research finished without a candidate that rests on a
+                # source. There is nothing to judge, and waiting for it would
+                # only waste the run.
+                failures.append(
+                    "the research produced no candidate that rests on a source, so there is nothing to judge",
+                )
             state = {
                 "project_id": project_id,
                 "run_id": run_id,
