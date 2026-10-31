@@ -37,8 +37,9 @@ def _cloudflare_token() -> str:
     The CLI refreshes the token when it runs, so it is asked first: the token
     in the file can be an hour old, and the API answers 401 for that.
     """
-    npx = "npx.cmd" if os.name == "nt" else "npx"
-    subprocess.run([npx, "wrangler", "--version"], capture_output=True, text=True)
+    # The CLI refreshes the token when it makes an authenticated call, so it
+    # is asked for the account rather than for its version.
+    subprocess.run(["cf", "auth", "whoami"], capture_output=True, text=True)
     config = Path(os.path.expandvars(r"%APPDATA%")) / "xdg.config" / "cloudflare" / "config" / "default.json"
     if not config.exists():
         raise SystemExit("The Cloudflare CLI is not signed in; run `cf login` first.")
