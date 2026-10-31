@@ -750,6 +750,7 @@ interface SpecRequest {
 	projectId: string;
 	requirementIds: string[];
 	candidateIds: string[];
+	reviewReason: string;
 }
 
 interface DecisionRequest {
@@ -1019,7 +1020,7 @@ async function stableSpecId(projectId: string, requirementId: string, candidateI
 
 export class SourcingSpecWorkflow extends WorkflowEntrypoint<Env, SpecRequest> {
 	async run(event: WorkflowEvent<SpecRequest>, step: WorkflowStep) {
-		const { projectId, requirementIds, candidateIds } = event.payload;
+		const { projectId, requirementIds, candidateIds, reviewReason } = event.payload;
 		try {
 			const result = await step.do(
 				"evaluate-spec",
