@@ -46,6 +46,22 @@ STAGE_LABELS = {
     "EXCLUDED": "已排除",
 }
 
+# The price analysis writes its notes in English, because it is a service and
+# not a document. The report is read in Chinese, so the notes that a buyer can
+# meet are translated here. An unknown note is written as it is.
+NOTE_TRANSLATIONS = {
+    "This project has no imported purchase history.": "本项目没有导入历史采购数据。",
+    "No internal purchase history was imported, so there is no historical distribution.": (
+        "本项目没有导入历史采购数据，因此没有历史价格分布。"
+    ),
+    "The history rows of the simulated suppliers stay separate from every public company.": (
+        "模拟供应商的历史行与所有公网企业保持隔离。"
+    ),
+    "No product equivalence was confirmed, so the public prices are not joined with the history.": (
+        "没有确认产品等价关系，因此公开价格不与历史价格合并。"
+    ),
+}
+
 PRICE_BASIS_LABELS = {
     "PLANNED_BUDGET": "计划价",
     "HISTORICAL_TRANSACTION": "历史成交价",
@@ -111,6 +127,11 @@ def _text(value: Any) -> str:
     return str(value)
 
 
+def translate_note(note: str) -> str:
+    """Write a note of the price analysis in the language of the report."""
+    return NOTE_TRANSLATIONS.get(note.strip(), note)
+
+
 def _table(document: Document, headers: list[str], rows: list[list[str]]) -> Any:
     table = document.add_table(rows=1, cols=len(headers))
     table.style = "Table Grid"
@@ -130,12 +151,22 @@ def _money(value: Any, currency: str | None = None, unit: str | None = None) -> 
     return f"{text} {currency or ''} {unit or ''}".strip()
 
 
+def _amount_text(value: Any) -> str:
+    """Read a planned price, whether it comes as a text or as an object."""
+    if isinstance(value, dict):
+        amount = _text(value.get("value"))
+        currency = _text(value.get("currency"))
+        unit = _text(value.get("unit"))
+        return f"{amount} {currency} {unit}".strip()
+    return _text(value)
+
+
 def _requirement_summary(requirement: dict[str, Any]) -> list[str]:
     """The demand of one requirement, with the source of every hard rule."""
     product = _text(requirement.get("product_name")) or "（未命名品项）"
     quantity = _text(requirement.get("quantity"))
     unit = _text(requirement.get("quantity_unit"))
-    budget = _text(requirement.get("planned_unit_price") or requirement.get("planned_total_budget"))
+    budget = _amount_text(requirement.get("planned_unit_price") or requirement.get("planned_total_budget"))
     lines = [f"品名：{product}"]
     if quantity:
         lines.append(f"数量：{quantity} {unit}".strip())
@@ -225,7 +256,7 @@ def _price_section(document: Document, data: ReportInput) -> None:
         else:
             document.add_paragraph("本需求没有产生可比较的价格结论。")
         for note_text in context.get("notes") or []:
-            document.add_paragraph(_text(note_text))
+            document.add_paragraph(translate_note(_text(note_text)))
 
 
 def _decision_section(document: Document, data: ReportInput) -> None:
