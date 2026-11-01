@@ -141,40 +141,92 @@ GET /api/projects/{project_id}/reports/{report_id}
 
 ## 3. 还需要补的接口（前端提出的缺口）
 
-### 3.1 需求整理状态 —— 后端补，前端直接用
+### 3.1 需求整理状态 —— **已实现**，前端直接用
 
-- 缺口原因：`GET .../requirements` 的 404 与「整理失败」混在一起。
-- 计划：后端新增 `GET /api/projects/{project_id}/requirement-compile/{compile_id}`，
-  返回 `{compile_id, project_id, status, analysis_version, demand_revision, error}`，
-  `status` 为 `QUEUED/RUNNING/COMPLETED/FAILED`；`FAILED` 的 `error` 是可展示短句，不含密钥。
-- 数据结构：D1 新表 `project_jobs`（`id, project_id, job_type, status, error, detail_json, created_at, updated_at`），
-  发起任务时写一行，工作流结束时更新状态。
-- 负责人：**后端**（本仓库）。
+```http
+GET /api/projects/{project_id}/requirement-compile/{compile_id}
+```
 
-### 3.2 技术核对 / 决策的任务状态 —— 后端补，前端直接用
+```json
+{
+  "compile_id": "uuid",
+  "project_id": "uuid",
+  "status": "QUEUED",
+  "analysis_version": 2,
+  "demand_revision": 2,
+  "error": null
+}
+```
 
-- 缺口原因：空的 `GET .../spec-assessments` 无法区分「还在跑」和「失败了」。
-- 计划：后端新增 `GET /api/projects/{project_id}/spec-assessments/status` 与 `GET /api/projects/{project_id}/decisions/status`，
-  形状同上（`status` 为 `IDLE/QUEUED/RUNNING/COMPLETED/FAILED`，另带 `job_id`、`demand_revision`、`error`）。
-- **结果行本身不变**：仍由现有 GET 返回，字段不改（前端 F2 的解析不用动）。
-- 负责人：**后端**。
+`status`：`QUEUED` / `RUNNING` / `COMPLETED` / `FAILED`；`FAILED` 的 `error` 是可展示短句，不含密钥。
+`compile_id` 就是 `POST .../requirement-compile` 返回的 `compile_id`（一个 `project_jobs` 行的 id）。
 
-### 3.3 项目列表 —— 后端补，前端直接用
+> 注意：后端的 `project_jobs` 表有 `job_type`（`COMPILE` / `SPEC_ASSESSMENT` / `DECISION` / `REPORT`），
+> 前端**不需要**直接查表，只用下面列出的 HTTP 接口。
 
-- `GET /api/projects?limit=50` → `{projects:[{id,title,history_availability,demand_revision,analysis_version,created_at,latest_run:{id,status,current_stage,updated_at}|null}]}`。
-- `latest_run` 没有时为 `null`；`status` 只用现有枚举。
-- 负责人：**后端**。
+### 3.2 技术核对 / 决策的任务状态 —— **已实现**，前端直接用
 
-### 3.4 项目下的运行列表 —— 后端补，前端直接用
+```http
+GET /api/projects/{project_id}/spec-assessments/status
+GET /api/projects/{project_id}/decisions/status
+```
 
-- `GET /api/projects/{project_id}/runs` → `{runs:[{id,status,current_stage,last_error,stop_reason_code,artifact_key_present,created_at,updated_at}]}`，按 `created_at` 倒序。
-- `stop_reason_code` 来自 `research_run_costs.stop_reason_code`（今天的 `PARTIAL` 原因只藏在 `GET /api/runs/{id}/research` 的 `metrics` 里，而那个对象带 token，前端不应展示）。
-- 负责人：**后端**。
+```json
+{
+  "status": "COMPLETED",
+  "job_id": "uuid",
+  "demand_revision": 2,
+  "error": null,
+  "detail": { "assessments": 43, "by_overall": { "PASS": 22, "UNKNOWN": 21 } },
+  "created_at": "…",
+  "updated_at": "…"
+}
+```
 
-### 3.5 文字需求正文回读 —— 后端补，前端直接用
+`status`：`IDLE`（还没有发起过）/ `QUEUED` / `RUNNING` / `COMPLETED` / `FAILED`。
+`detail` 的内容随任务类型不同（技术核对是 `assessments` 与 `by_overall`，决策是 `decisions` / `accepted` / `rejected`）。
+**结果行本身不变**：仍由现有 GET 返回，字段不改（前端 F2 的解析不用动）。
 
-- `GET /api/projects/{project_id}/requirement-text` → `{source_id, revision, text}`；只返回最新一条 `USER_TEXT`；没有则 404 `not_found`。
-- 负责人：**后端**。
+### 3.3 项目列表 —— **已实现**，前端直接用
+
+```http
+GET /api/projects?limit=50
+```
+
+```json
+{ "projects": [ { "id": "uuid", "title": "项目名称", "history_availability": "NOT_PROVIDED",
+  "demand_revision": 1, "analysis_version": 2, "created_at": "…",
+  "latest_run": { "id": "uuid", "status": "PARTIAL", "current_stage": "PARTIAL", "updated_at": "…" } } ] }
+```
+
+`latest_run` 没有时为 `null`；`status` 只用现有枚举。
+
+### 3.4 项目下的运行列表 —— **已实现**，前端直接用
+
+```http
+GET /api/projects/{project_id}/runs
+```
+
+```json
+{ "runs": [ { "id": "uuid", "status": "PARTIAL", "current_stage": "PARTIAL", "last_error": null,
+  "stop_reason_code": "BUDGET_EXHAUSTED", "artifact_key_present": false,
+  "created_at": "…", "updated_at": "…" } ] }
+```
+
+按 `created_at` 倒序。`stop_reason_code` 来自 `research_run_costs.stop_reason_code`
+（今天的 `PARTIAL` 原因只藏在 `GET /api/runs/{id}/research` 的 `metrics` 里，而那个对象带 token，前端不应展示）。
+
+### 3.5 文字需求正文回读 —— **已实现**，前端直接用
+
+```http
+GET /api/projects/{project_id}/requirement-text
+```
+
+```json
+{ "source_id": "uuid", "revision": 2, "text": "原文" }
+```
+
+只返回最新一条 `USER_TEXT`；没有则 404 `not_found`。
 
 ### 3.6 项目级修订（`POST /api/projects/{project_id}/actions`）—— **后端，本轮未做**
 
@@ -211,4 +263,5 @@ GET /api/projects/{project_id}/reports/{report_id}
 | 日期 | 方 | 内容 |
 | --- | --- | --- |
 | 2026-10-31 | 后端 | 首次答复：§1 接口清单以真实响应为准；§2 正式报告接口已实现；§3 为待补项与负责人；§3.7 为鉴权方案，请确认是否接受 Cloudflare Access。 |
+| 2026-11-01 | 后端 | §3.1–§3.5 已实现并部署（项目列表、项目运行列表、需求正文回读、整理/核对/决策的任务状态）。新增响应字段：`POST .../requirement-compile` 返回 `compile_id`（作业 id）与 `workflow_id`；`POST .../spec-assessments` 与 `POST .../decisions` 返回 `job_id`。§3.6（项目级修订）本轮未做，原因见该节。 |
 |  |  |  |
