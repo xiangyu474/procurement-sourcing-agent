@@ -83,80 +83,80 @@ def main() -> int:
         return " ".join(part for part in statement.split() if part)
 
     statements = {
-        "projects list": f"""
-			SELECT p.id, p.title, p.history_availability, p.demand_revision, p.analysis_version,
-			       p.created_at,
-			       (SELECT r.id FROM runs r WHERE r.project_id = p.id ORDER BY r.created_at DESC LIMIT 1) AS run_id,
-			       (SELECT r.status FROM runs r WHERE r.project_id = p.id ORDER BY r.created_at DESC LIMIT 1) AS run_status,
-			       (SELECT r.current_stage FROM runs r WHERE r.project_id = p.id ORDER BY r.created_at DESC LIMIT 1) AS run_stage,
-			       (SELECT r.updated_at FROM runs r WHERE r.project_id = p.id ORDER BY r.created_at DESC LIMIT 1) AS run_updated_at
-			FROM projects p
+        "projects list": """
+            SELECT p.id, p.title, p.history_availability, p.demand_revision, p.analysis_version,
+                   p.created_at,
+                   (SELECT r.id FROM runs r WHERE r.project_id = p.id ORDER BY r.created_at DESC LIMIT 1) AS run_id,
+                   (SELECT r.status FROM runs r WHERE r.project_id = p.id ORDER BY r.created_at DESC LIMIT 1) AS run_status,
+                   (SELECT r.current_stage FROM runs r WHERE r.project_id = p.id ORDER BY r.created_at DESC LIMIT 1) AS run_stage,
+                   (SELECT r.updated_at FROM runs r WHERE r.project_id = p.id ORDER BY r.created_at DESC LIMIT 1) AS run_updated_at
+            FROM projects p
 			ORDER BY p.created_at DESC LIMIT 5""",
-        "project runs": f"""
-			SELECT r.id, r.status, r.current_stage, r.last_error, r.artifact_key, r.created_at, r.updated_at,
-			       (SELECT c.stop_reason_code FROM research_run_costs c WHERE c.run_id = r.id) AS stop_reason_code
-			FROM runs r
-			WHERE r.project_id = '{project_id}'
+        "project runs": """
+            SELECT r.id, r.status, r.current_stage, r.last_error, r.artifact_key, r.created_at, r.updated_at,
+                   (SELECT c.stop_reason_code FROM research_run_costs c WHERE c.run_id = r.id) AS stop_reason_code
+            FROM runs r
+            WHERE r.project_id = '{project_id}'
 			ORDER BY r.created_at DESC LIMIT 100""",
-        "requirement text": f"""
-			SELECT id, revision, text_content FROM source_inputs
-			WHERE project_id = '{project_id}' AND purpose = 'REQUIREMENT' AND source_type = 'USER_TEXT'
+        "requirement text": """
+            SELECT id, revision, text_content FROM source_inputs
+            WHERE project_id = '{project_id}' AND purpose = 'REQUIREMENT' AND source_type = 'USER_TEXT'
 			ORDER BY revision DESC LIMIT 1""",
-        "compile status": f"""
-			SELECT id, job_type, status, error, detail_json, created_at, updated_at
-			FROM project_jobs
+        "compile status": """
+            SELECT id, job_type, status, error, detail_json, created_at, updated_at
+            FROM project_jobs
 			WHERE workspace_id = 'default' AND project_id = '{project_id}' AND id = 'none' AND job_type = 'COMPILE'""",
-        "job status": f"""
-			SELECT id, status, error, detail_json, created_at, updated_at
-			FROM project_jobs
-			WHERE workspace_id = 'default' AND project_id = '{project_id}' AND job_type = 'DECISION'
+        "job status": """
+            SELECT id, status, error, detail_json, created_at, updated_at
+            FROM project_jobs
+            WHERE workspace_id = 'default' AND project_id = '{project_id}' AND job_type = 'DECISION'
 			ORDER BY created_at DESC LIMIT 1""",
-        "reports list": f"""
-			SELECT id, run_id, status, decision_version, byte_size, sha256, error, created_at, updated_at
-			FROM project_reports
-			WHERE workspace_id = 'default' AND project_id = '{project_id}'
+        "reports list": """
+            SELECT id, run_id, status, decision_version, byte_size, sha256, error, created_at, updated_at
+            FROM project_reports
+            WHERE workspace_id = 'default' AND project_id = '{project_id}'
 			ORDER BY created_at DESC LIMIT 100""",
-        "report status": f"""
-			SELECT id, run_id, status, decision_version, byte_size, sha256, error, created_at, updated_at
-			FROM project_reports
+        "report status": """
+            SELECT id, run_id, status, decision_version, byte_size, sha256, error, created_at, updated_at
+            FROM project_reports
 			WHERE workspace_id = 'default' AND project_id = '{project_id}' AND id = 'none'""",
-        "report candidates": f"""
-			SELECT c.id AS candidate_id, c.requirement_id, c.stage, c.rationale,
-			       c.open_questions_json, s.display_name AS supplier_name,
-			       p.model AS product_model, p.product_name,
-			       (SELECT group_concat(e.evidence_id) FROM project_candidate_evidence e
-			        WHERE e.workspace_id = c.workspace_id AND e.candidate_id = c.id) AS evidence_ids
-			FROM project_candidates c
-			LEFT JOIN intelligence_suppliers s ON s.workspace_id = c.workspace_id AND s.id = c.supplier_id
-			LEFT JOIN intelligence_products p ON p.workspace_id = c.workspace_id AND p.id = c.product_id
-			WHERE c.workspace_id = 'default' AND c.project_id = '{project_id}'
+        "report candidates": """
+            SELECT c.id AS candidate_id, c.requirement_id, c.stage, c.rationale,
+                   c.open_questions_json, s.display_name AS supplier_name,
+                   p.model AS product_model, p.product_name,
+                   (SELECT group_concat(e.evidence_id) FROM project_candidate_evidence e
+                    WHERE e.workspace_id = c.workspace_id AND e.candidate_id = c.id) AS evidence_ids
+            FROM project_candidates c
+            LEFT JOIN intelligence_suppliers s ON s.workspace_id = c.workspace_id AND s.id = c.supplier_id
+            LEFT JOIN intelligence_products p ON p.workspace_id = c.workspace_id AND p.id = c.product_id
+            WHERE c.workspace_id = 'default' AND c.project_id = '{project_id}'
 			ORDER BY c.updated_at DESC LIMIT 600""",
-        "report assessments": f"""
-			SELECT s.requirement_id, s.product_candidate_id, s.product_model_ref,
-			       s.hard_spec_overall, s.overall_reason_codes_json, s.assessment_json,
-			       s.judgment_version, s.evaluated_at
-			FROM spec_assessments s
-			WHERE s.workspace_id = 'default' AND s.project_id = '{project_id}'
-			  AND s.judgment_version = (
-			    SELECT MAX(inner_s.judgment_version) FROM spec_assessments inner_s
-			    WHERE inner_s.workspace_id = s.workspace_id AND inner_s.project_id = s.project_id
-			      AND inner_s.requirement_id = s.requirement_id
-			      AND inner_s.product_candidate_id = s.product_candidate_id
-			      AND inner_s.demand_revision = s.demand_revision)
+        "report assessments": """
+            SELECT s.requirement_id, s.product_candidate_id, s.product_model_ref,
+                   s.hard_spec_overall, s.overall_reason_codes_json, s.assessment_json,
+                   s.judgment_version, s.evaluated_at
+            FROM spec_assessments s
+            WHERE s.workspace_id = 'default' AND s.project_id = '{project_id}'
+              AND s.judgment_version = (
+                SELECT MAX(inner_s.judgment_version) FROM spec_assessments inner_s
+                WHERE inner_s.workspace_id = s.workspace_id AND inner_s.project_id = s.project_id
+                  AND inner_s.requirement_id = s.requirement_id
+                  AND inner_s.product_candidate_id = s.product_candidate_id
+                  AND inner_s.demand_revision = s.demand_revision)
 			ORDER BY s.requirement_id, s.product_candidate_id""",
-        "report decisions": f"""
-			SELECT d.requirement_id, d.product_candidate_id, d.product_model_ref, d.recommendation,
-			       d.technical_verdict, d.hard_spec_overall, d.accepted, d.rationale, d.gaps_json,
-			       d.next_actions_json, d.evidence_ids_json, d.priority_rank, d.decision_json,
-			       d.violations_json, d.decided_at
-			FROM sourcing_decisions d
-			WHERE d.workspace_id = 'default' AND d.project_id = '{project_id}'
+        "report decisions": """
+            SELECT d.requirement_id, d.product_candidate_id, d.product_model_ref, d.recommendation,
+                   d.technical_verdict, d.hard_spec_overall, d.accepted, d.rationale, d.gaps_json,
+                   d.next_actions_json, d.evidence_ids_json, d.priority_rank, d.decision_json,
+                   d.violations_json, d.decided_at
+            FROM sourcing_decisions d
+            WHERE d.workspace_id = 'default' AND d.project_id = '{project_id}'
 			ORDER BY d.requirement_id, d.product_candidate_id""",
-        "report history": f"""
-			SELECT normalized_r2_key FROM history_datasets WHERE project_id = '{project_id}'
+        "report history": """
+            SELECT normalized_r2_key FROM history_datasets WHERE project_id = '{project_id}'
 			ORDER BY imported_at DESC LIMIT 1""",
-        "report evidence": f"""
-			SELECT id, title, source_url, excerpt, content_sha256 FROM research_evidence
+        "report evidence": """
+            SELECT id, title, source_url, excerpt, content_sha256 FROM research_evidence
 			WHERE workspace_id = 'default' AND id IN ('none')""",
     }
 
