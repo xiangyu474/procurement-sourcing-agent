@@ -1718,7 +1718,7 @@ export default {
 				const projectId = decodeURIComponent(reportContextMatch[1]);
 				const project = await env.DB.prepare(
 					`SELECT id, title, demand_revision, created_at FROM projects
-					 WHERE workspace_id = 'default' AND id = ?1`,
+					 WHERE id = ?1`,
 				)
 					.bind(projectId)
 					.first<{ id: string; title: string; demand_revision: number; created_at: string }>();
@@ -2315,7 +2315,7 @@ export default {
 				.bind(projectId, jobType)
 				.first<Record<string, unknown>>();
 			const revision = await env.DB.prepare(
-				`SELECT demand_revision FROM projects WHERE workspace_id = 'default' AND id = ?1`,
+				`SELECT demand_revision FROM projects WHERE id = ?1`,
 			)
 				.bind(projectId)
 				.first<{ demand_revision: number }>();

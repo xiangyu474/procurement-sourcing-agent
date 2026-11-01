@@ -72,7 +72,6 @@ export const projectsListSql = `
 	       (SELECT r.current_stage FROM runs r WHERE r.project_id = p.id ORDER BY r.created_at DESC LIMIT 1) AS run_stage,
 	       (SELECT r.updated_at FROM runs r WHERE r.project_id = p.id ORDER BY r.created_at DESC LIMIT 1) AS run_updated_at
 	FROM projects p
-	WHERE p.workspace_id = 'default'
 	ORDER BY p.created_at DESC LIMIT ?1`;
 
 /** The runs of one project. */
