@@ -10,6 +10,7 @@ export function DemandForm(props: {
 	locked: boolean;
 	collapsed: boolean;
 	compileCount: number | null;
+	compileNotices: string[];
 	historyNote: HistoryNote | null;
 	synthetic: boolean | null;
 	startLabel: string;
@@ -111,6 +112,11 @@ export function DemandForm(props: {
 			<form onSubmit={start}>
 				{fields}
 				{actions}
+				{props.compileNotices.map((notice) => (
+					<p className="notice" key={notice}>
+						{notice}
+					</p>
+				))}
 			</form>
 		);
 	}
@@ -122,6 +128,11 @@ export function DemandForm(props: {
 				{fields}
 			</details>
 			{actions}
+			{props.compileNotices.map((notice) => (
+				<p className="notice" key={notice}>
+					{notice}
+				</p>
+			))}
 		</form>
 	);
 }

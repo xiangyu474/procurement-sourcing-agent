@@ -8,6 +8,7 @@ export type RunPort = {
 	run: Run | null;
 	events: RunEvent[];
 	stopReason: string | null;
+	candidateCount: number | null;
 	runRef: MutableRefObject<Run | null>;
 	watch: (runId: string, signal: AbortSignal, onRun: (run: Run) => void) => Promise<void>;
 	reset: () => void;
@@ -18,6 +19,7 @@ export function useRunWatch(clientRef: MutableRefObject<ApiClient>): RunPort {
 	const [run, setRun] = useState<Run | null>(null);
 	const [events, setEvents] = useState<RunEvent[]>([]);
 	const [stopReason, setStopReason] = useState<string | null>(null);
+	const [candidateCount, setCandidateCount] = useState<number | null>(null);
 	const runRef = useRef(run);
 	const generation = useRef(0);
 	runRef.current = run;
@@ -25,26 +27,32 @@ export function useRunWatch(clientRef: MutableRefObject<ApiClient>): RunPort {
 	async function watch(runId: string, signal: AbortSignal, onRun: (run: Run) => void): Promise<void> {
 		const ticket = ++generation.current;
 		while (!signal.aborted && generation.current === ticket) {
-			const next = await clientRef.current.getRun(runId, { signal });
+			const [next, events] = await Promise.all([
+				clientRef.current.getRun(runId, { signal }),
+				clientRef.current.getRunEvents(runId, { signal }),
+			]);
+			if (signal.aborted || generation.current !== ticket) return;
+			let reason: string | null = null;
+			let count: number | null = null;
+			if (next.status === "PARTIAL" || next.status === "FAILED") {
+				try {
+					const summary = await clientRef.current.getResearchSummary(runId, { signal });
+					reason = summary.stopReason;
+					count = summary.candidateCount;
+				} catch (caught) {
+					if (isAbort(caught) || signal.aborted || generation.current !== ticket) return;
+				}
+			}
 			if (signal.aborted || generation.current !== ticket) return;
 			runRef.current = next;
 			setRun(next);
-			setEvents(await clientRef.current.getRunEvents(runId, { signal }));
+			setEvents(events);
+			setStopReason(reason);
+			setCandidateCount(count);
 			onRun(next);
 			if (!isTerminalRun(next.status)) {
-				setStopReason(null);
 				await sleep(POLL_INTERVAL_MS, signal);
 				continue;
-			}
-			if (next.status === "PARTIAL" || next.status === "FAILED") {
-				try {
-					setStopReason(await clientRef.current.getStopReason(runId, { signal }));
-				} catch (caught) {
-					if (isAbort(caught)) return;
-					setStopReason(null);
-				}
-			} else {
-				setStopReason(null);
 			}
 			return;
 		}
@@ -56,6 +64,7 @@ export function useRunWatch(clientRef: MutableRefObject<ApiClient>): RunPort {
 		setRun(null);
 		setEvents([]);
 		setStopReason(null);
+		setCandidateCount(null);
 	}
 
 	function adopt(next: Run): void {
@@ -63,5 +72,5 @@ export function useRunWatch(clientRef: MutableRefObject<ApiClient>): RunPort {
 		setRun(next);
 	}
 
-	return { run, events, stopReason, runRef, watch, reset, adopt };
+	return { run, events, stopReason, candidateCount, runRef, watch, reset, adopt };
 }

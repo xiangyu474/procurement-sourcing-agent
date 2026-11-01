@@ -3,7 +3,7 @@ import { createApiClient, type ApiClient } from "../api/client";
 import { useProjectSession, type ProjectSession } from "./useProjectSession";
 import { useRunWatch, type RunPort } from "./useRunWatch";
 
-export type WorkspaceModel = ProjectSession & Pick<RunPort, "run" | "events" | "stopReason">;
+export type WorkspaceModel = ProjectSession & Pick<RunPort, "run" | "events" | "stopReason" | "candidateCount">;
 
 export function useWorkspace(client: ApiClient = createApiClient()): WorkspaceModel {
 	const clientRef = useRef(client);
@@ -15,5 +15,6 @@ export function useWorkspace(client: ApiClient = createApiClient()): WorkspaceMo
 		run: runs.run,
 		events: runs.events,
 		stopReason: runs.stopReason,
+		candidateCount: runs.candidateCount,
 	};
 }

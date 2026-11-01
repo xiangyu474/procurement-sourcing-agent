@@ -47,6 +47,7 @@ export function App() {
 						locked={runActive}
 						collapsed={collapsed}
 						compileCount={workspace.compileView?.phase === "ready" ? workspace.compileView.requirementCount : null}
+						compileNotices={workspace.compileView?.phase === "ready" ? workspace.compileView.notices : []}
 						historyNote={workspace.historyNote}
 						synthetic={entry?.historySynthetic ?? null}
 						startLabel={startLabel}
@@ -71,7 +72,7 @@ export function App() {
 							) : null}
 						</div>
 					) : null}
-					<RunPanel run={run} events={workspace.events} stopReason={workspace.stopReason} />
+					<RunPanel run={run} events={workspace.events} stopReason={workspace.stopReason} candidateCount={workspace.candidateCount} />
 				</>
 			) : null}
 		</WorkspaceShell>

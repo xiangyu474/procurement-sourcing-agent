@@ -21,10 +21,10 @@ function statusTone(status: string): string {
 	return "";
 }
 
-export function RunPanel(props: { run: Run | null; events: RunEvent[]; stopReason: string | null }) {
-	const { run, events, stopReason } = props;
+export function RunPanel(props: { run: Run | null; events: RunEvent[]; stopReason: string | null; candidateCount?: number | null }) {
+	const { run, events, stopReason, candidateCount = null } = props;
 	if (!run) return null;
-	const abnormal = explainRun({ status: run.status, lastError: run.last_error, stopReason });
+	const abnormal = explainRun({ status: run.status, lastError: run.last_error, stopReason, candidateCount });
 	const tone = statusTone(run.status);
 	const inProgress = run.status === "QUEUED" || run.status === "RUNNING";
 	const when = `${formatRunStamp(run.created_at)} ${inProgress ? "开始" : "的寻源"}`;
@@ -43,17 +43,19 @@ export function RunPanel(props: { run: Run | null; events: RunEvent[]; stopReaso
 			) : null}
 			<details className="trace">
 				<summary>过程记录</summary>
-				<ol>
-					{events.map((event, index) => (
-						<li key={`${event.created_at}-${event.stage}-${index}`}>
-							<time dateTime={event.created_at}>{formatRunStamp(event.created_at)}</time>
-							<span>{stageLabel(event.stage)}</span>
-						</li>
-					))}
-					<li className="run-id" data-testid="run-id">
-						编号 {run.id}
-					</li>
-				</ol>
+				{events.length > 0 ? (
+					<ol>
+						{events.map((event, index) => (
+							<li key={`${event.created_at}-${event.stage}-${index}`}>
+								<time dateTime={event.created_at}>{formatRunStamp(event.created_at)}</time>
+								<span>{stageLabel(event.stage)}</span>
+							</li>
+						))}
+					</ol>
+				) : null}
+				<p className="run-id" data-testid="run-id">
+					编号 {run.id}
+				</p>
 			</details>
 		</section>
 	);

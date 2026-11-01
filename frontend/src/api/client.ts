@@ -94,12 +94,28 @@ function asProject(value: unknown): Project {
 	};
 }
 
-export function readStopReason(body: unknown): string | null {
+export type ResearchSummary = {
+	stopReason: string | null;
+	candidateCount: number | null;
+};
+
+export function readResearchSummary(body: unknown): ResearchSummary {
 	const row = asRecord(body, "research");
 	const metrics = row.metrics;
-	if (!metrics || typeof metrics !== "object" || Array.isArray(metrics)) return null;
-	const code = (metrics as { stop_reason_code?: unknown }).stop_reason_code;
-	return typeof code === "string" && code.length > 0 ? code : null;
+	if (!metrics || typeof metrics !== "object" || Array.isArray(metrics)) {
+		return { stopReason: null, candidateCount: null };
+	}
+	const record = metrics as { stop_reason_code?: unknown; candidate_count?: unknown };
+	const code = record.stop_reason_code;
+	const count = record.candidate_count;
+	return {
+		stopReason: typeof code === "string" && code.length > 0 ? code : null,
+		candidateCount: typeof count === "number" && Number.isFinite(count) ? count : null,
+	};
+}
+
+export function readStopReason(body: unknown): string | null {
+	return readResearchSummary(body).stopReason;
 }
 
 export class ApiClient {
@@ -266,7 +282,11 @@ export class ApiClient {
 	}
 
 	getStopReason(runId: string, call?: CallOptions): Promise<string | null> {
-		return this.request(`/api/runs/${encodeURIComponent(runId)}/research`, { call }).then(readStopReason);
+		return this.getResearchSummary(runId, call).then((summary) => summary.stopReason);
+	}
+
+	getResearchSummary(runId: string, call?: CallOptions): Promise<ResearchSummary> {
+		return this.request(`/api/runs/${encodeURIComponent(runId)}/research`, { call }).then(readResearchSummary);
 	}
 
 	private async request(

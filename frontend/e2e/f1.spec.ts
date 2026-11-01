@@ -29,7 +29,10 @@ test("fixture path creates a project, accepts files, and restores a partial run"
 	await expect(page.getByTestId("run-status")).toHaveText("正在查阅公开资料", { timeout: 20_000 });
 	await page.screenshot({ path: `${screenshots}/f1-running.png`, fullPage: true });
 	await expect(page.getByTestId("run-status")).toHaveText("部分完成", { timeout: 30_000 });
-	await expect(page.getByRole("alert")).toContainText("已保留目前得到的结果。本次公开查阅的次数已用完。");
+	await expect(page.getByRole("alert")).toContainText("没有找到有公开资料支撑的候选供应商。");
+	await expect(page.getByRole("alert")).not.toContainText("已保留目前得到的结果");
+	await expect(page.getByText("有 3 条需求没能整理")).toBeVisible();
+	await expect(page.getByText("预算未确认")).toBeVisible();
 	await expect(page.locator("summary", { hasText: "已整理 1 条采购项" })).toBeVisible();
 	const body = await page.locator("body").innerText();
 	expect(body).not.toMatch(/Supervisor|Researcher|DSL|token|12345|workspaces\/default/i);
