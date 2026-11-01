@@ -560,7 +560,10 @@ async function persistM2ResearchBundle(env: Env, bundle: M2BundlePayload): Promi
 			`INSERT INTO project_candidates
 			 (id, workspace_id, project_id, requirement_id, supplier_id, product_id, stage, rationale, open_questions_json, first_seen_run_id, last_seen_run_id, updated_at)
 			 VALUES (?1, 'default', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, ?10)
-			 ON CONFLICT(id) DO UPDATE SET stage = excluded.stage, rationale = excluded.rationale,
+			 ON CONFLICT(id) DO UPDATE SET stage = CASE
+				 WHEN project_candidates.stage IN ('NEEDS_VERIFICATION', 'RFQ_SHORTLIST', 'EXCLUDED')
+				 THEN project_candidates.stage ELSE excluded.stage END,
+			 rationale = excluded.rationale,
 			 open_questions_json = excluded.open_questions_json, last_seen_run_id = excluded.last_seen_run_id, updated_at = excluded.updated_at`,
 		).bind(
 			stringField(candidate, "candidate_id"), bundle.project_id,
@@ -1635,6 +1638,29 @@ export default {
 							String(decision.decided_at ?? now),
 							now,
 						));
+					// An accepted decision moves the candidate. A verified pass
+					// enters the RFQ shortlist, an exclusion leaves the longlist,
+					// and a candidate that still needs evidence stays on it with
+					// that state written down. A rejected decision changes
+					// nothing.
+					if (decision.accepted === true) {
+						const recommendation = String(decision.recommendation ?? "INVESTIGATE");
+						const verdict = String(decision.technical_verdict ?? "UNVERIFIED");
+						const stage =
+							recommendation === "SHORTLIST" && verdict === "VERIFIED_PASS"
+								? "RFQ_SHORTLIST"
+								: recommendation === "EXCLUDE"
+									? "EXCLUDED"
+									: recommendation === "INVESTIGATE"
+										? "NEEDS_VERIFICATION"
+										: null;
+						if (stage) {
+							statements.push(env.DB.prepare(
+								`UPDATE project_candidates SET stage = ?2, updated_at = ?3
+								 WHERE workspace_id = 'default' AND project_id = ?4 AND id = ?1`,
+							).bind(candidateId, stage, now, projectId));
+						}
+					}
 				}
 				if (statements.length > 0) await env.DB.batch(statements);
 				return json({ stored: statements.length });

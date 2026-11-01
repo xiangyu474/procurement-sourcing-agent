@@ -13,6 +13,7 @@ model cannot invent a threshold that turns into a PASS.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -21,12 +22,14 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import ValidationError
 
+from procurement_agent.domain.attributes import attribute_terms, quote_names_the_quantity
 from procurement_agent.domain.requirements import ParseStatus, ValueType
 from procurement_agent.domain.sourcing import ClaimDraft, ClaimStatus
 from procurement_agent.domain.spec_alignment import (
     ProductAttributeClaim,
     TypedClaimBatch,
 )
+from procurement_agent.domain.units import pixel_size
 from procurement_agent.infra.llm import json_object_from_text, stream_tool_call
 from procurement_agent.services.source_numbers import (
     number_is_quoted,
@@ -58,6 +61,10 @@ _FALSE_WORDS = {"否", "无", "不支持", "no", "false", "×", "未"}
 TYPING_BATCH_SIZE = 15
 TYPING_CONCURRENCY = 3
 
+# The guards that decide whether a reading may be used. The number is part of
+# the rules, because a change of the guards changes which readings are valid.
+TYPING_GUARD_VERSION = "2.0"
+
 
 def typing_rules_version() -> str:
     """The digest of the prompt and the schema that type the claims.
@@ -71,6 +78,7 @@ def typing_rules_version() -> str:
         {
             "prompt": SYSTEM_PROMPT,
             "schema": TypedClaimBatch.model_json_schema(),
+            "guards": TYPING_GUARD_VERSION,
         }
     )
 
@@ -192,13 +200,38 @@ def _propose_batch(
     return typed
 
 
+def _value_words_are_quoted(value: Any, quote: str) -> bool:
+    """Report whether every word of the value is written in the quotation.
+
+    The model is told to keep the wording of the source. A value that adds
+    words the quotation does not carry is the model's own reading, so the
+    number in it may not be used as a measurement.
+    """
+    folded_quote = "".join(str(quote).casefold().split())
+    for word in re.findall(r"[0-9A-Za-z一-鿿]+", str(value)):
+        if word.isdigit() or len(word) < 2:
+            continue
+        if word.casefold() not in folded_quote:
+            return False
+    return True
+
+
 def _value_is_quoted(value: Any, value_type: ValueType, unit: str | None, quote: str) -> bool:
     """Report whether the quotation states the value the model proposed."""
     if value_type == ValueType.NUMBER:
         number = read_decimal(str(value))
-        if number is None:
+        if number is not None:
+            if not number_is_quoted(number, unit, quote):
+                return False
+            return _value_words_are_quoted(value, quote)
+        # A pixel size states two numbers. Both of them have to be in the
+        # quotation, and the size is used as the pixel count it is.
+        sides = pixel_size(str(value))
+        if sides is None:
             return False
-        return number_is_quoted(number, unit, quote)
+        # The unit of a pixel size is the size itself, so the two numbers
+        # only have to be written in the quotation.
+        return all(plain_number_is_quoted(side, quote) for side in sides)
     if value_type == ValueType.RANGE:
         if not isinstance(value, dict):
             return False
@@ -235,6 +268,7 @@ def type_claims(
     claims: Sequence[ClaimDraft],
     target_attributes: Sequence[str],
     model: BaseChatModel,
+    attribute_definitions: Mapping[str, str] | None = None,
     evidence: Mapping[str, str] | None = None,
     batch_size: int = TYPING_BATCH_SIZE,
     config: dict[str, Any] | None = None,
@@ -275,6 +309,17 @@ def type_claims(
             supported = False
         verified = _value_is_quoted(value, value_type, unit, quote)
         attribute_key = _canonical_attribute_key(proposal.attribute_key or claim.attribute)
+        if verified and value_type in (ValueType.NUMBER, ValueType.RANGE):
+            # A number may only be read as a measurement when the quotation
+            # names the quantity it measures. A catalogue title that carries
+            # "5MP" names a product, not a resolution.
+            terms = set(attribute_terms(attribute_key))
+            terms |= set(attribute_terms(claim.attribute or ""))
+            definition = (attribute_definitions or {}).get(attribute_key)
+            if definition:
+                terms |= set(attribute_terms("", definition))
+            if terms and not quote_names_the_quantity(quote, sorted(terms)):
+                verified = False
         typed.append(
             ProductAttributeClaim(
                 claim_id=claim.claim_id,

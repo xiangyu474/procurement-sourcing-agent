@@ -20,8 +20,9 @@ them is unknown.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 
 
@@ -250,3 +251,28 @@ def convert_between(magnitude: Decimal, from_unit: str | None, to_unit: str | No
     if source is None or target is None or source.dimension != target.dimension:
         return None
     return magnitude * source.factor / target.factor
+
+
+_PIXEL_SIZE = re.compile(r"^\s*([0-9][0-9,_ ]*)\s*[x×*]\s*([0-9][0-9,_ ]*)\s*$")
+
+
+def pixel_size(value: object) -> tuple[Decimal, Decimal] | None:
+    """Read a pixel size such as "2592 x 1944" as its two sides.
+
+    A source that states the width and the height states the pixel count as
+    well, so the size can be compared with a requirement that asks for
+    megapixels. The two sides are read as written.
+    """
+    if not isinstance(value, str):
+        return None
+    match = _PIXEL_SIZE.match(value)
+    if not match:
+        return None
+    try:
+        width = Decimal(match.group(1).replace(",", "").replace(" ", ""))
+        height = Decimal(match.group(2).replace(",", "").replace(" ", ""))
+    except (InvalidOperation, ValueError):
+        return None
+    if not width.is_finite() or not height.is_finite():
+        return None
+    return width, height

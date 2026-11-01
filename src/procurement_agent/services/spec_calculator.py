@@ -37,7 +37,7 @@ from procurement_agent.domain.spec_alignment import (
     SemanticAlignment,
     SpecAssessment,
 )
-from procurement_agent.domain.units import convert_between, normalize_unit
+from procurement_agent.domain.units import convert_between, normalize_unit, pixel_size
 
 CALCULATOR_VERSION = "0.1.0"
 DSL_SCHEMA_VERSION = "1.0"
@@ -135,6 +135,14 @@ def _qualifiers_compatible(
     return True, ""
 
 
+def _pixel_count(value: Any) -> Decimal | None:
+    """Read a pixel size such as "2592 x 1944" as a number of pixels."""
+    sides = pixel_size(value)
+    if sides is None:
+        return None
+    return sides[0] * sides[1]
+
+
 def _numbers(
     constraint: RequirementConstraint,
     claim: ProductAttributeClaim,
@@ -142,6 +150,8 @@ def _numbers(
     """Bring the claim and the requirement onto one scale."""
     required = _decimal(constraint.value, "requirement")
     actual = _decimal(claim.value, "claim")
+    if actual is None and normalize_unit(claim.unit) == "px":
+        actual = _pixel_count(claim.value)
     if required is None or actual is None:
         return None, "one of the two values is not a finite decimal"
     required_unit = normalize_unit(constraint.unit)

@@ -34,6 +34,21 @@ class ComparabilityStatus(StrEnum):
     NOT_COMPARABLE = "NOT_COMPARABLE"
 
 
+class HistoryScope(StrEnum):
+    """Which part of the imported history speaks about one requirement.
+
+    An imported workbook holds many items. The rows of one item are a price
+    baseline for that item. The rows of the whole workbook are a catalogue
+    overview: they say what was paid across different items, so they are not a
+    baseline for a single product and never produce a lowest price, a
+    ranking, or a saving.
+    """
+
+    ITEM = "ITEM"
+    TABLE_OVERVIEW = "TABLE_OVERVIEW"
+    NONE = "NONE"
+
+
 class ComparabilityReason(StrEnum):
     """Why two prices can or cannot be compared."""
 

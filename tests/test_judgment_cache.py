@@ -144,17 +144,18 @@ def alignment_payload(constraint_id: str, candidate_id: str, claim_ids: list[str
 
 # The typed claims and the alignments that the manual reading gives.
 MANUAL = {
-    # The source calls this model a 5MP corner camera.
+    # The source states the highest resolution as 2560 x 1920, which is
+    # 4.92 MP. The "5MP" of this model appears only in product titles.
     "IPS05-R10-OIA4": {
         "typed": [
             {
-                "claim_id": "clm_e6658e6ce197900f5a3a755e",
+                "claim_id": "clm_2baeb07504f65dda4be261e5",
                 "attribute_key": "output_resolution",
-                "value": "5",
-                "unit": "MP",
+                "value": "2560 x 1920",
+                "unit": "pixels",
             }
         ],
-        "verdict": "PASS",
+        "verdict": "FAIL",
     },
     # The source says it captures 16:9 images at 5 megapixel resolution.
     "NBN-80052-BA": {
@@ -168,21 +169,29 @@ MANUAL = {
         ],
         "verdict": "PASS",
     },
-    # Two claims, neither of which states the output resolution.
-    "TRI050S-MC": {"typed": [], "verdict": "UNKNOWN"},
-    # The source states the resolution as a pixel size, which is not a number
-    # the quotation check can confirm.
+    # The source states the resolution as a pixel size of 2448 x 2048.
+    "TRI050S-MC": {
+        "typed": [
+            {
+                "claim_id": "clm_3bf4cc30b70ccdc4374d67e5",
+                "attribute_key": "output_resolution",
+                "value": "2448 x 2048",
+                "unit": "pixels",
+            }
+        ],
+        "verdict": "PASS",
+    },
+    # The source states the resolution and the frame rate together.
     "TRI055N": {
         "typed": [
             {
                 "claim_id": "clm_453a5ba6bd8a4c10d447c4f8",
                 "attribute_key": "output_resolution",
-                "value": "2,592 × 1,944",
+                "value": "2592 x 1944",
                 "unit": "pixels",
-                "value_type": "NUMBER",
             }
         ],
-        "verdict": "UNKNOWN",
+        "verdict": "PASS",
     },
 }
 
@@ -507,7 +516,7 @@ def test_two_models_of_one_supplier_do_not_share_a_judgement():
     first, _stub = run_case("NBN-80052-BA", cache)
     second, _stub = run_case("IPS05-R10-OIA4", cache)
     assert first[0].hard_spec_overall.value == "PASS"
-    assert second[0].hard_spec_overall.value == "PASS"
+    assert second[0].hard_spec_overall.value == "FAIL"
     # The two models are judged on their own claims.
     assert cache.entries
 

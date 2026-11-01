@@ -111,6 +111,7 @@ def _typed_claims_from_cache(
     evidence_hashes: Mapping[str, str],
     versions: JudgmentVersions,
     cache: JudgmentCacheClient | None,
+    attribute_definitions: Mapping[str, str] | None = None,
 ) -> tuple[list[ProductAttributeClaim], list[ClaimDraft], dict[str, str]]:
     """The typed claims that are cached, and the ones that have to be typed."""
     keys = {
@@ -118,6 +119,7 @@ def _typed_claims_from_cache(
             claim=claim,
             evidence_hash=evidence_hashes.get(claim.evidence_id),
             versions=versions,
+            attribute_definitions=attribute_definitions,
         )
         for claim in claims
     }
@@ -227,6 +229,13 @@ def evaluate_candidates_with_digests(
     target_attributes = sorted(
         {constraint.attribute_key for requirement in requirements for constraint in requirement.constraints}
     )
+    # The definition of every attribute the buyer asks for. A quotation has to
+    # name the quantity, and these definitions say which words do that.
+    attribute_definitions = {
+        constraint.attribute_key: constraint.attribute_definition
+        for requirement in requirements
+        for constraint in requirement.constraints
+    }
 
     # Layer one: the typing of the claims.
     cached_typed, missing_claims, typing_keys = _typed_claims_from_cache(
@@ -234,12 +243,14 @@ def evaluate_candidates_with_digests(
         evidence_hashes=hashes,
         versions=rules,
         cache=cache,
+        attribute_definitions=attribute_definitions,
     )
     typed_claims = list(cached_typed)
     if model is not None and missing_claims:
         fresh = type_claims(
             claims=missing_claims,
             target_attributes=target_attributes,
+            attribute_definitions=attribute_definitions,
             model=typing_model or model,
             evidence=evidence,
             batch_size=typing_batch_size or TYPING_BATCH_SIZE,

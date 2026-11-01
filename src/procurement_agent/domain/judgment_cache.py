@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -95,12 +95,19 @@ def typing_cache_key(
     claim: ClaimDraft,
     evidence_hash: str | None,
     versions: JudgmentVersions,
+    attribute_definitions: Mapping[str, str] | None = None,
 ) -> str:
-    """The key of the typed form of one claim."""
+    """The key of the typed form of one claim.
+
+    The definitions of the attributes the buyer asks for are part of the key:
+    they decide which words a quotation has to use, so a different definition
+    has to be judged again.
+    """
     return digest(
         {
             "layer": CacheLayer.TYPING.value,
             "claim": claim_identity(claim, evidence_hash),
+            "attribute_definitions": dict(sorted((attribute_definitions or {}).items())),
             "typing_rules": versions.typing_rules,
             "model_config": versions.model_config,
         }
