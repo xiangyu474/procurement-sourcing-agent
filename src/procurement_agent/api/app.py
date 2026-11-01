@@ -866,9 +866,12 @@ async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = 
             return {"status": "FAIL" if failures else "OK", "failures": failures, "state": json.dumps(state), "done": True}
 
         if stage == "report-start":
+            # The run of this acceptance is named by the request, not by the
+            # branch that started it.
+            report_run_id = payload.run_id or ""
             started = await client.post(
                 f"/api/projects/{project_id}/reports",
-                json={"run_id": run_id} if run_id else {},
+                json={"run_id": report_run_id} if report_run_id else {},
             )
             if started.status_code not in (200, 202):
                 return {
