@@ -1,0 +1,59 @@
+body {
+	margin: 0;
+	background: #fff;
+	color: #161616;
+	font: 15px/1.55 "WenQuanYi Micro Hei", "Droid Sans Fallback", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+}
+
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; background: #fff; border: 1px solid #d0d0d0; padding: 6px 10px; }
+button.solid { background: #161616; color: #fff; border-color: #161616; }
+button[disabled] { opacity: 0.4; cursor: default; }
+
+.top { padding: 18px 32px 0; }
+.steps { display: flex; gap: 18px; margin: 0; font-size: 14px; }
+.steps span { color: #8a8a8a; }
+.steps .now { color: #161616; font-weight: 650; }
+.switch { display: flex; gap: 8px; margin: 14px 0 0; }
+.switch input { flex: 1; max-width: 280px; border: 1px solid #d0d0d0; padding: 6px 8px; background: #fff; }
+.projects { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 12px 0 0; padding: 0; list-style: none; }
+.projects button { border: 0; background: transparent; padding: 0 0 8px; text-align: left; max-width: 100%; }
+.projects .current { box-shadow: inset 0 -2px 0 #161616; }
+.projects span { overflow-wrap: anywhere; }
+
+.work { max-width: 920px; padding: 8px 32px 72px; }
+h1 { margin: 18px 0 12px; font-size: 26px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+textarea { width: 100%; min-height: 140px; border: 1px solid #d0d0d0; padding: 8px; resize: vertical; }
+.files { display: flex; gap: 8px; margin: 8px 0; }
+.received { padding-left: 18px; }
+.file, .name { overflow-wrap: anywhere; }
+.quiet, .meta { color: #6b6b6b; }
+
+.candidate { border-top: 1px solid #e4e4e4; }
+.candidate button.line {
+	display: block;
+	width: 100%;
+	text-align: left;
+	border: 0;
+	background: transparent;
+	padding: 12px 0;
+}
+.candidate.open button.line { font-weight: 650; }
+.sub { color: #333; font-weight: 400; }
+
+.band { background: #f2f2f2; margin: 0 -32px 0; padding: 16px 32px 20px; }
+.band p { margin: 6px 0; }
+blockquote { margin: 8px 0; padding-left: 10px; border-left: 2px solid #c8c8c8; }
+
+.abnormal { margin: 12px 0; padding-left: 12px; border-left: 3px solid #8a5a00; }
+.abnormal.failed { border-left-color: #8c1d18; }
+h2 { margin: 20px 0 0; font-size: 18px; }
+details { margin-top: 8px; }
+ol { padding-left: 18px; }
+
+@media (max-width: 800px) {
+	.top, .work { padding-left: 16px; padding-right: 16px; }
+	.band { margin: 0 -16px; padding: 16px; }
+	h1 { font-size: 22px; }
+	.steps { flex-wrap: wrap; gap: 10px; }
+}

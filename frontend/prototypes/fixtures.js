@@ -1,0 +1,92 @@
+/* FIXTURE — static prototype data. Not imported by the application build. */
+window.FIXTURE = {
+	title: "集团总部2026年度工业视觉与网络摄像机框架寻源（含多园区）",
+	demand: "采购 10 套 5MP 工业网络摄像机，需支持 PoE。预计单价不超过 100 元/套。ONVIF 为必须。",
+	pptx: "华北区域工业相机及配套镜头年度框架采购技术规格书终版修订-供应商名称也很长.pptx",
+	xlsx: "2024-2025历史采购明细-模拟数据.xlsx",
+	runId: "7c2a9e14-6b0d-4a11-9f3c-2d8e55a01b77",
+	full: [
+		{
+			id: "c1",
+			supplier: "浙江海康威视数字技术股份有限公司（公开页面上的主体名称，尚未核对工商登记）",
+			model: "DS-2CD2T45FWD-I5",
+			stage: "长名单",
+			stageNote: "公开资料里见到的型号，还没有证明它满足需求。",
+			tech: "还不能判断",
+			prices: [
+				{ kind: "公网参考价", text: "页面标价 128 元/台。这是网页标价，不是正式报价。" },
+				{ kind: "计划预算", text: "需求里的预计单价是 100 元/套。单位和口径不一致，不能排成最低价。" },
+			],
+			evidence: {
+				title: "DS-2CD2T45FWD-I5 产品说明",
+				retrieved: "2026-10-28",
+				excerpt: "4MP 网络摄像机，支持 PoE。最高分辨率 2688×1520。",
+			},
+			gap: "需求写的是 5MP，页面写的是 4MP。这一条保持为还不能判断，而不是不满足或满足。",
+		},
+		{
+			id: "c2",
+			supplier: "深圳市大华技术股份有限公司",
+			model: "DH-IPC-HFW5442E-ZE",
+			stage: "长名单",
+			stageNote: "仍是长名单，不是建议询价。",
+			tech: "不满足",
+			prices: [{ kind: "公网参考价", text: "打开的页面上没有标价。" }],
+			evidence: {
+				title: "DH-IPC-HFW5442E-ZE 规格页",
+				retrieved: "2026-10-28",
+				excerpt: "最高分辨率 2688×1520，约 4MP。",
+			},
+			gap: "分辨率低于需求中的 5MP。",
+		},
+		{
+			id: "c3",
+			supplier: "杭州宇视科技有限公司",
+			model: "IPC-B125-APF",
+			stage: "建议先询价",
+			stageNote: "建议优先联系和补资料。不是准入，也不是中标。",
+			tech: "满足",
+			prices: [
+				{ kind: "公网参考价", text: "页面标价 96 元/台。不是正式询价报价。" },
+				{ kind: "历史成交价", text: "历史文件已导入，但没有对上这个型号。" },
+				{ kind: "正式报价", text: "还没有。" },
+			],
+			evidence: {
+				title: "IPC-B125-APF 规格摘要",
+				retrieved: "2026-10-29",
+				excerpt: "5MP，支持 PoE 与 ONVIF。",
+			},
+			gap: "",
+		},
+	],
+	partial: [
+		{
+			id: "c1",
+			supplier: "浙江海康威视数字技术股份有限公司（公开页面上的主体名称，尚未核对工商登记）",
+			model: "DS-2CD2T45FWD-I5",
+			stage: "长名单",
+			stageNote: "公开资料里见到的型号，还没有证明它满足需求。",
+			tech: "还不能判断",
+			prices: [
+				{ kind: "公网参考价", text: "页面标价 128 元/台。这是网页标价，不是正式报价，不能和计划预算排成最低价。" },
+			],
+			evidence: {
+				title: "DS-2CD2T45FWD-I5 产品说明",
+				retrieved: "2026-10-28",
+				excerpt: "4MP 网络摄像机，支持 PoE。",
+			},
+			gap: "需求写的是 5MP，页面写的是 4MP。这一条保持为还不能判断。",
+		},
+		{
+			id: "c4",
+			supplier: "宁波市某进出口目录中登记的超长供应商名称工业视觉设备有限公司",
+			model: "未见到精确型号",
+			stage: "长名单",
+			stageNote: "只见到名称，没有型号。",
+			tech: "还不能判断",
+			prices: [],
+			evidence: null,
+			gap: "没有打开到来源页面。这不是不满足。",
+		},
+	],
+};
