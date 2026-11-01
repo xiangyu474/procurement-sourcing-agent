@@ -51,6 +51,11 @@
 			"class_name": "SourcingDecisionWorkflow"
 		},
 		{
+			"name": "procurement-sourcing-report",
+			"binding": "REPORT_WORKFLOW",
+			"class_name": "SourcingReportWorkflow"
+		},
+		{
 			"name": "procurement-sourcing-acceptance",
 			"binding": "ACCEPTANCE_WORKFLOW",
 			"class_name": "SourcingAcceptanceWorkflow"

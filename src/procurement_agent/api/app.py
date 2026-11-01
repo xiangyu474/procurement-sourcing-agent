@@ -40,6 +40,15 @@ app = FastAPI(title="Procurement Sourcing Agent Container", version="0.1.0")
 settings = load_settings()
 
 
+def _text_value(value: Any) -> str:
+    """Read a value as text, without turning nothing into the word "None"."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    return str(value)
+
+
 class ExecuteRequest(BaseModel):
     """Request to run one bounded sourcing task inside the container."""
 
@@ -88,6 +97,16 @@ class ImportHistoryRequest(BaseModel):
     sha256: str
     gateway_url: str
     token: str
+
+
+class BuildReportRequest(BaseModel):
+    """Internal request to build the formal procurement report of one project."""
+
+    project_id: str
+    run_id: str | None = None
+    gateway_url: str
+    token: str
+    runtime_config: dict[str, str] = Field(default_factory=dict)
 
 
 class ResearchRunRequest(BaseModel):
@@ -891,6 +910,135 @@ async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = 
             "rejected": rejected,
         }
         return {"status": "FAIL" if failures else "OK", "failures": failures, "state": json.dumps(state), "done": True}
+
+
+@app.post("/internal/projects/{project_id}/report")
+async def build_report(payload: BuildReportRequest, x_internal_token: str | None = Header(default=None)) -> dict[str, Any]:
+    """Build the formal procurement report of a project.
+
+    The report is written from what the database holds: the compiled demand,
+    the candidates, the technical checks, the decisions, and the history. The
+    price figures are computed again here from the stored rows, so the report
+    states the basis of every price it writes.
+    """
+    _require_internal(payload.token or x_internal_token)
+    _apply_runtime_config(payload.runtime_config)
+
+    import hashlib
+
+    import httpx
+
+    from procurement_agent.domain.requirements import HistoricalTransaction, Requirement
+    from procurement_agent.reports.procurement_report import ReportInput, build_procurement_docx
+    from procurement_agent.services.price_context import build_price_context
+    from procurement_agent.services.product_equivalence import ProductEquivalence
+
+    async with httpx.AsyncClient(timeout=120) as client:
+        context_response = await client.get(
+            f"{payload.gateway_url.rstrip('/')}/internal/projects/{payload.project_id}/report-context",
+            params={"run_id": payload.run_id} if payload.run_id else {},
+            headers={"x-internal-token": payload.token},
+        )
+        if context_response.status_code == 404:
+            raise HTTPException(status_code=404, detail="project or compiled demand not found")
+        context_response.raise_for_status()
+        context = context_response.json()
+
+    requirements = [Requirement.model_validate(item) for item in context.get("requirements") or []]
+    transactions = [
+        HistoricalTransaction.model_validate(item) for item in context.get("history_transactions") or []
+    ]
+    equivalences = [
+        ProductEquivalence.model_validate(item) for item in context.get("equivalences") or []
+    ]
+    price_contexts: list[dict[str, Any]] = []
+    for requirement in requirements:
+        price_context = build_price_context(
+            requirement=requirement,
+            transactions=transactions,
+            equivalences=equivalences,
+            history_price_unit=context.get("history_price_unit"),
+        )
+        price_contexts.append(
+            {
+                "requirement_id": requirement.requirement_id,
+                "scope": price_context.history_scope.value,
+                "scope_note": price_context.history.scope_note,
+                "statistics": (
+                    price_context.history.statistics.model_dump(mode="json")
+                    if price_context.history.statistics
+                    else None
+                ),
+                "overview_statistics": (
+                    price_context.history_overview.statistics.model_dump(mode="json")
+                    if price_context.history_overview and price_context.history_overview.statistics
+                    else None
+                ),
+                "findings": [finding.model_dump(mode="json") for finding in price_context.findings],
+                "notes": price_context.notes,
+            }
+        )
+
+    decisions = list(context.get("decisions") or [])
+    decision_version = hashlib.sha256(
+        json.dumps(
+            [
+                {
+                    "requirement_id": item.get("requirement_id"),
+                    "product_candidate_id": item.get("product_candidate_id"),
+                    "recommendation": item.get("recommendation"),
+                    "technical_verdict": item.get("technical_verdict"),
+                    "hard_spec_overall": item.get("hard_spec_overall"),
+                    "accepted": item.get("accepted"),
+                }
+                for item in sorted(
+                    decisions,
+                    key=lambda row: (str(row.get("requirement_id")), str(row.get("product_candidate_id"))),
+                )
+            ],
+            ensure_ascii=False,
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()[:16]
+
+    report_input = ReportInput(
+        project_id=payload.project_id,
+        project_title=_text_value(context.get("project_title")),
+        run_id=payload.run_id or _text_value(context.get("run_id")),
+        demand_revision=int(context.get("demand_revision") or 1),
+        decision_version=decision_version,
+        requirements=context.get("requirements") or [],
+        candidates=context.get("candidates") or [],
+        assessments=context.get("assessments") or [],
+        decisions=decisions,
+        price_contexts=price_contexts,
+        evidence=context.get("evidence") or [],
+        open_questions=[_text_value(item) for item in context.get("open_questions") or []],
+    )
+    document = build_procurement_docx(report_input)
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        upload = await client.post(
+            f"{payload.gateway_url.rstrip('/')}/internal/projects/{payload.project_id}/report-artifact",
+            headers={"x-internal-token": payload.token},
+            content=document,
+            params={
+                "sha256": hashlib.sha256(document).hexdigest(),
+                "decision_version": decision_version,
+                "run_id": payload.run_id or _text_value(context.get("run_id")),
+            },
+        )
+        upload.raise_for_status()
+        stored = upload.json()
+    return {
+        "status": "COMPLETED",
+        "project_id": payload.project_id,
+        "run_id": report_input.run_id,
+        "decision_version": decision_version,
+        "bytes": len(document),
+        "r2_key": stored.get("key"),
+        "sha256": stored.get("sha256"),
+    }
 
 
 @app.post("/internal/execute")

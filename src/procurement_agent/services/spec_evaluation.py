@@ -411,9 +411,32 @@ def evaluate_candidates_with_digests(
                             layer=CacheLayer.ASSESSMENT,
                             input_digest=digest,
                             payload={
-                                key: value
-                                for key, value in assessment.model_dump(mode="json").items()
-                                if key != "evaluated_at"
+                                # The judgement itself, without the names of
+                                # this project. The same content judged in
+                                # another project is the same judgement, not a
+                                # conflict, so the identifiers of the project
+                                # stay in the stored assessment.
+                                "calculator_version": assessment.calculator_version,
+                                "dsl_schema_version": assessment.dsl_schema_version,
+                                "hard_spec_overall": assessment.hard_spec_overall.value,
+                                "overall_reason_codes": [code.value for code in assessment.overall_reason_codes],
+                                "hard_constraint_count": assessment.hard_constraint_count,
+                                "unresolved_question_ids": list(assessment.unresolved_question_ids),
+                                "checks": [
+                                    {
+                                        "constraint_id": check.constraint_id,
+                                        "status": check.status.value,
+                                        "reason_code": check.reason_code.value,
+                                        "operation": check.operation,
+                                        "normalized_actual": check.normalized_actual,
+                                        "normalized_required": check.normalized_required,
+                                        "unit": check.unit,
+                                        "evidence_ids": list(check.evidence_ids),
+                                        "explanation": check.explanation,
+                                        "importance": check.importance,
+                                    }
+                                    for check in assessment.checks
+                                ],
                             },
                             versions=rules.as_dict(),
                             model_config=dict(model_config or {}),

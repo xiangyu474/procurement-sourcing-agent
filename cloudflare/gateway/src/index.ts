@@ -21,6 +21,7 @@ export interface Env {
 	COMPILE_WORKFLOW: Workflow<CompileRequest>;
 	SPEC_WORKFLOW: Workflow<SpecRequest>;
 	DECISION_WORKFLOW: Workflow<DecisionRequest>;
+	REPORT_WORKFLOW: Workflow<ReportRequest>;
 	ACCEPTANCE_WORKFLOW: Workflow<AcceptanceRequest>;
 }
 
@@ -756,6 +757,12 @@ interface SpecRequest {
 	reviewReason: string;
 }
 
+interface ReportRequest {
+	projectId: string;
+	runId: string | null;
+	reportId: string;
+}
+
 interface DecisionRequest {
 	projectId: string;
 	requirementIds: string[];
@@ -1081,6 +1088,83 @@ export class SourcingSpecWorkflow extends WorkflowEntrypoint<Env, SpecRequest> {
 			};
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
+			return { status: "FAILED", error: message.slice(0, 400) };
+		}
+	}
+}
+
+export class SourcingReportWorkflow extends WorkflowEntrypoint<Env, ReportRequest> {
+	async run(event: WorkflowEvent<ReportRequest>, step: WorkflowStep) {
+		const { projectId, runId, reportId } = event.payload;
+		try {
+			const result = await step.do(
+				"build-report",
+				{ retries: { limit: 1, delay: "10 seconds", backoff: "exponential" }, timeout: "15 minutes" },
+				async () => {
+					const container = getContainer(this.env.SOURCING_CONTAINER, this.env.CONTAINER_INSTANCE_NAME);
+					// The instance sleeps when it is idle, so it has to be
+					// started before it can answer.
+					await container.start();
+					const response = await container.fetch(
+						new Request("http://container/internal/projects/report", {
+							method: "POST",
+							headers: { "content-type": "application/json" },
+							body: JSON.stringify({
+								project_id: projectId,
+								run_id: runId,
+								gateway_url: this.env.CONTAINER_GATEWAY_URL,
+								token: this.env.INTERNAL_GATEWAY_TOKEN,
+								runtime_config: {
+									GENESIS_BASE_URL: this.env.GENESIS_BASE_URL,
+									GENESIS_ACCESS_TOKEN: this.env.GENESIS_ACCESS_TOKEN,
+									GENESIS_MODEL_ID: this.env.GENESIS_MODEL_ID,
+								},
+							}),
+						}),
+					);
+					if (!response.ok) {
+						const body = await response.text().catch(() => "");
+						throw new Error(`report generation failed with status ${response.status}: ${body.slice(0, 400)}`);
+					}
+					return (await response.json()) as {
+						status?: string;
+						bytes?: number;
+						sha256?: string;
+						r2_key?: string;
+						decision_version?: string;
+					};
+				},
+			);
+			const outcome = result as unknown as {
+				status?: string;
+				bytes?: number;
+				sha256?: string;
+				r2_key?: string;
+				decision_version?: string;
+			};
+			await this.env.DB.prepare(
+				`UPDATE project_reports SET status = 'COMPLETED', r2_key = ?2, sha256 = ?3, byte_size = ?4,
+				 decision_version = COALESCE(?5, decision_version), updated_at = ?6
+				 WHERE workspace_id = 'default' AND id = ?1`,
+			)
+				.bind(
+					reportId,
+					String(outcome.r2_key ?? ""),
+					String(outcome.sha256 ?? ""),
+					Number(outcome.bytes ?? 0),
+					outcome.decision_version ?? null,
+					new Date().toISOString(),
+				)
+				.run();
+			return { status: "COMPLETED", report_id: reportId };
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			await this.env.DB.prepare(
+				`UPDATE project_reports SET status = 'FAILED', error = ?2, updated_at = ?3
+				 WHERE workspace_id = 'default' AND id = ?1`,
+			)
+				.bind(reportId, message.slice(0, 500), new Date().toISOString())
+				.run();
 			return { status: "FAILED", error: message.slice(0, 400) };
 		}
 	}
@@ -1441,6 +1525,12 @@ export default {
 					return wantedRequirements.includes(String(row.requirement_id ?? ""));
 				});
 
+				// The run that produced the candidates is part of the audit
+				// trail of every judgement that is cached.
+				const latestRun = await env.DB.prepare(
+					`SELECT id FROM runs WHERE project_id = ?1 ORDER BY created_at DESC LIMIT 1`,
+				).bind(projectId).first<{ id: string }>();
+
 				const { results: candidateRows } = await env.DB.prepare(
 					`SELECT c.id AS candidate_id, c.requirement_id, c.supplier_id, c.product_id, c.stage, c.rationale,
 					        c.open_questions_json, p.model AS product_model,
@@ -1518,6 +1608,7 @@ export default {
 				}
 				return json({
 					project_id: projectId,
+					run_id: latestRun?.id ?? null,
 					demand_revision: compilationRow.demand_revision,
 					requirements,
 					unstructured_requirements: compilation.unstructured_requirements ?? [],
@@ -1526,6 +1617,248 @@ export default {
 					model_by_product: modelByProduct,
 					evidence_hashes: evidenceHashes,
 				});
+			}
+
+			// The data the formal report is built from. Everything the report
+			// writes is read here, so the report cannot contain a number that
+			// is not in the database.
+			const reportContextMatch = url.pathname.match(/^\/internal\/projects\/([^/]+)\/report-context$/);
+			if (reportContextMatch && request.method === "GET") {
+				const projectId = decodeURIComponent(reportContextMatch[1]);
+				const project = await env.DB.prepare(
+					`SELECT id, title, demand_revision, created_at FROM projects
+					 WHERE workspace_id = 'default' AND id = ?1`,
+				)
+					.bind(projectId)
+					.first<{ id: string; title: string; demand_revision: number; created_at: string }>();
+				if (!project) return json({ error: "project_not_found" }, 404);
+				const compilationRow = await env.DB.prepare(
+					`SELECT demand_revision, compilation_json FROM demand_compilations
+					 WHERE project_id = ?1 ORDER BY demand_revision DESC LIMIT 1`,
+				)
+					.bind(projectId)
+					.first<{ demand_revision: number; compilation_json: string }>();
+				if (!compilationRow) return json({ error: "demand_not_compiled" }, 404);
+				const compilation = JSON.parse(compilationRow.compilation_json) as {
+					requirements?: unknown[];
+					issues?: unknown[];
+				};
+				const requirements = (compilation.requirements ?? []) as Record<string, unknown>[];
+
+				const { results: candidateRows } = await env.DB.prepare(
+					`SELECT c.id AS candidate_id, c.requirement_id, c.stage, c.rationale,
+					        c.open_questions_json, s.display_name AS supplier_name,
+					        p.model AS product_model, p.product_name,
+					        (SELECT group_concat(e.evidence_id) FROM project_candidate_evidence e
+					          WHERE e.workspace_id = c.workspace_id AND e.candidate_id = c.id) AS evidence_ids
+					 FROM project_candidates c
+					 LEFT JOIN intelligence_suppliers s ON s.workspace_id = c.workspace_id AND s.id = c.supplier_id
+					 LEFT JOIN intelligence_products p ON p.workspace_id = c.workspace_id AND p.id = c.product_id
+					 WHERE c.workspace_id = 'default' AND c.project_id = ?1
+					 ORDER BY c.updated_at DESC LIMIT 600`,
+				)
+					.bind(projectId)
+					.all<{
+						candidate_id: string;
+						requirement_id: string;
+						stage: string;
+						rationale: string;
+						open_questions_json: string;
+						supplier_name: string | null;
+						product_model: string | null;
+						product_name: string | null;
+						evidence_ids: string | null;
+					}>();
+				const candidates = candidateRows.map((row) => ({
+					candidate_id: row.candidate_id,
+					requirement_id: row.requirement_id,
+					stage: row.stage,
+					rationale: row.rationale,
+					open_questions: JSON.parse(row.open_questions_json ?? "[]") as string[],
+					supplier_name: row.supplier_name,
+					product_model: row.product_model,
+					product_name: row.product_name,
+					evidence_ids: (row.evidence_ids ?? "").split(",").filter((item) => item.length > 0),
+				}));
+
+				// The newest judgement of every requirement and candidate.
+				const { results: assessmentRows } = await env.DB.prepare(
+					`SELECT s.requirement_id, s.product_candidate_id, s.product_model_ref,
+					        s.hard_spec_overall, s.overall_reason_codes_json, s.assessment_json,
+					        s.judgment_version, s.evaluated_at
+					 FROM spec_assessments s
+					 WHERE s.workspace_id = 'default' AND s.project_id = ?1
+					   AND s.judgment_version = (
+					     SELECT MAX(inner_s.judgment_version) FROM spec_assessments inner_s
+					     WHERE inner_s.workspace_id = s.workspace_id AND inner_s.project_id = s.project_id
+					       AND inner_s.requirement_id = s.requirement_id
+					       AND inner_s.product_candidate_id = s.product_candidate_id
+					       AND inner_s.demand_revision = s.demand_revision)
+					 ORDER BY s.requirement_id, s.product_candidate_id`,
+				)
+					.bind(projectId)
+					.all<{
+						requirement_id: string;
+						product_candidate_id: string;
+						product_model_ref: string | null;
+						hard_spec_overall: string;
+						overall_reason_codes_json: string;
+						assessment_json: string;
+						judgment_version: number;
+						evaluated_at: string;
+					}>();
+				const assessments = assessmentRows.map((row) => {
+					const detail = JSON.parse(row.assessment_json) as Record<string, unknown>;
+					return {
+						requirement_id: row.requirement_id,
+						product_candidate_id: row.product_candidate_id,
+						product_model_ref: row.product_model_ref,
+						hard_spec_overall: row.hard_spec_overall,
+						overall_reason_codes: JSON.parse(row.overall_reason_codes_json ?? "[]") as string[],
+						checks: (detail.checks ?? []) as unknown[],
+						judgment_version: row.judgment_version,
+						evaluated_at: row.evaluated_at,
+					};
+				});
+
+				const { results: decisionRows } = await env.DB.prepare(
+					`SELECT d.requirement_id, d.product_candidate_id, d.product_model_ref, d.recommendation,
+					        d.technical_verdict, d.hard_spec_overall, d.accepted, d.rationale, d.gaps_json,
+					        d.next_actions_json, d.evidence_ids_json, d.priority_rank, d.decision_json,
+					        d.violations_json, d.decided_at
+					 FROM sourcing_decisions d
+					 WHERE d.workspace_id = 'default' AND d.project_id = ?1
+					 ORDER BY d.requirement_id, d.product_candidate_id`,
+				)
+					.bind(projectId)
+					.all<{
+						requirement_id: string;
+						product_candidate_id: string;
+						product_model_ref: string | null;
+						recommendation: string;
+						technical_verdict: string;
+						hard_spec_overall: string;
+						accepted: number;
+						rationale: string;
+						gaps_json: string;
+						next_actions_json: string;
+						evidence_ids_json: string;
+						priority_rank: number | null;
+						decision_json: string;
+						violations_json: string;
+						decided_at: string;
+					}>();
+				const decisions = decisionRows.map((row) => {
+					const detail = JSON.parse(row.decision_json ?? "{}") as Record<string, unknown>;
+					return {
+						requirement_id: row.requirement_id,
+						product_candidate_id: row.product_candidate_id,
+						product_model_ref: row.product_model_ref,
+						recommendation: row.recommendation,
+						technical_verdict: row.technical_verdict,
+						hard_spec_overall: row.hard_spec_overall,
+						accepted: row.accepted === 1,
+						rationale: row.rationale,
+						gaps: JSON.parse(row.gaps_json ?? "[]") as string[],
+						next_actions: JSON.parse(row.next_actions_json ?? "[]") as string[],
+						evidence_ids: JSON.parse(row.evidence_ids_json ?? "[]") as string[],
+						priority_rank: row.priority_rank,
+						price_conclusion: detail.price_conclusion ?? null,
+						violations: JSON.parse(row.violations_json ?? "[]") as unknown[],
+						decided_at: row.decided_at,
+					};
+				});
+
+				// The history of the project, if one was imported.
+				const { results: historyRows } = await env.DB.prepare(
+					`SELECT t.id, t.dataset_id, t.project_id, t.source_row_ref, t.order_id, t.line_id,
+					        t.order_date, t.sku, t.product_name, t.specification, t.supplier_code,
+					        t.supplier_display_name, t.supplier_entity_id, t.supplier_namespace,
+					        t.is_synthetic_supplier, t.quantity, t.unit_price_ex_tax, t.amount_ex_tax,
+					        t.tax_rate, t.tax_amount, t.amount_inc_tax, t.currency
+					 FROM history_transactions t
+					 WHERE t.workspace_id = 'default' AND t.project_id = ?1
+					 ORDER BY t.source_row_ref LIMIT 5000`,
+				)
+					.bind(projectId)
+					.all<Record<string, unknown>>();
+
+				// The evidence the candidates rest on.
+				const evidenceIds = [
+					...new Set(candidates.flatMap((candidate) => candidate.evidence_ids as string[])),
+				];
+				let evidence: Record<string, unknown>[] = [];
+				if (evidenceIds.length > 0) {
+					const { results: evidenceRows } = await env.DB.prepare(
+						`SELECT id, title, source_url, excerpt, content_sha256 FROM research_evidence
+						 WHERE workspace_id = 'default' AND id IN (${evidenceIds
+							.map((_, index) => `?${index + 1}`)
+							.join(",")})`,
+					)
+						.bind(...evidenceIds)
+						.all<{
+							id: string;
+							title: string;
+							source_url: string;
+							excerpt: string;
+							content_sha256: string;
+						}>();
+					evidence = evidenceRows.map((row) => ({
+						evidence_id: row.id,
+						title: row.title,
+						url: row.source_url,
+						quote: row.excerpt,
+						content_sha256: row.content_sha256,
+					}));
+				}
+
+				const latestRun = await env.DB.prepare(
+					`SELECT id FROM runs WHERE project_id = ?1 ORDER BY created_at DESC LIMIT 1`,
+				)
+					.bind(projectId)
+					.first<{ id: string }>();
+
+				return json({
+					project_id: project.id,
+					project_title: project.title,
+					run_id: latestRun?.id ?? null,
+					demand_revision: compilationRow.demand_revision,
+					requirements,
+					candidates,
+					assessments,
+					decisions,
+					history_transactions: historyRows,
+					history_price_unit: null,
+					equivalences: [],
+					evidence,
+					open_questions: [
+						...((compilation.issues ?? []) as unknown[]).map((issue) =>
+							typeof issue === "string" ? issue : JSON.stringify(issue),
+						),
+						...requirements.flatMap((requirement) =>
+							((requirement.open_questions ?? []) as unknown[]).map((question) =>
+								typeof question === "string" ? question : JSON.stringify(question),
+							),
+						),
+					],
+				});
+			}
+
+			// The finished document, stored in private R2.
+			const reportArtifactMatch = url.pathname.match(
+				/^\/internal\/projects\/([^/]+)\/report-artifact$/,
+			);
+			if (reportArtifactMatch && request.method === "POST") {
+				const projectId = decodeURIComponent(reportArtifactMatch[1]);
+				const body = await request.arrayBuffer();
+				const sha256 = url.searchParams.get("sha256") ?? "";
+				const key = `workspaces/default/projects/${projectId}/reports/report-${Date.now()}.docx`;
+				await env.BUCKET.put(key, body, {
+					httpMetadata: {
+						contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+					},
+				});
+				return json({ ok: true, key, sha256, bytes: body.byteLength });
 			}
 
 			const decisionContextMatch = url.pathname.match(/^\/internal\/projects\/([^/]+)\/decision-context$/);
@@ -2218,6 +2551,118 @@ export default {
 					decision_id: instance.id,
 				}, 202);
 			}
+		}
+
+		const reportsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/reports$/);
+		if (reportsMatch) {
+			const projectId = decodeURIComponent(reportsMatch[1]);
+			if (request.method === "POST") {
+				const project = await env.DB.prepare(`SELECT id FROM projects WHERE id = ?1`)
+					.bind(projectId)
+					.first<{ id: string }>();
+				if (!project) return json({ error: "not_found" }, 404);
+				const body = (await request.json().catch(() => ({}))) as { run_id?: string };
+				const now = new Date().toISOString();
+				const reportId = crypto.randomUUID();
+				// The report names the run and the decision version it was
+				// written from, so that it stays the report of that run even
+				// when the project is analysed again later.
+				const runId = body.run_id ?? null;
+				await env.DB.prepare(
+					`INSERT INTO project_reports (id, workspace_id, project_id, run_id, status, created_at, updated_at)
+					 VALUES (?1, 'default', ?2, ?3, 'QUEUED', ?4, ?4)`,
+				)
+					.bind(reportId, projectId, runId, now)
+					.run();
+				// The document is written by the container, which holds the
+				// report builder, so the work runs as a workflow.
+				const instance = await env.REPORT_WORKFLOW.create({
+					params: { projectId, runId, reportId },
+				});
+				return json(
+					{
+						report_id: reportId,
+						run_id: runId,
+						status: "QUEUED",
+						workflow_id: instance.id,
+					},
+					202,
+				);
+			}
+			if (request.method === "GET") {
+				const { results } = await env.DB.prepare(
+					`SELECT id, run_id, status, decision_version, byte_size, sha256, error, created_at, updated_at
+					 FROM project_reports
+					 WHERE workspace_id = 'default' AND project_id = ?1
+					 ORDER BY created_at DESC LIMIT 100`,
+				)
+					.bind(projectId)
+					.all<Record<string, unknown>>();
+				return json({
+					project_id: projectId,
+					reports: results.map((row) => ({
+						report_id: row.id,
+						run_id: row.run_id,
+						status: row.status,
+						decision_version: row.decision_version,
+						byte_size: row.byte_size,
+						sha256: row.sha256,
+						error: row.error,
+						download_path: `/api/projects/${projectId}/reports/${String(row.id)}/download`,
+						created_at: row.created_at,
+						updated_at: row.updated_at,
+					})),
+				});
+			}
+		}
+
+		const reportMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/reports\/([^/]+)$/);
+		if (reportMatch && request.method === "GET") {
+			const projectId = decodeURIComponent(reportMatch[1]);
+			const reportId = decodeURIComponent(reportMatch[2]);
+			const report = await env.DB.prepare(
+				`SELECT id, run_id, status, decision_version, byte_size, sha256, error, created_at, updated_at
+				 FROM project_reports WHERE workspace_id = 'default' AND project_id = ?1 AND id = ?2`,
+			)
+				.bind(projectId, reportId)
+				.first<Record<string, unknown>>();
+			if (!report) return json({ error: "not_found" }, 404);
+			return json({
+				report_id: report.id,
+				run_id: report.run_id,
+				status: report.status,
+				decision_version: report.decision_version,
+				byte_size: report.byte_size,
+				sha256: report.sha256,
+				error: report.error,
+				download_path: `/api/projects/${projectId}/reports/${reportId}/download`,
+				created_at: report.created_at,
+				updated_at: report.updated_at,
+			});
+		}
+
+		const reportDownloadMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/reports\/([^/]+)\/download$/);
+		if (reportDownloadMatch && request.method === "GET") {
+			const projectId = decodeURIComponent(reportDownloadMatch[1]);
+			const reportId = decodeURIComponent(reportDownloadMatch[2]);
+			const report = await env.DB.prepare(
+				`SELECT status, r2_key FROM project_reports
+				 WHERE workspace_id = 'default' AND project_id = ?1 AND id = ?2`,
+			)
+				.bind(projectId, reportId)
+				.first<{ status: string; r2_key: string | null }>();
+			if (!report) return json({ error: "not_found" }, 404);
+			if (report.status !== "COMPLETED" || !report.r2_key) {
+				return json({ error: "report_not_ready", status: report.status }, 409);
+			}
+			const object = await env.BUCKET.get(report.r2_key);
+			if (!object) return json({ error: "report_missing" }, 404);
+			return new Response(object.body, {
+				headers: {
+					"content-type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+					"content-disposition": `attachment; filename="procurement-report-${reportId.slice(0, 8)}.docx"`,
+				},
+			});
 		}
 
 		const specAssessmentsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/spec-assessments$/);
