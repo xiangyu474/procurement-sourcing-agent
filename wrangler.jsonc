@@ -80,7 +80,7 @@
 		// A running container keeps the image it was started with. Bump this
 		// name to bring a new image into service: the next request starts a
 		// container from the image of this deployment.
-		"CONTAINER_INSTANCE_NAME": "sourcing-v10",
+		"CONTAINER_INSTANCE_NAME": "sourcing-v11",
 		// The acceptance drives the public API, which starts workflows that
 		// call a container, so it runs in its own instance.
 		"ACCEPTANCE_CONTAINER_NAME": "acceptance-v2",
