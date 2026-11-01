@@ -286,3 +286,50 @@ uv run --python 3.11 python scripts/verify_m2_cloud_api.py
 4. **运行时日志未接入。** 该账号没有配置 Workers Logs 的 dataset，容器异常只能靠返回体里的错误类型与脱敏消息判断。
 5. **研究说的是传感器像素时，需求问的常常是视频输出像素。** 两者不是同一个量，系统会拒绝比较并说明原因，而不是放过。
 6. **SIGTERM 中断后的可靠恢复尚未完成**，登记为 M5 必须完成的验收项。容器存活时间变长不等于这个问题解决了。
+
+## 九、M3 收尾后的业务口径（2026-11-01）
+
+### 1. 三个业务状态，前端必须分清
+
+| 字段 | 含义 | 不代表什么 |
+| --- | --- | --- |
+| `accepted` | 该条决策通过了程序化闸门并留档 | 不代表技术合格，也不代表进入询价短名单 |
+| `hard_spec_overall` / `technical_verdict` | 技术核对的结论（通过/不通过/未知） | 未知不是通过，也不是失败 |
+| `recommendation` | 建议：询价 / 待补证 / 排除 | 不是候选的采购阶段 |
+
+**只有 `recommendation=SHORTLIST` 且 `technical_verdict=VERIFIED_PASS` 的候选进入建议询价。**
+实测 43 条决策：22 条建议询价（均为核实通过）、21 条待补证（均为未知）、0 条把未知写进短名单、0 条被闸门拦下。
+
+### 2. 候选阶段会随决策推进
+
+M2 只产出 `DISCOVERED_LONG_LIST`。M3-C 的决策被接受后：核实通过 → `RFQ_SHORTLIST`；待补证 → `NEEDS_VERIFICATION`；建议排除 → `EXCLUDED`。
+被闸门拒绝的决策不改变阶段。再次寻源不会把已推进的阶段退回长名单。
+
+### 3. 历史价格按品项限定
+
+官方历史文件里是 **14 个品项**、价格跨度 **15.6x–16.3x**（最低 77 是云台探头，最高 1255 是 4G 80W太阳能版）。
+因此：
+
+- 历史统计只在**本品项**（按已确认的等价关系，或完全相同的品名）内成立；
+- 落在品项之外的历史行只作为**全表概览**展示，**不产生**最低价、排名与节支；
+- 价格上下文里 `history_scope` 会写明是 `ITEM` 还是 `TABLE_OVERVIEW`，前端必须一起展示。
+
+### 4. 引文必须点名它测量的量
+
+一条技术判定只能建立在**规格陈述**上。产品目录标题里的数字（`CAM-CIC-5MR/5000R 5MP 14fps Color, Mono`）属于名称，不构成测量。
+同理，模型补写的解释（价值里出现引文没有的词）不能作为测量依据。
+像素尺寸（`2592 x 1944`）按像素数计算，可以与 MP 口径比较。
+
+### 5. 正式报告
+
+正式报告是独立的工作流，绑定**项目、运行、决策版本**（决策集合内容的摘要）。
+报告里：长名单不是合格名单、未知不是通过、全表概览不是单品价格。
+`GET /api/projects/{id}/reports/{report_id}` 取状态与下载路径，`.../download` 取 DOCX 字节。
+M0 的 `GET /api/runs/{id}/report/download` 仍然只是部署验证草稿。
+
+### 6. 长任务的状态可以查
+
+`GET /api/projects/{id}/requirement-compile/{compile_id}`、
+`GET /api/projects/{id}/spec-assessments/status`、`GET /api/projects/{id}/decisions/status`
+返回 `QUEUED/RUNNING/COMPLETED/FAILED`（没有任务时 `IDLE`），
+这样「还在跑」与「已经失败」不再混为一谈。
