@@ -62,16 +62,44 @@ def _start(client: httpx.Client, title: str) -> str:
     return str(response.json()["result"]["id"])
 
 
+def _instance(instance_id: str) -> dict:
+    """Read one workflow instance with the Cloudflare CLI.
+
+    The CLI keeps its own session, and it refreshes that session when it
+    runs. The REST call with the token of the file fails once that token is
+    old, so the CLI is asked instead.
+    """
+    cf = "cf.cmd" if os.name == "nt" else "cf"
+    completed = subprocess.run(
+        [
+            cf,
+            "workflows",
+            "instances",
+            "get",
+            instance_id,
+            "--workflow-name",
+            WORKFLOW_NAME,
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    try:
+        return json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return {}
+
+
 def _wait(client: httpx.Client, instance_id: str, timeout: int = 5400) -> dict:
     """Wait for the workflow and return its result."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        response = client.get(f"{API_ROOT}/workflows/{WORKFLOW_NAME}/instances/{instance_id}")
-        if response.is_success:
-            result = response.json().get("result") or {}
-            status = result.get("status")
-            if status in {"completed", "failed", "terminated", "cancelled"}:
-                return result
+        result = _instance(instance_id)
+        status = result.get("status")
+        if status in {"complete", "errored", "terminated", "cancelled"}:
+            return result
         time.sleep(20)
     raise SystemExit("the acceptance did not finish in time")
 
