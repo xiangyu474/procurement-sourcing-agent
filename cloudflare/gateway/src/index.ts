@@ -1836,19 +1836,21 @@ export default {
 					};
 				});
 
-				// The history of the project, if one was imported.
-				const { results: historyRows } = await env.DB.prepare(
-					`SELECT t.id, t.dataset_id, t.project_id, t.source_row_ref, t.order_id, t.line_id,
-					        t.order_date, t.sku, t.product_name, t.specification, t.supplier_code,
-					        t.supplier_display_name, t.supplier_entity_id, t.supplier_namespace,
-					        t.is_synthetic_supplier, t.quantity, t.unit_price_ex_tax, t.amount_ex_tax,
-					        t.tax_rate, t.tax_amount, t.amount_inc_tax, t.currency
-					 FROM history_transactions t
-					 WHERE t.workspace_id = 'default' AND t.project_id = ?1
-					 ORDER BY t.source_row_ref LIMIT 5000`,
+				// The normalized history lives in R2. It is optional: a project
+				// without one simply has no history prices.
+				let historyRows: unknown[] = [];
+				const { results: historyDatasetRows } = await env.DB.prepare(
+					`SELECT normalized_r2_key FROM history_datasets WHERE project_id = ?1 ORDER BY imported_at DESC LIMIT 1`,
 				)
 					.bind(projectId)
-					.all<Record<string, unknown>>();
+					.all<{ normalized_r2_key: string }>();
+				if (historyDatasetRows.length > 0) {
+					const stored = await env.BUCKET.get(historyDatasetRows[0].normalized_r2_key);
+					if (stored) {
+						const normalized = JSON.parse(await stored.text()) as { transactions?: unknown[] };
+						historyRows = normalized.transactions ?? [];
+					}
+				}
 
 				// The evidence the candidates rest on.
 				const evidenceIds = [

@@ -99,13 +99,40 @@ def main() -> int:
         "d.next_actions_json, d.evidence_ids_json, d.priority_rank, d.decision_json, d.violations_json, "
         f"d.decided_at FROM sourcing_decisions d WHERE d.workspace_id='default' AND d.project_id='{project_id}'"
     )
-    history = query(
-        "SELECT t.id, t.dataset_id, t.project_id, t.source_row_ref, t.order_id, t.line_id, t.order_date, "
-        "t.sku, t.product_name, t.specification, t.supplier_code, t.supplier_display_name, "
-        "t.supplier_entity_id, t.supplier_namespace, t.is_synthetic_supplier, t.quantity, "
-        "t.unit_price_ex_tax, t.amount_ex_tax, t.tax_rate, t.tax_amount, t.amount_inc_tax, t.currency "
-        f"FROM history_transactions t WHERE t.workspace_id='default' AND t.project_id='{project_id}' LIMIT 5000"
+    # The normalized history lives in R2, not in D1. The local script reads it
+    # through the gateway, the same way the report does.
+    history: list[dict] = []
+    history_keys = query(
+        "SELECT normalized_r2_key FROM history_datasets WHERE project_id="
+        f"'{project_id}' ORDER BY imported_at DESC LIMIT 1"
     )
+    if history_keys:
+        key = history_keys[0]["normalized_r2_key"]
+        completed = subprocess.run(
+            [
+                "npx.cmd",
+                "wrangler",
+                "r2",
+                "object",
+                "get",
+                key,
+                "--bucket",
+                "procurement-sourcing-artifacts",
+                "--remote",
+                "--file",
+                str(ROOT / ".local_history.json"),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        target = ROOT / ".local_history.json"
+        if completed.returncode == 0 and target.exists():
+            normalized = json.loads(target.read_text(encoding="utf-8"))
+            history = normalized.get("transactions") or []
+            target.unlink(missing_ok=True)
     evidence = query(
         "SELECT e.id AS evidence_id, e.title, e.source_url AS url, e.excerpt AS quote, e.content_sha256 "
         "FROM research_evidence e JOIN project_candidate_evidence p ON p.evidence_id=e.id "
