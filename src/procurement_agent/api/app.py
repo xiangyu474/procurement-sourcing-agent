@@ -865,6 +865,89 @@ async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = 
             }
             return {"status": "FAIL" if failures else "OK", "failures": failures, "state": json.dumps(state), "done": True}
 
+        if stage == "report-start":
+            started = await client.post(
+                f"/api/projects/{project_id}/reports",
+                json={"run_id": run_id} if run_id else {},
+            )
+            if started.status_code not in (200, 202):
+                return {
+                    "status": "FAIL",
+                    "failures": [f"the report could not be started: {started.status_code}"],
+                    "state": json.dumps({"project_id": project_id}),
+                    "done": True,
+                }
+            body = started.json()
+            return {
+                "status": "OK",
+                "failures": [],
+                "state": json.dumps(
+                    {
+                        "project_id": project_id,
+                        "report_id": body.get("report_id"),
+                        "report_status": body.get("status"),
+                    }
+                ),
+                "done": False,
+            }
+
+        if stage == "report":
+            listing = await client.get(f"/api/projects/{project_id}/reports")
+            reports = listing.json().get("reports") or [] if listing.status_code == 200 else []
+            if not reports:
+                return {
+                    "status": "OK",
+                    "failures": [],
+                    "state": json.dumps({"project_id": project_id}),
+                    "done": False,
+                }
+            report = reports[0]
+            report_id = report.get("report_id")
+            report_status = report.get("status")
+            if report_status == "FAILED":
+                return {
+                    "status": "FAIL",
+                    "failures": [f"the report failed: {report.get('error')}"],
+                    "state": json.dumps({"project_id": project_id, "report_id": report_id}),
+                    "done": True,
+                }
+            if report_status != "COMPLETED":
+                return {
+                    "status": "OK",
+                    "failures": [],
+                    "state": json.dumps({"project_id": project_id, "report_id": report_id}),
+                    "done": False,
+                }
+            download = await client.get(f"/api/projects/{project_id}/reports/{report_id}/download")
+            if download.status_code != 200:
+                return {
+                    "status": "FAIL",
+                    "failures": [f"the report could not be downloaded: {download.status_code}"],
+                    "state": json.dumps({"project_id": project_id, "report_id": report_id}),
+                    "done": True,
+                }
+            body = await download.aread()
+            failures: list[str] = []
+            if not body.startswith(b"PK"):
+                failures.append("the downloaded report is not a word document")
+            if len(body) < 10_000:
+                failures.append(f"the downloaded report is too small to hold the analysis: {len(body)} bytes")
+            return {
+                "status": "FAIL" if failures else "OK",
+                "failures": failures,
+                "state": json.dumps(
+                    {
+                        "project_id": project_id,
+                        "report_id": report_id,
+                        "report_status": report_status,
+                        "report_bytes": len(body),
+                        "report_sha256": report.get("sha256"),
+                        "decision_version": report.get("decision_version"),
+                    }
+                ),
+                "done": True,
+            }
+
         if stage == "decide-start":
             await client.post(f"/api/projects/{project_id}/decisions", json={})
             return {"status": "OK", "failures": [], "state": json.dumps({"project_id": project_id})}

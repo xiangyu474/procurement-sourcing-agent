@@ -1,0 +1,214 @@
+# M4 后端契约答复与对齐
+
+回应 `docs/m4/backend_contract_requests.md`（基线 `f0fa49b`）。本文只写**后端现在真实提供什么**、**还缺什么**、**谁来做、用什么数据结构**。
+前端可以**直接在本文件下方「对齐回执」一节回复**，后端会按回执改，不另开文档。
+
+- 后端仓库：`procurement_sourcing_agent`（本仓库）
+- 后端最新提交：见 `git log -1`
+- 网关：`https://procurement-sourcing-gateway.xiangyu474.workers.dev`
+- 容器镜像版本：`wrangler.jsonc` 的 `CONTAINER_INSTANCE_NAME`（当前 `sourcing-v10`）
+
+---
+
+## 0. 三个必须先说清楚的业务语义（前端展示直接依赖）
+
+### 0.1 `accepted` 不是「合格」，`recommendation` 才是建议
+
+`sourcing_decisions.accepted` 的含义是：**该条决策通过了程序化闸门（Verification Gate）并被留档**。
+它**不代表技术合格**，也不代表进入 RFQ 短名单。前端必须这样读：
+
+| 想知道 | 用哪个字段 |
+| --- | --- |
+| 这条决策是否成立（没被闸门拦下） | `accepted` |
+| 技术核对结论 | `hard_spec_overall`（`PASS` / `FAIL` / `UNKNOWN`）+ `technical_verdict` |
+| 是否建议询价 | `recommendation == "SHORTLIST"` **且** `technical_verdict == "VERIFIED_PASS"` |
+| 是否待补证 | `recommendation == "INVESTIGATE"` |
+| 是否排除 | `recommendation == "EXCLUDE"` |
+
+**`UNKNOWN` 永远不会进入建议询价**：实测 43 条决策中，22 条 `SHORTLIST/VERIFIED_PASS`、21 条 `INVESTIGATE/UNVERIFIED`、0 条把 UNKNOWN 写进短名单。
+
+### 0.2 候选的 `stage` 现在会随决策推进
+
+M2 只会产出 `DISCOVERED_LONG_LIST`。M3-C 的决策被接受后，候选的阶段会推进：
+
+| 决策 | 新的 stage |
+| --- | --- |
+| `SHORTLIST` + `VERIFIED_PASS` | `RFQ_SHORTLIST` |
+| `INVESTIGATE` | `NEEDS_VERIFICATION` |
+| `EXCLUDE` | `EXCLUDED` |
+
+未被闸门接受的决策**不改变**候选阶段。所以前端可以直接用 `GET /api/projects/{id}/candidates?stage=RFQ_SHORTLIST` 取询价短名单。
+
+### 0.3 价格的历史口径：`history_scope`
+
+M3-B 修了一个会误导买家的 bug：官方历史文件里是 **14 个不同品项**，价格跨度 **15.6x–16.3x**（最低 77 是「云台探头」，最高 1255 是「4G 80W太阳能版」）。
+现在历史统计**按品项/等价关系限定**：
+
+| `history_scope` | 含义 | 能不能用于比价/排名/节支 |
+| --- | --- | --- |
+| `ITEM` | 本品项（或已确认等价关系）的历史行 | 可以 |
+| `TABLE_OVERVIEW` | 导入目录的整体视图 | **不可以**（只作概览展示） |
+| `NONE` | 没有导入历史 | — |
+
+前端展示历史价格时，请把 `history_scope` 一起展示；`TABLE_OVERVIEW` 时不要出现「历史价」「节支」字样。
+
+---
+
+## 1. 已存在、可直接调用的接口
+
+| 方法 | 路径 | 响应要点 | 前端用途 | 备注 |
+| --- | --- | --- | --- | --- |
+| GET | `/api/health` | `{status, service}` | 存活探测 | 无需鉴权 |
+| POST | `/api/projects` | 201 `{project_id, source_id, analysis_version}` | 建项目 | `analysis_version=0` 表示还没有文字需求 |
+| GET | `/api/projects/{id}` | 项目字段 + `sources[]` | 打开项目 | `sources` 不含正文，见 §3 |
+| POST | `/api/projects/{id}/requirement-text` | 201 `{project_id, source_id, revision}` | 新文字修订 | 空文本 422；>10 万字 413 |
+| POST | `/api/projects/{id}/upload-sessions` | 201 `{source_id, purpose, revision, r2_key, sha256}` | 上传 PPTX / 历史 XLSX | `REQUIREMENT` 只收 `.pptx`，`HISTORY` 只收 `.xlsx` |
+| POST | `/api/projects/{id}/requirement-compile` | 202 `{project_id, status:"QUEUED", compile_id, analysis_version}` | 发起整理 | **本次新增 `compile_id` 可查**，见 §3.1 |
+| GET | `/api/projects/{id}/requirements` | `{analysis_version, compilation}` | 读整理结果 | 尚未写入时 404 `not_compiled`；整理失败时 `compilation` 只有 `issues`、没有 `requirements`（**这是现状契约**） |
+| POST | `/api/projects/{id}/history-imports` | 导入摘要 | 导入历史 | 重复内容返回已有数据集且 `duplicate_import: true` |
+| GET | `/api/projects/{id}/sourcing-plan` | `{plan}` | 看寻源计划 | 无计划 404 |
+| GET | `/api/projects/{id}/candidates` | `{candidates[]}` | **Longlist / 型号 / 证据** | 支持 `stage`、`run_id` 过滤；候选含供应商、型号、`stage`、证据摘要 |
+| POST | `/api/projects/{id}/spec-assessments` | 202 `{project_id, status:"QUEUED", assessment_id, demand_revision}` | 发起技术核对 | **本次新增 `assessment_id` 可查**，见 §3.2 |
+| GET | `/api/projects/{id}/spec-assessments` | `{project_id, assessments[]}` | **M3 技术判定** | `hard_spec_overall` 三值；每条带 `checks[]`、`evidence_ids`、`input_digest`、`judgment_version` |
+| POST | `/api/projects/{id}/decisions` | 202 `{project_id, status:"QUEUED", decision_id}` | 发起决策 | 无技术核对时 409 `no_spec_assessment` |
+| GET | `/api/projects/{id}/decisions` | `{project_id, decisions[]}` | **M3 决策结果** | 字段语义见 §0.1 |
+| POST | `/api/projects/{id}/runs` | 202 `{run_id, status:"QUEUED", mode, research_budget}` | 发起寻源 | 幂等键重复时返回 `reused: true` |
+| GET | `/api/runs/{id}` | `{id, project_id, status, current_stage, artifact_key, last_error, created_at, updated_at}` | 运行状态 | `status`：`QUEUED/RUNNING/COMPLETED/PARTIAL/FAILED` |
+| GET | `/api/runs/{id}/events` | `{events[]}` | 过程记录 | `detail` 含内部角色名，前端不要原样展示 |
+| GET | `/api/runs/{id}/research` | `{run, plan, tasks, actions, metrics}` | 研究详情 | `metrics` 含 token 与搜索次数，前端不要展示 |
+| GET | `/api/evidence/{id}` | `{evidence}`（含快照正文） | 证据详情 | 快照缺失 404 |
+| GET | `/api/workspaces/default/suppliers` | `{suppliers}` | 供应商情报 | 工作区情报，不是本项目结论 |
+| GET | `/api/workspaces/default/suppliers/{id}` | `{supplier, products, evidence}` | 供应商详情 | 同上 |
+
+**M0 的 `GET /api/runs/{id}/report/download` 只对 SPIKE 草稿有效，不要当正式采购报告用**（正式报告见 §2）。
+
+---
+
+## 2. 本次新增：正式 DOCX 报告（P0-C）
+
+正式报告**不是** M0 的部署验证草稿。它由容器里的报告生成器从数据库读数生成，走独立 Workflow，落私有 R2。
+
+### 2.1 接口
+
+```http
+POST /api/projects/{project_id}/reports
+{ "run_id": "uuid" }          // 可选；给了就固定为这次运行的决策集合
+```
+
+```json
+{ "report_id": "uuid", "run_id": "uuid", "status": "QUEUED", "workflow_id": "cf_..." }
+```
+
+```http
+GET /api/projects/{project_id}/reports/{report_id}
+```
+
+```json
+{
+  "report_id": "uuid",
+  "run_id": "uuid",
+  "status": "COMPLETED",
+  "decision_version": "3f2a9c1b7d0e4a55",
+  "byte_size": 41233,
+  "sha256": "…",
+  "error": null,
+  "download_path": "/api/projects/{project_id}/reports/{report_id}/download",
+  "created_at": "…",
+  "updated_at": "…"
+}
+```
+
+`status`：`QUEUED` / `RUNNING` / `COMPLETED` / `FAILED`。下载：`GET <download_path>` 返回 DOCX 字节
+（`application/vnd.openxmlformats-officedocument.wordprocessingml.document`）。
+
+另有 `GET /api/projects/{project_id}/reports` 返回该项目的报告列表（按 `created_at` 倒序）。
+
+### 2.2 报告内容（前端如需展示摘要可对齐这些章节）
+
+1. 报告标识：项目、Run、**决策版本**、需求修订、生成时间、DSL/计算器版本
+2. 阅读须知：UNKNOWN ≠ 合格；长名单 ≠ 合格名单；价格按口径；历史价按品项
+3. 一、需求摘要（每条需求、硬约束、原文引用）
+4. 二、候选与型号（供应商、型号、阶段、技术结论、建议、证据数）
+5. 三、关键技术判定（逐约束：计算式、结果、原因码、说明、证据 ID）
+6. 四、价格与口径（历史口径范围与统计；各口径的最低价、节支、可比性、说明）
+7. 五、询价建议（建议询价 / 待补充证据 / 建议排除 三档，含理由与缺口）
+8. 六、未解决问题与下一步
+9. 七、证据引用（证据 ID、来源、地址、摘录、内容哈希）
+
+**报告与「运行」的绑定**：`decision_version` 是本次决策集合内容的摘要（`sha256` 前 16 位）。同一个 `report_id` 永远对应同一份文档，之后再跑新的寻源不会改变它。
+
+---
+
+## 3. 还需要补的接口（前端提出的缺口）
+
+### 3.1 需求整理状态 —— 后端补，前端直接用
+
+- 缺口原因：`GET .../requirements` 的 404 与「整理失败」混在一起。
+- 计划：后端新增 `GET /api/projects/{project_id}/requirement-compile/{compile_id}`，
+  返回 `{compile_id, project_id, status, analysis_version, demand_revision, error}`，
+  `status` 为 `QUEUED/RUNNING/COMPLETED/FAILED`；`FAILED` 的 `error` 是可展示短句，不含密钥。
+- 数据结构：D1 新表 `project_jobs`（`id, project_id, job_type, status, error, detail_json, created_at, updated_at`），
+  发起任务时写一行，工作流结束时更新状态。
+- 负责人：**后端**（本仓库）。
+
+### 3.2 技术核对 / 决策的任务状态 —— 后端补，前端直接用
+
+- 缺口原因：空的 `GET .../spec-assessments` 无法区分「还在跑」和「失败了」。
+- 计划：后端新增 `GET /api/projects/{project_id}/spec-assessments/status` 与 `GET /api/projects/{project_id}/decisions/status`，
+  形状同上（`status` 为 `IDLE/QUEUED/RUNNING/COMPLETED/FAILED`，另带 `job_id`、`demand_revision`、`error`）。
+- **结果行本身不变**：仍由现有 GET 返回，字段不改（前端 F2 的解析不用动）。
+- 负责人：**后端**。
+
+### 3.3 项目列表 —— 后端补，前端直接用
+
+- `GET /api/projects?limit=50` → `{projects:[{id,title,history_availability,demand_revision,analysis_version,created_at,latest_run:{id,status,current_stage,updated_at}|null}]}`。
+- `latest_run` 没有时为 `null`；`status` 只用现有枚举。
+- 负责人：**后端**。
+
+### 3.4 项目下的运行列表 —— 后端补，前端直接用
+
+- `GET /api/projects/{project_id}/runs` → `{runs:[{id,status,current_stage,last_error,stop_reason_code,artifact_key_present,created_at,updated_at}]}`，按 `created_at` 倒序。
+- `stop_reason_code` 来自 `research_run_costs.stop_reason_code`（今天的 `PARTIAL` 原因只藏在 `GET /api/runs/{id}/research` 的 `metrics` 里，而那个对象带 token，前端不应展示）。
+- 负责人：**后端**。
+
+### 3.5 文字需求正文回读 —— 后端补，前端直接用
+
+- `GET /api/projects/{project_id}/requirement-text` → `{source_id, revision, text}`；只返回最新一条 `USER_TEXT`；没有则 404 `not_found`。
+- 负责人：**后端**。
+
+### 3.6 项目级修订（`POST /api/projects/{project_id}/actions`）—— **后端，本轮未做**
+
+- 前端要求一个原子接口：`{text, base_demand_revision, base_run_id}` → 新修订 + 重新整理 + 重跑受影响候选，`base_demand_revision` 不一致返回 409。
+- **现状**：后端已有「提交新文字修订 → 重新整理 → 新建寻源运行」三步，但**三步彼此独立**，中间会留下半成品。
+- 本轮不做的理由：它需要新的编排（一个跨需求修订、工作流、决策的编排器），与「正式 DOCX + 状态接口」相比不是交付瓶颈；**前端不要用三次调用包装成「已经完成重评」**，F4 的操作区先按「分步引导」呈现。
+- 负责人：**后端**，排在 M4 中段。
+
+### 3.7 鉴权方案 —— 后端给方案，前端按方案做（两端共同确认）
+
+- **开发/联调**：前端 Vite 代理进程读环境变量 `DEMO_ACCESS_TOKEN`，把 `Authorization: Bearer` 加在**出站请求**上。token 不进浏览器包、不进前端源码、不提交仓库（`.env.local` 需在 `frontend/.gitignore` 中）。
+- **生产**：页面与 API **同源**（前端构建产物由同一个 Worker 托管，走相对路径 `/api`，不需要 CORS）。凭证校验留在 Worker：
+  - 首选 Cloudflare Access（身份层在网关之前，浏览器拿不到 `DEMO_ACCESS_TOKEN`）；
+  - 备选 Worker 签发 HttpOnly 会话 Cookie。
+- **红线**：`DEMO_ACCESS_TOKEN` 不出现在浏览器包、浏览器可见响应、公开生产配置、任何 Git 提交里。
+- 负责人：**后端**负责 Worker 侧（同源托管 + 校验），**前端**负责不落 token；**待前端确认**：是否接受 Cloudflare Access 作为生产身份层。
+
+---
+
+## 4. 不做与不承诺的（避免前端误用）
+
+- 不新增第二套 DTO：所有结构化结果都来自上表的既有字段；前端不要在前端重算技术判定、价格口径或推荐档位。
+- 不把「候选被发现」等同于「建议询价」。
+- 不把 `UNKNOWN` 显示成通过或失败，用原文 `UNKNOWN`（前端可显示「未知（证据不足）」）。
+- 不展示 `metrics` 里的 token/搜索次数。
+- 不承诺跨浏览器自动发现历史项目，直到 §3.3/§3.4 上线。
+
+---
+
+## 5. 对齐回执（请前端 agent 在这里回复）
+
+> 后端会按这里的回复改代码并更新本节。请写清楚：同意/不同意、需要后端补的字段、期望的字段名、前端已实现的适配。
+
+| 日期 | 方 | 内容 |
+| --- | --- | --- |
+| 2026-10-31 | 后端 | 首次答复：§1 接口清单以真实响应为准；§2 正式报告接口已实现；§3 为待补项与负责人；§3.7 为鉴权方案，请确认是否接受 Cloudflare Access。 |
+|  |  |  |

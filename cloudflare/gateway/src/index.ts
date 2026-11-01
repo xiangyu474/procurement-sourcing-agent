@@ -657,11 +657,13 @@ interface CompileRequest {
 	textSources: { source_id: string; revision: number; text: string }[];
 	pptxSources: { source_id: string; filename: string; revision: number }[];
 	sourceIds: string[];
+	jobId: string;
 }
 
 export class SourcingCompileWorkflow extends WorkflowEntrypoint<Env, CompileRequest> {
 	async run(event: WorkflowEvent<CompileRequest>, step: WorkflowStep) {
-		const { projectId, analysisVersion, demandRevision, textSources, pptxSources, sourceIds } = event.payload;
+		const { projectId, analysisVersion, demandRevision, textSources, pptxSources, sourceIds, jobId } =
+			event.payload;
 		try {
 			const result = await step.do(
 				"compile-demand",
@@ -724,9 +726,21 @@ export class SourcingCompileWorkflow extends WorkflowEntrypoint<Env, CompileRequ
 					};
 				},
 			);
+			await this.env.DB.prepare(
+				`UPDATE project_jobs SET status = 'COMPLETED', updated_at = ?2
+				 WHERE workspace_id = 'default' AND id = ?1`,
+			)
+				.bind(jobId, new Date().toISOString())
+				.run();
 			return { status: "COMPLETED", ...result };
 		} catch (error) {
 			const detail = error instanceof Error ? error.message : String(error);
+			await this.env.DB.prepare(
+				`UPDATE project_jobs SET status = 'FAILED', error = ?2, updated_at = ?3
+				 WHERE workspace_id = 'default' AND id = ?1`,
+			)
+				.bind(jobId, detail.slice(0, 500), new Date().toISOString())
+				.run();
 			await this.env.DB.prepare(
 				`INSERT INTO demand_compilations (id, project_id, demand_revision, analysis_version, compiler_version, compilation_json, source_refs_json, created_at)
 				 VALUES (?1, ?2, ?3, ?4, 'm1-0.1.0', ?5, ?6, ?7)
@@ -755,6 +769,7 @@ interface SpecRequest {
 	requirementIds: string[];
 	candidateIds: string[];
 	reviewReason: string;
+	jobId: string;
 }
 
 interface ReportRequest {
@@ -766,6 +781,7 @@ interface ReportRequest {
 interface DecisionRequest {
 	projectId: string;
 	requirementIds: string[];
+	jobId: string;
 }
 
 interface AcceptanceRequest {
@@ -933,6 +949,28 @@ export class SourcingAcceptanceWorkflow extends WorkflowEntrypoint<Env, Acceptan
 				await step.sleep(`acceptance-decide-wait-${attempt}`, "30 seconds");
 			}
 			if (!decided) failures.push("the decision produced no result in time");
+
+			await step.do(
+				"acceptance-report-start",
+				{ retries: { limit: 0, delay: "5 seconds", backoff: "exponential" }, timeout: "10 minutes" },
+				async () => runStage("report-start", projectId, runId),
+			);
+			let reported: Record<string, unknown> | undefined;
+			for (let attempt = 0; attempt < 30; attempt += 1) {
+				const polled = await step.do(
+					`acceptance-report-${attempt}`,
+					{ retries: { limit: 0, delay: "5 seconds", backoff: "exponential" }, timeout: "10 minutes" },
+					async () => runStage("report", projectId, runId),
+				);
+				failures.push(...(polled.failures ?? []));
+				Object.assign(stages, _parseStages(polled.state));
+				if (polled.done) {
+					reported = _parseStages(polled.state);
+					break;
+				}
+				await step.sleep(`acceptance-report-wait-${attempt}`, "10 seconds");
+			}
+			if (!reported) failures.push("the report was not produced in time");
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			failures.push(message.slice(0, 400));
@@ -950,7 +988,7 @@ export class SourcingAcceptanceWorkflow extends WorkflowEntrypoint<Env, Acceptan
 
 export class SourcingDecisionWorkflow extends WorkflowEntrypoint<Env, DecisionRequest> {
 	async run(event: WorkflowEvent<DecisionRequest>, step: WorkflowStep) {
-		const { projectId, requirementIds } = event.payload;
+		const { projectId, requirementIds, jobId } = event.payload;
 		try {
 			const result = await step.do(
 				"write-decisions",
@@ -1006,6 +1044,20 @@ export class SourcingDecisionWorkflow extends WorkflowEntrypoint<Env, DecisionRe
 				accepted?: number;
 				rejected?: number;
 			};
+			await this.env.DB.prepare(
+				`UPDATE project_jobs SET status = 'COMPLETED', detail_json = ?2, updated_at = ?3
+				 WHERE workspace_id = 'default' AND id = ?1`,
+			)
+				.bind(
+					jobId,
+					JSON.stringify({
+						decisions: outcome.decisions ?? 0,
+						accepted: outcome.accepted ?? 0,
+						rejected: outcome.rejected ?? 0,
+					}),
+					new Date().toISOString(),
+				)
+				.run();
 			return {
 				status: outcome.status ?? "COMPLETED",
 				decisions: outcome.decisions ?? 0,
@@ -1014,6 +1066,12 @@ export class SourcingDecisionWorkflow extends WorkflowEntrypoint<Env, DecisionRe
 			};
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
+			await this.env.DB.prepare(
+				`UPDATE project_jobs SET status = 'FAILED', error = ?2, updated_at = ?3
+				 WHERE workspace_id = 'default' AND id = ?1`,
+			)
+				.bind(jobId, message.slice(0, 500), new Date().toISOString())
+				.run();
 			return { status: "FAILED", error: message.slice(0, 400) };
 		}
 	}
@@ -1030,7 +1088,7 @@ async function stableSpecId(projectId: string, requirementId: string, candidateI
 
 export class SourcingSpecWorkflow extends WorkflowEntrypoint<Env, SpecRequest> {
 	async run(event: WorkflowEvent<SpecRequest>, step: WorkflowStep) {
-		const { projectId, requirementIds, candidateIds, reviewReason } = event.payload;
+		const { projectId, requirementIds, candidateIds, reviewReason, jobId } = event.payload;
 		try {
 			const result = await step.do(
 				"evaluate-spec",
@@ -1081,6 +1139,16 @@ export class SourcingSpecWorkflow extends WorkflowEntrypoint<Env, SpecRequest> {
 				},
 			);
 			const outcome = result as unknown as { status?: string; assessments?: number; by_overall?: Record<string, number> };
+			await this.env.DB.prepare(
+				`UPDATE project_jobs SET status = 'COMPLETED', detail_json = ?2, updated_at = ?3
+				 WHERE workspace_id = 'default' AND id = ?1`,
+			)
+				.bind(
+					jobId,
+					JSON.stringify({ assessments: outcome.assessments ?? 0, by_overall: outcome.by_overall ?? {} }),
+					new Date().toISOString(),
+				)
+				.run();
 			return {
 				status: outcome.status ?? "COMPLETED",
 				assessments: outcome.assessments ?? 0,
@@ -1088,6 +1156,12 @@ export class SourcingSpecWorkflow extends WorkflowEntrypoint<Env, SpecRequest> {
 			};
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
+			await this.env.DB.prepare(
+				`UPDATE project_jobs SET status = 'FAILED', error = ?2, updated_at = ?3
+				 WHERE workspace_id = 'default' AND id = ?1`,
+			)
+				.bind(jobId, message.slice(0, 500), new Date().toISOString())
+				.run();
 			return { status: "FAILED", error: message.slice(0, 400) };
 		}
 	}
@@ -2180,6 +2254,148 @@ export default {
 			return json({ error: "not_found" }, 404);
 		}
 
+		// The list of the projects of the workspace, with the run that is
+		// still going on or that finished last.
+		if (request.method === "GET" && url.pathname === "/api/projects") {
+			const limit = Math.min(Number(url.searchParams.get("limit") ?? 50) || 50, 200);
+			const { results } = await env.DB.prepare(
+				`SELECT p.id, p.title, p.history_availability, p.demand_revision, p.analysis_version,
+				        p.created_at,
+				        (SELECT r.id FROM runs r WHERE r.project_id = p.id ORDER BY r.created_at DESC LIMIT 1) AS run_id,
+				        (SELECT r.status FROM runs r WHERE r.project_id = p.id ORDER BY r.created_at DESC LIMIT 1) AS run_status,
+				        (SELECT r.current_stage FROM runs r WHERE r.project_id = p.id ORDER BY r.created_at DESC LIMIT 1) AS run_stage,
+				        (SELECT r.updated_at FROM runs r WHERE r.project_id = p.id ORDER BY r.created_at DESC LIMIT 1) AS run_updated_at
+				 FROM projects p
+				 WHERE p.workspace_id = 'default'
+				 ORDER BY p.created_at DESC LIMIT ?1`,
+			)
+				.bind(limit)
+				.all<Record<string, unknown>>();
+			return json({
+				projects: results.map((row) => ({
+					id: row.id,
+					title: row.title,
+					history_availability: row.history_availability,
+					demand_revision: row.demand_revision,
+					analysis_version: row.analysis_version,
+					created_at: row.created_at,
+					latest_run: row.run_id
+						? {
+								id: row.run_id,
+								status: row.run_status,
+								current_stage: row.run_stage,
+								updated_at: row.run_updated_at,
+							}
+						: null,
+				})),
+			});
+		}
+
+		// The runs of one project, so that a project can be opened from a
+		// browser that never saw it before.
+		const projectRunsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/runs$/);
+		if (projectRunsMatch && request.method === "GET") {
+			const projectId = decodeURIComponent(projectRunsMatch[1]);
+			const { results } = await env.DB.prepare(
+				`SELECT r.id, r.status, r.current_stage, r.last_error, r.artifact_key, r.created_at, r.updated_at,
+				        (SELECT c.stop_reason_code FROM research_run_costs c WHERE c.run_id = r.id) AS stop_reason_code
+				 FROM runs r
+				 WHERE r.project_id = ?1
+				 ORDER BY r.created_at DESC LIMIT 100`,
+			)
+				.bind(projectId)
+				.all<Record<string, unknown>>();
+			return json({
+				runs: results.map((row) => ({
+					id: row.id,
+					status: row.status,
+					current_stage: row.current_stage,
+					last_error: row.last_error,
+					stop_reason_code: row.stop_reason_code,
+					artifact_key_present: Boolean(row.artifact_key),
+					created_at: row.created_at,
+					updated_at: row.updated_at,
+				})),
+			});
+		}
+
+		// The text of the latest demand revision, so that the input can be
+		// filled in again after a reload.
+		const requirementTextMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/requirement-text$/);
+		if (requirementTextMatch && request.method === "GET") {
+			const projectId = decodeURIComponent(requirementTextMatch[1]);
+			const row = await env.DB.prepare(
+				`SELECT id, revision, text_content FROM source_inputs
+				 WHERE project_id = ?1 AND purpose = 'REQUIREMENT' AND source_type = 'USER_TEXT'
+				 ORDER BY revision DESC LIMIT 1`,
+			)
+				.bind(projectId)
+				.first<{ id: string; revision: number; text_content: string | null }>();
+			if (!row || !row.text_content) return json({ error: "not_found" }, 404);
+			return json({ source_id: row.id, revision: row.revision, text: row.text_content });
+		}
+
+		// The state of one demand compilation.
+		const compileStatusMatch = url.pathname.match(
+			/^\/api\/projects\/([^/]+)\/requirement-compile\/([^/]+)$/,
+		);
+		if (compileStatusMatch && request.method === "GET") {
+			const projectId = decodeURIComponent(compileStatusMatch[1]);
+			const compileId = decodeURIComponent(compileStatusMatch[2]);
+			const row = await env.DB.prepare(
+				`SELECT id, job_type, status, error, detail_json, created_at, updated_at
+				 FROM project_jobs
+				 WHERE workspace_id = 'default' AND project_id = ?1 AND id = ?2 AND job_type = 'COMPILE'`,
+			)
+				.bind(projectId, compileId)
+				.first<Record<string, unknown>>();
+			if (!row) return json({ error: "not_found" }, 404);
+			const detail = JSON.parse(String(row.detail_json ?? "{}")) as Record<string, unknown>;
+			return json({
+				compile_id: row.id,
+				project_id: projectId,
+				status: row.status,
+				analysis_version: detail.analysis_version ?? null,
+				demand_revision: detail.demand_revision ?? null,
+				error: row.error,
+			});
+		}
+
+		// The state of the technical check and of the decision.
+		const jobStatusMatch = url.pathname.match(
+			/^\/api\/projects\/([^/]+)\/(spec-assessments|decisions)\/status$/,
+		);
+		if (jobStatusMatch && request.method === "GET") {
+			const projectId = decodeURIComponent(jobStatusMatch[1]);
+			const jobType = jobStatusMatch[2] === "decisions" ? "DECISION" : "SPEC_ASSESSMENT";
+			const row = await env.DB.prepare(
+				`SELECT id, status, error, detail_json, created_at, updated_at
+				 FROM project_jobs
+				 WHERE workspace_id = 'default' AND project_id = ?1 AND job_type = ?2
+				 ORDER BY created_at DESC LIMIT 1`,
+			)
+				.bind(projectId, jobType)
+				.first<Record<string, unknown>>();
+			if (!row) {
+				return json({ status: "IDLE", job_id: null, demand_revision: null, error: null });
+			}
+			const detail = JSON.parse(String(row.detail_json ?? "{}")) as Record<string, unknown>;
+			const revision = await env.DB.prepare(
+				`SELECT demand_revision FROM projects WHERE workspace_id = 'default' AND id = ?1`,
+			)
+				.bind(projectId)
+				.first<{ demand_revision: number }>();
+			return json({
+				status: row.status,
+				job_id: row.id,
+				demand_revision: revision?.demand_revision ?? null,
+				error: row.error,
+				detail: detail,
+				created_at: row.created_at,
+				updated_at: row.updated_at,
+			});
+		}
+
 		if (request.method === "POST" && url.pathname === "/api/projects") {
 			const body = (await request.json().catch(() => ({}))) as {
 				title?: string;
@@ -2360,6 +2576,25 @@ export default {
 			// The model reads the whole document, so a long document takes several
 			// minutes. A Worker request cannot hold the connection that long, so
 			// the compile runs as a workflow and the client polls the result.
+			// The state of the job is kept next to the project, so that the
+			// client can tell a running compile from a failed one. The job is
+			// written first, so that the workflow can report its outcome.
+			const jobId = crypto.randomUUID();
+			const now = new Date().toISOString();
+			await env.DB.prepare(
+				`INSERT INTO project_jobs (id, workspace_id, project_id, job_type, status, detail_json, created_at, updated_at)
+				 VALUES (?1, 'default', ?2, 'COMPILE', 'QUEUED', ?3, ?4, ?4)`,
+			)
+				.bind(
+					jobId,
+					projectId,
+					JSON.stringify({
+						analysis_version: project.analysis_version,
+						demand_revision: project.demand_revision,
+					}),
+					now,
+				)
+				.run();
 			const instance = await env.COMPILE_WORKFLOW.create({
 				params: {
 					projectId,
@@ -2368,12 +2603,28 @@ export default {
 					textSources,
 					pptxSources,
 					sourceIds: results.map(s => s.id),
+					jobId,
 				},
 			});
+			await env.DB.prepare(
+				`UPDATE project_jobs SET detail_json = ?2, updated_at = ?3
+				 WHERE workspace_id = 'default' AND id = ?1`,
+			)
+				.bind(
+					jobId,
+					JSON.stringify({
+						workflow_id: instance.id,
+						analysis_version: project.analysis_version,
+						demand_revision: project.demand_revision,
+					}),
+					now,
+				)
+				.run();
 			return json({
 				project_id: projectId,
 				status: "QUEUED",
-				compile_id: instance.id,
+				compile_id: jobId,
+				workflow_id: instance.id,
 				analysis_version: project.analysis_version,
 			}, 202);
 		}
@@ -2539,16 +2790,32 @@ export default {
 				const body = (await request.json().catch(() => ({}))) as { requirement_ids?: string[] };
 				// The decision holds one model call open for minutes, so it runs
 				// as a workflow and the client polls the result.
+				const jobId = crypto.randomUUID();
+				const now = new Date().toISOString();
+				await env.DB.prepare(
+					`INSERT INTO project_jobs (id, workspace_id, project_id, job_type, status, detail_json, created_at, updated_at)
+					 VALUES (?1, 'default', ?2, 'DECISION', 'QUEUED', '{}', ?3, ?3)`,
+				)
+					.bind(jobId, projectId, now)
+					.run();
 				const instance = await env.DECISION_WORKFLOW.create({
 					params: {
 						projectId,
 						requirementIds: body.requirement_ids ?? [],
+						jobId,
 					},
 				});
+				await env.DB.prepare(
+					`UPDATE project_jobs SET detail_json = ?2, updated_at = ?3
+					 WHERE workspace_id = 'default' AND id = ?1`,
+				)
+					.bind(jobId, JSON.stringify({ workflow_id: instance.id }), now)
+					.run();
 				return json({
 					project_id: projectId,
 					status: "QUEUED",
 					decision_id: instance.id,
+					job_id: jobId,
 				}, 202);
 			}
 		}
@@ -2713,18 +2980,34 @@ export default {
 				// The typing and the alignment hold one model call open for
 				// minutes, so the evaluation runs as a workflow and the client
 				// polls the result.
+				const jobId = crypto.randomUUID();
+				const now = new Date().toISOString();
+				await env.DB.prepare(
+					`INSERT INTO project_jobs (id, workspace_id, project_id, job_type, status, detail_json, created_at, updated_at)
+					 VALUES (?1, 'default', ?2, 'SPEC_ASSESSMENT', 'QUEUED', '{}', ?3, ?3)`,
+				)
+					.bind(jobId, projectId, now)
+					.run();
 				const instance = await env.SPEC_WORKFLOW.create({
 					params: {
 						projectId,
 						requirementIds: body.requirement_ids ?? [],
 						candidateIds: body.candidate_ids ?? [],
 						reviewReason: String(body.review_reason ?? "").slice(0, 500),
+						jobId,
 					},
 				});
+				await env.DB.prepare(
+					`UPDATE project_jobs SET detail_json = ?2, updated_at = ?3
+					 WHERE workspace_id = 'default' AND id = ?1`,
+				)
+					.bind(jobId, JSON.stringify({ workflow_id: instance.id }), now)
+					.run();
 				return json({
 					project_id: projectId,
 					status: "QUEUED",
 					assessment_id: instance.id,
+					job_id: jobId,
 					demand_revision: compilation.demand_revision,
 				}, 202);
 			}
