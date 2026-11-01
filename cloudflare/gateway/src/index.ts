@@ -1197,7 +1197,7 @@ export class SourcingReportWorkflow extends WorkflowEntrypoint<Env, ReportReques
 					// started before it can answer.
 					await container.start();
 					const response = await container.fetch(
-						new Request("http://container/internal/projects/report", {
+						new Request(`http://container/internal/projects/${projectId}/report`, {
 							method: "POST",
 							headers: { "content-type": "application/json" },
 							body: JSON.stringify({
