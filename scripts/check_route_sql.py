@@ -54,7 +54,6 @@ def query(sql: str) -> tuple[bool, str]:
 def main() -> int:
     project_id = sys.argv[1] if len(sys.argv) > 1 else ""
     if not project_id:
-        found = query("SELECT id FROM projects ORDER BY created_at DESC LIMIT 1")
         try:
             project_id = json.loads(
                 subprocess.run(
