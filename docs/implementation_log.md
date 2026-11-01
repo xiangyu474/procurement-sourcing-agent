@@ -488,4 +488,31 @@ The measurement over the real M2 output, 39 candidates and 115 claims:
 
 A judgement is versioned. A re-run of the same content keeps its version; an explicit review creates a new version with the reason for the review and leaves the old judgement in place. The decision snapshot is never changed by the cache.
 
-The frozen regression set holds the real inputs of the four models that flipped, with the verdicts read off the raw evidence by hand: `IPS05-R10-OIA4` and `NBN-80052-BA` pass, `TRI050S-MC` stays unknown because no claim states the output resolution, and `TRI055N` stays unknown because the source states the resolution as a pixel size, which is not a number the quotation check can confirm.
+The frozen regression set holds the real inputs of the four models that flipped, with the verdicts read off the raw evidence by hand. The verdicts were read again in the M3 close-out, because the first reading had accepted a number that belonged to a product name:
+
+| Model | The evidence that matters | Verdict |
+|---|---|---|
+| `IPS05-R10-OIA4` | "up to 2560 x 1920 resolution" — the highest output the source states, 4.92 MP. The "5MP" of this model appears only in product titles. | **FAIL** |
+| `NBN-80052-BA` | "Capturing 16:9 images at 5 megapixel resolution (3K)" | **PASS** |
+| `TRI050S-MC` | "5.0 MP, 2448 x 2048 px" — 5.01 MP | **PASS** |
+| `TRI055N` | "delivering 2,592 × 1,944 resolution at up to 22.1 fps" — 5.04 MP | **PASS** |
+
+## M3 收尾：业务正确性、接口与正式报告
+
+### 业务语义的核验（2026-10-31）
+
+**历史价格的口径**。The two official history workbooks hold fourteen items each, and the prices spread over 15.6 and 16.3 times. The smallest price of the catalogue is a cloud-tilted probe, the largest is a 4G probe with a solar panel. A table-wide number therefore describes a catalogue, not the product a buyer asks about. The history is now scoped to the item of the requirement: a confirmed equivalence names the rows, or the item name is exactly the same. Without that, the history is an overview, it is labelled as one, and it produces no lowest price, no ranking, and no saving.
+
+**决策的业务状态**。The 43 accepted decisions of the cloud run are 22 `SHORTLIST` with a verified pass and 21 `INVESTIGATE` with an unknown. No unknown reached the short list, and no discovered candidate was recommended for an inquiry by default. "Accepted" means the gate kept the decision in the ledger; it does not mean the candidate is qualified. An accepted decision now moves the candidate as well: a verified pass enters `RFQ_SHORTLIST`, an exclusion leaves the longlist, and a candidate that still needs evidence stays on it as `NEEDS_VERIFICATION`.
+
+**技术判定的属性归属**。A passing check could rest on a catalogue title that carries the number of the requirement, such as "CAM-CIC-5MR/5000R 5MP 14fps Color, Mono". A quotation now has to name the quantity it is used for, and a value may not say more than its quotation does. A pixel size such as "2592 x 1944" is read as the pixel count it is, so a resolution can be compared instead of staying unreadable.
+
+**缓存冲突的归因**。The conflicts are not a number that has to reach zero. They are classified by layer, by source run, by rule version, and by model configuration. Two causes were found and fixed: an assessment carried the names of its project, so the same judgement in another project was counted as a conflict, and the cached entries did not name the run that produced them.
+
+### 接口与正式报告
+
+The routes the frontend asked for are in place: the list of the projects, the runs of a project, the text of the latest demand revision, the state of the compile, the state of the technical check, and the state of the decision. The state of a long task lives in its own row next to the project, so a running job and a failed job look different.
+
+The formal report is a workflow of its own. The container writes the document from what the database holds and stores it in private R2; the gateway reports its status, its decision version, and its download path. The report states the demand with its sources, the candidates with their models, the technical checks with the calculation that produced them, the prices with the scope they were computed in, the advice to inquire in three groups, the open questions, and the evidence with its hashes. A long list is never written as a qualified list, an unknown verdict is never written as a pass, and a catalogue-wide price is never written as the price of one item.
+
+The gateway routes that the frontend depends on are covered by tests that run without a Cloudflare account: the credentials, the statements and their parameters, the shape of the answers, and the way a database error becomes a short error code.
