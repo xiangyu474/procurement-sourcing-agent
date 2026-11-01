@@ -1,5 +1,22 @@
 import { Container, getContainer } from "@cloudflare/containers";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
+import {
+	checkInternalAuth,
+	checkPublicAuth,
+	compileStatusSql,
+	jobStatusSql,
+	projectRunsSql,
+	projectsListSql,
+	reportAssessmentsSql,
+	reportCandidatesSql,
+	reportStatusSql,
+	reportsListSql,
+	requirementTextSql,
+	shapeJobStatus,
+	shapeProject,
+	shapeReport,
+	shapeRun,
+} from "./gateway_contracts";
 
 export interface Env {
 	DB: D1Database;
@@ -1719,18 +1736,7 @@ export default {
 				};
 				const requirements = (compilation.requirements ?? []) as Record<string, unknown>[];
 
-				const { results: candidateRows } = await env.DB.prepare(
-					`SELECT c.id AS candidate_id, c.requirement_id, c.stage, c.rationale,
-					        c.open_questions_json, s.display_name AS supplier_name,
-					        p.model AS product_model, p.product_name,
-					        (SELECT group_concat(e.evidence_id) FROM project_candidate_evidence e
-					          WHERE e.workspace_id = c.workspace_id AND e.candidate_id = c.id) AS evidence_ids
-					 FROM project_candidates c
-					 LEFT JOIN intelligence_suppliers s ON s.workspace_id = c.workspace_id AND s.id = c.supplier_id
-					 LEFT JOIN intelligence_products p ON p.workspace_id = c.workspace_id AND p.id = c.product_id
-					 WHERE c.workspace_id = 'default' AND c.project_id = ?1
-					 ORDER BY c.updated_at DESC LIMIT 600`,
-				)
+				const { results: candidateRows } = await env.DB.prepare(reportCandidatesSql)
 					.bind(projectId)
 					.all<{
 						candidate_id: string;
@@ -1756,20 +1762,7 @@ export default {
 				}));
 
 				// The newest judgement of every requirement and candidate.
-				const { results: assessmentRows } = await env.DB.prepare(
-					`SELECT s.requirement_id, s.product_candidate_id, s.product_model_ref,
-					        s.hard_spec_overall, s.overall_reason_codes_json, s.assessment_json,
-					        s.judgment_version, s.evaluated_at
-					 FROM spec_assessments s
-					 WHERE s.workspace_id = 'default' AND s.project_id = ?1
-					   AND s.judgment_version = (
-					     SELECT MAX(inner_s.judgment_version) FROM spec_assessments inner_s
-					     WHERE inner_s.workspace_id = s.workspace_id AND inner_s.project_id = s.project_id
-					       AND inner_s.requirement_id = s.requirement_id
-					       AND inner_s.product_candidate_id = s.product_candidate_id
-					       AND inner_s.demand_revision = s.demand_revision)
-					 ORDER BY s.requirement_id, s.product_candidate_id`,
-				)
+				const { results: assessmentRows } = await env.DB.prepare(reportAssessmentsSql)
 					.bind(projectId)
 					.all<{
 						requirement_id: string;
@@ -2258,37 +2251,10 @@ export default {
 		// still going on or that finished last.
 		if (request.method === "GET" && url.pathname === "/api/projects") {
 			const limit = Math.min(Number(url.searchParams.get("limit") ?? 50) || 50, 200);
-			const { results } = await env.DB.prepare(
-				`SELECT p.id, p.title, p.history_availability, p.demand_revision, p.analysis_version,
-				        p.created_at,
-				        (SELECT r.id FROM runs r WHERE r.project_id = p.id ORDER BY r.created_at DESC LIMIT 1) AS run_id,
-				        (SELECT r.status FROM runs r WHERE r.project_id = p.id ORDER BY r.created_at DESC LIMIT 1) AS run_status,
-				        (SELECT r.current_stage FROM runs r WHERE r.project_id = p.id ORDER BY r.created_at DESC LIMIT 1) AS run_stage,
-				        (SELECT r.updated_at FROM runs r WHERE r.project_id = p.id ORDER BY r.created_at DESC LIMIT 1) AS run_updated_at
-				 FROM projects p
-				 WHERE p.workspace_id = 'default'
-				 ORDER BY p.created_at DESC LIMIT ?1`,
-			)
+			const { results } = await env.DB.prepare(projectsListSql)
 				.bind(limit)
 				.all<Record<string, unknown>>();
-			return json({
-				projects: results.map((row) => ({
-					id: row.id,
-					title: row.title,
-					history_availability: row.history_availability,
-					demand_revision: row.demand_revision,
-					analysis_version: row.analysis_version,
-					created_at: row.created_at,
-					latest_run: row.run_id
-						? {
-								id: row.run_id,
-								status: row.run_status,
-								current_stage: row.run_stage,
-								updated_at: row.run_updated_at,
-							}
-						: null,
-				})),
-			});
+			return json({ projects: results.map((row) => shapeProject(row)) });
 		}
 
 		// The runs of one project, so that a project can be opened from a
@@ -2296,27 +2262,10 @@ export default {
 		const projectRunsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/runs$/);
 		if (projectRunsMatch && request.method === "GET") {
 			const projectId = decodeURIComponent(projectRunsMatch[1]);
-			const { results } = await env.DB.prepare(
-				`SELECT r.id, r.status, r.current_stage, r.last_error, r.artifact_key, r.created_at, r.updated_at,
-				        (SELECT c.stop_reason_code FROM research_run_costs c WHERE c.run_id = r.id) AS stop_reason_code
-				 FROM runs r
-				 WHERE r.project_id = ?1
-				 ORDER BY r.created_at DESC LIMIT 100`,
-			)
+			const { results } = await env.DB.prepare(projectRunsSql)
 				.bind(projectId)
 				.all<Record<string, unknown>>();
-			return json({
-				runs: results.map((row) => ({
-					id: row.id,
-					status: row.status,
-					current_stage: row.current_stage,
-					last_error: row.last_error,
-					stop_reason_code: row.stop_reason_code,
-					artifact_key_present: Boolean(row.artifact_key),
-					created_at: row.created_at,
-					updated_at: row.updated_at,
-				})),
-			});
+			return json({ runs: results.map((row) => shapeRun(row)) });
 		}
 
 		// The text of the latest demand revision, so that the input can be
@@ -2324,11 +2273,7 @@ export default {
 		const requirementTextMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/requirement-text$/);
 		if (requirementTextMatch && request.method === "GET") {
 			const projectId = decodeURIComponent(requirementTextMatch[1]);
-			const row = await env.DB.prepare(
-				`SELECT id, revision, text_content FROM source_inputs
-				 WHERE project_id = ?1 AND purpose = 'REQUIREMENT' AND source_type = 'USER_TEXT'
-				 ORDER BY revision DESC LIMIT 1`,
-			)
+			const row = await env.DB.prepare(requirementTextSql)
 				.bind(projectId)
 				.first<{ id: string; revision: number; text_content: string | null }>();
 			if (!row || !row.text_content) return json({ error: "not_found" }, 404);
@@ -2342,11 +2287,7 @@ export default {
 		if (compileStatusMatch && request.method === "GET") {
 			const projectId = decodeURIComponent(compileStatusMatch[1]);
 			const compileId = decodeURIComponent(compileStatusMatch[2]);
-			const row = await env.DB.prepare(
-				`SELECT id, job_type, status, error, detail_json, created_at, updated_at
-				 FROM project_jobs
-				 WHERE workspace_id = 'default' AND project_id = ?1 AND id = ?2 AND job_type = 'COMPILE'`,
-			)
+			const row = await env.DB.prepare(compileStatusSql)
 				.bind(projectId, compileId)
 				.first<Record<string, unknown>>();
 			if (!row) return json({ error: "not_found" }, 404);
@@ -2368,32 +2309,15 @@ export default {
 		if (jobStatusMatch && request.method === "GET") {
 			const projectId = decodeURIComponent(jobStatusMatch[1]);
 			const jobType = jobStatusMatch[2] === "decisions" ? "DECISION" : "SPEC_ASSESSMENT";
-			const row = await env.DB.prepare(
-				`SELECT id, status, error, detail_json, created_at, updated_at
-				 FROM project_jobs
-				 WHERE workspace_id = 'default' AND project_id = ?1 AND job_type = ?2
-				 ORDER BY created_at DESC LIMIT 1`,
-			)
+			const row = await env.DB.prepare(jobStatusSql)
 				.bind(projectId, jobType)
 				.first<Record<string, unknown>>();
-			if (!row) {
-				return json({ status: "IDLE", job_id: null, demand_revision: null, error: null });
-			}
-			const detail = JSON.parse(String(row.detail_json ?? "{}")) as Record<string, unknown>;
 			const revision = await env.DB.prepare(
 				`SELECT demand_revision FROM projects WHERE workspace_id = 'default' AND id = ?1`,
 			)
 				.bind(projectId)
 				.first<{ demand_revision: number }>();
-			return json({
-				status: row.status,
-				job_id: row.id,
-				demand_revision: revision?.demand_revision ?? null,
-				error: row.error,
-				detail: detail,
-				created_at: row.created_at,
-				updated_at: row.updated_at,
-			});
+			return json(shapeJobStatus(row, revision?.demand_revision ?? null));
 		}
 
 		if (request.method === "POST" && url.pathname === "/api/projects") {
@@ -2857,28 +2781,12 @@ export default {
 				);
 			}
 			if (request.method === "GET") {
-				const { results } = await env.DB.prepare(
-					`SELECT id, run_id, status, decision_version, byte_size, sha256, error, created_at, updated_at
-					 FROM project_reports
-					 WHERE workspace_id = 'default' AND project_id = ?1
-					 ORDER BY created_at DESC LIMIT 100`,
-				)
+				const { results } = await env.DB.prepare(reportsListSql)
 					.bind(projectId)
 					.all<Record<string, unknown>>();
 				return json({
 					project_id: projectId,
-					reports: results.map((row) => ({
-						report_id: row.id,
-						run_id: row.run_id,
-						status: row.status,
-						decision_version: row.decision_version,
-						byte_size: row.byte_size,
-						sha256: row.sha256,
-						error: row.error,
-						download_path: `/api/projects/${projectId}/reports/${String(row.id)}/download`,
-						created_at: row.created_at,
-						updated_at: row.updated_at,
-					})),
+					reports: results.map((row) => shapeReport(row, projectId)),
 				});
 			}
 		}
@@ -2887,25 +2795,11 @@ export default {
 		if (reportMatch && request.method === "GET") {
 			const projectId = decodeURIComponent(reportMatch[1]);
 			const reportId = decodeURIComponent(reportMatch[2]);
-			const report = await env.DB.prepare(
-				`SELECT id, run_id, status, decision_version, byte_size, sha256, error, created_at, updated_at
-				 FROM project_reports WHERE workspace_id = 'default' AND project_id = ?1 AND id = ?2`,
-			)
+			const report = await env.DB.prepare(reportStatusSql)
 				.bind(projectId, reportId)
 				.first<Record<string, unknown>>();
 			if (!report) return json({ error: "not_found" }, 404);
-			return json({
-				report_id: report.id,
-				run_id: report.run_id,
-				status: report.status,
-				decision_version: report.decision_version,
-				byte_size: report.byte_size,
-				sha256: report.sha256,
-				error: report.error,
-				download_path: `/api/projects/${projectId}/reports/${reportId}/download`,
-				created_at: report.created_at,
-				updated_at: report.updated_at,
-			});
+			return json(shapeReport(report, projectId));
 		}
 
 		const reportDownloadMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/reports\/([^/]+)\/download$/);

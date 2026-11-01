@@ -5,7 +5,9 @@
 	"type": "module",
 	"scripts": {
 		"typecheck": "tsc --noEmit",
-		"deploy": "wrangler deploy"
+		"deploy": "wrangler deploy",
+		"test": "node --experimental-strip-types --test cloudflare/gateway/test/*.test.ts",
+		"check": "npm run typecheck && npm test"
 	},
 	"dependencies": {
 		"@cloudflare/containers": "^0.2.0"
