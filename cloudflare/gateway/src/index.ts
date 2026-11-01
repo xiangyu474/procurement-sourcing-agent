@@ -820,6 +820,46 @@ function _parseStages(value: string | undefined): Record<string, unknown> {
 	}
 }
 
+/**
+ * Ask the container for something, starting it first.
+ *
+ * The instance sleeps when it is idle, and a request that arrives while it
+ * is waking up can find the port closed. The call is therefore repeated a
+ * few times with a short wait in between, which is cheaper than a failed
+ * acceptance round.
+ */
+async function fetchContainer(
+	env: Env,
+	instanceName: string,
+	path: string,
+	body: unknown,
+): Promise<Response> {
+	const container = getContainer(env.SOURCING_CONTAINER, instanceName);
+	let lastError = "the container did not answer";
+	for (let attempt = 0; attempt < 4; attempt += 1) {
+		try {
+			await container.start();
+			const response = await container.fetch(
+				new Request(`http://container${path}`, {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify(body),
+				}),
+			);
+			if (response.status >= 500) {
+				lastError = `the container answered with ${response.status}`;
+				await new Promise((resolve) => setTimeout(resolve, 3000));
+				continue;
+			}
+			return response;
+		} catch (error) {
+			lastError = error instanceof Error ? error.message : String(error);
+			await new Promise((resolve) => setTimeout(resolve, 3000));
+		}
+	}
+	throw new Error(lastError.slice(0, 300));
+}
+
 export class SourcingAcceptanceWorkflow extends WorkflowEntrypoint<Env, AcceptanceRequest> {
 	async run(event: WorkflowEvent<AcceptanceRequest>, step: WorkflowStep) {
 		const runtimeConfig = {
@@ -1011,29 +1051,24 @@ export class SourcingDecisionWorkflow extends WorkflowEntrypoint<Env, DecisionRe
 				"write-decisions",
 				{ retries: { limit: 1, delay: "10 seconds", backoff: "exponential" }, timeout: "30 minutes" },
 				async () => {
-					const container = getContainer(this.env.SOURCING_CONTAINER, this.env.CONTAINER_INSTANCE_NAME);
-					// The instance sleeps when it is idle, so it has to be
-					// started before it can answer.
-					await container.start();
-					const response = await container.fetch(
-						new Request("http://container/internal/decide", {
-							method: "POST",
-							headers: { "content-type": "application/json" },
-							body: JSON.stringify({
-								project_id: projectId,
-								gateway_url: this.env.CONTAINER_GATEWAY_URL,
-								token: this.env.INTERNAL_GATEWAY_TOKEN,
-								runtime_config: {
-									GENESIS_BASE_URL: this.env.GENESIS_BASE_URL,
-									GENESIS_ACCESS_TOKEN: this.env.GENESIS_ACCESS_TOKEN,
-									GENESIS_MODEL_ID: this.env.GENESIS_MODEL_ID,
-									...(this.env.LANGSMITH_API_KEY ? { LANGSMITH_API_KEY: this.env.LANGSMITH_API_KEY } : {}),
-									...(this.env.LANGSMITH_TRACING ? { LANGSMITH_TRACING: this.env.LANGSMITH_TRACING } : {}),
-									...(this.env.LANGSMITH_PROJECT ? { LANGSMITH_PROJECT: this.env.LANGSMITH_PROJECT } : {}),
-								},
-								requirement_ids: requirementIds,
-							}),
-						}),
+					const response = await fetchContainer(
+						this.env,
+						this.env.CONTAINER_INSTANCE_NAME,
+						"/internal/decide",
+						{
+							project_id: projectId,
+							gateway_url: this.env.CONTAINER_GATEWAY_URL,
+							token: this.env.INTERNAL_GATEWAY_TOKEN,
+							runtime_config: {
+								GENESIS_BASE_URL: this.env.GENESIS_BASE_URL,
+								GENESIS_ACCESS_TOKEN: this.env.GENESIS_ACCESS_TOKEN,
+								GENESIS_MODEL_ID: this.env.GENESIS_MODEL_ID,
+								...(this.env.LANGSMITH_API_KEY ? { LANGSMITH_API_KEY: this.env.LANGSMITH_API_KEY } : {}),
+								...(this.env.LANGSMITH_TRACING ? { LANGSMITH_TRACING: this.env.LANGSMITH_TRACING } : {}),
+								...(this.env.LANGSMITH_PROJECT ? { LANGSMITH_PROJECT: this.env.LANGSMITH_PROJECT } : {}),
+							},
+							requirement_ids: requirementIds,
+						},
 					);
 					if (!response.ok) {
 						const body = await response.text().catch(() => "");
@@ -1111,31 +1146,26 @@ export class SourcingSpecWorkflow extends WorkflowEntrypoint<Env, SpecRequest> {
 				"evaluate-spec",
 				{ retries: { limit: 1, delay: "10 seconds", backoff: "exponential" }, timeout: "30 minutes" },
 				async () => {
-					const container = getContainer(this.env.SOURCING_CONTAINER, this.env.CONTAINER_INSTANCE_NAME);
-					// The instance sleeps when it is idle, so it has to be
-					// started before it can answer.
-					await container.start();
-					const response = await container.fetch(
-						new Request("http://container/internal/evaluate-spec", {
-							method: "POST",
-							headers: { "content-type": "application/json" },
-							body: JSON.stringify({
-								project_id: projectId,
-								gateway_url: this.env.CONTAINER_GATEWAY_URL,
-								token: this.env.INTERNAL_GATEWAY_TOKEN,
-								runtime_config: {
-									GENESIS_BASE_URL: this.env.GENESIS_BASE_URL,
-									GENESIS_ACCESS_TOKEN: this.env.GENESIS_ACCESS_TOKEN,
-									GENESIS_MODEL_ID: this.env.GENESIS_MODEL_ID,
-									...(this.env.LANGSMITH_API_KEY ? { LANGSMITH_API_KEY: this.env.LANGSMITH_API_KEY } : {}),
-									...(this.env.LANGSMITH_TRACING ? { LANGSMITH_TRACING: this.env.LANGSMITH_TRACING } : {}),
-									...(this.env.LANGSMITH_PROJECT ? { LANGSMITH_PROJECT: this.env.LANGSMITH_PROJECT } : {}),
-								},
-								requirement_ids: requirementIds,
-								candidate_ids: candidateIds,
-								review_reason: reviewReason,
-							}),
-						}),
+					const response = await fetchContainer(
+						this.env,
+						this.env.CONTAINER_INSTANCE_NAME,
+						"/internal/evaluate-spec",
+						{
+							project_id: projectId,
+							gateway_url: this.env.CONTAINER_GATEWAY_URL,
+							token: this.env.INTERNAL_GATEWAY_TOKEN,
+							runtime_config: {
+								GENESIS_BASE_URL: this.env.GENESIS_BASE_URL,
+								GENESIS_ACCESS_TOKEN: this.env.GENESIS_ACCESS_TOKEN,
+								GENESIS_MODEL_ID: this.env.GENESIS_MODEL_ID,
+								...(this.env.LANGSMITH_API_KEY ? { LANGSMITH_API_KEY: this.env.LANGSMITH_API_KEY } : {}),
+								...(this.env.LANGSMITH_TRACING ? { LANGSMITH_TRACING: this.env.LANGSMITH_TRACING } : {}),
+								...(this.env.LANGSMITH_PROJECT ? { LANGSMITH_PROJECT: this.env.LANGSMITH_PROJECT } : {}),
+							},
+							requirement_ids: requirementIds,
+							candidate_ids: candidateIds,
+							review_reason: reviewReason,
+						},
 					);
 					if (!response.ok) {
 						const body = await response.text().catch(() => "");
@@ -1192,26 +1222,21 @@ export class SourcingReportWorkflow extends WorkflowEntrypoint<Env, ReportReques
 				"build-report",
 				{ retries: { limit: 1, delay: "10 seconds", backoff: "exponential" }, timeout: "15 minutes" },
 				async () => {
-					const container = getContainer(this.env.SOURCING_CONTAINER, this.env.CONTAINER_INSTANCE_NAME);
-					// The instance sleeps when it is idle, so it has to be
-					// started before it can answer.
-					await container.start();
-					const response = await container.fetch(
-						new Request(`http://container/internal/projects/${projectId}/report`, {
-							method: "POST",
-							headers: { "content-type": "application/json" },
-							body: JSON.stringify({
-								project_id: projectId,
-								run_id: runId,
-								gateway_url: this.env.CONTAINER_GATEWAY_URL,
-								token: this.env.INTERNAL_GATEWAY_TOKEN,
-								runtime_config: {
-									GENESIS_BASE_URL: this.env.GENESIS_BASE_URL,
-									GENESIS_ACCESS_TOKEN: this.env.GENESIS_ACCESS_TOKEN,
-									GENESIS_MODEL_ID: this.env.GENESIS_MODEL_ID,
-								},
-							}),
-						}),
+					const response = await fetchContainer(
+						this.env,
+						this.env.CONTAINER_INSTANCE_NAME,
+						`/internal/projects/${projectId}/report`,
+						{
+							project_id: projectId,
+							run_id: runId,
+							gateway_url: this.env.CONTAINER_GATEWAY_URL,
+							token: this.env.INTERNAL_GATEWAY_TOKEN,
+							runtime_config: {
+								GENESIS_BASE_URL: this.env.GENESIS_BASE_URL,
+								GENESIS_ACCESS_TOKEN: this.env.GENESIS_ACCESS_TOKEN,
+								GENESIS_MODEL_ID: this.env.GENESIS_MODEL_ID,
+							},
+						},
 					);
 					if (!response.ok) {
 						const body = await response.text().catch(() => "");
