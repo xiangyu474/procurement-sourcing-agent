@@ -17,6 +17,7 @@ from procurement_agent.domain.pricing import HistoryScope, PriceBasis
 from procurement_agent.domain.requirements import Requirement
 from procurement_agent.ingestion.xlsx import import_historical_xlsx
 from procurement_agent.services.price_context import build_price_context
+from procurement_agent.services.product_equivalence import ProductEquivalence
 
 MATERIALS = (
     Path(__file__).resolve().parents[2]
@@ -86,6 +87,7 @@ def test_one_item_keeps_its_own_price_range() -> None:
         requirement=_requirement("通用超清轻智能枪式探头"),
         transactions=imported.transactions,
         history_price_unit="元/台",
+        equivalences=[ProductEquivalence(equivalence_key="eq", product_ref="IVP000000008", sku="IVP000000008", requirement_id="r1", confirmed_by="test buyer confirmation")],
     )
 
     assert context.history_scope == HistoryScope.ITEM

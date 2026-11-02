@@ -157,6 +157,7 @@ def test_the_history_and_the_budget_report_a_saving():
         ),
         transactions=[transaction()],
         history_price_unit="元/套",
+        equivalences=[ProductEquivalence(equivalence_key="eq", product_ref="SKU-1", sku="SKU-1", requirement_id="r1", confirmed_by="test buyer confirmation")],
     )
     findings = {finding.lowest_basis: finding for finding in context.findings}
     historical = findings[PriceBasis.HISTORICAL_TRANSACTION]

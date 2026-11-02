@@ -1,6 +1,9 @@
 import { Container, getContainer } from "@cloudflare/containers";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { authorizeGuest } from "./guest_session";
+import { readPipelineDemand, reservePipeline, storePipelineSnapshot } from "./pipeline_store";
+import { ProcurementPipelineWorkflow, type PipelineRequest } from "./pipeline_workflow";
+export { ProcurementPipelineWorkflow };
 import {
 	checkInternalAuth,
 	checkPublicAuth,
@@ -29,6 +32,7 @@ export interface Env {
 	GUEST_SESSION_ENABLED?: string;
 	GUEST_SESSION_SECRET?: string;
 	GUEST_PUBLIC_ORIGIN?: string;
+	PIPELINE_ENABLED?: string;
 	CONTAINER_GATEWAY_URL: string;
 	CONTAINER_INSTANCE_NAME: string;
 	ACCEPTANCE_CONTAINER_NAME: string;
@@ -45,6 +49,7 @@ export interface Env {
 	DECISION_WORKFLOW: Workflow<DecisionRequest>;
 	REPORT_WORKFLOW: Workflow<ReportRequest>;
 	ACCEPTANCE_WORKFLOW: Workflow<AcceptanceRequest>;
+	PIPELINE_WORKFLOW: Workflow<PipelineRequest>;
 }
 
 // The container receives the internal token from the Worker at request time so
@@ -67,6 +72,7 @@ export interface RunRequest {
 	projectId: string;
 	durationSeconds: number;
 	mode: "SPIKE" | "SOURCING";
+	pipelineId?: string;
 	researchBudget?: ResearchBudgetConfig;
 }
 
@@ -808,6 +814,7 @@ interface DecisionRequest {
 
 interface AcceptanceRequest {
 	title: string;
+	pipeline?: boolean;
 }
 
 // The end-to-end acceptance runs on the side of the network that can reach the
@@ -939,6 +946,29 @@ export class SourcingAcceptanceWorkflow extends WorkflowEntrypoint<Env, Acceptan
 				await step.sleep(`acceptance-compile-wait-${attempt}`, "20 seconds");
 			}
 			if (!compiled) failures.push("the demand did not compile in time");
+
+			if (event.payload.pipeline) {
+				if (!compiled || failures.length) return { status: "FAIL", failures, stages: JSON.stringify(stages) };
+				const startedPipeline = await step.do("acceptance-pipeline-start",
+					{ retries: { limit: 0, delay: "5 seconds", backoff: "constant" }, timeout: "2 minutes" },
+					async () => runStage("pipeline-start", projectId, ""));
+				failures.push(...(startedPipeline.failures ?? []));
+				Object.assign(stages, _parseStages(startedPipeline.state));
+				const pipelineId = String(_parseStages(startedPipeline.state).pipeline_id ?? "");
+				if (!pipelineId) return { status: "FAIL", failures: [...failures, "pipeline did not start"], stages: JSON.stringify(stages) };
+				let done = false;
+				for (let attempt = 0; attempt < 120; attempt += 1) {
+					const result = await step.do(`acceptance-pipeline-${attempt}`,
+						{ retries: { limit: 0, delay: "5 seconds", backoff: "constant" }, timeout: "2 minutes" },
+						async () => runStage("pipeline", projectId, pipelineId));
+					failures.push(...(result.failures ?? []));
+					Object.assign(stages, _parseStages(result.state));
+					if (result.done) { done = true; break; }
+					await step.sleep(`acceptance-pipeline-wait-${attempt}`, "30 seconds");
+				}
+				if (!done) failures.push("pipeline did not finish in time");
+				return { status: failures.length ? "FAIL" : "PASS", failures: [...new Set(failures)], stages: JSON.stringify(stages) };
+			}
 
 			const started = await step.do(
 				"acceptance-research-start",
@@ -1306,7 +1336,7 @@ export class SourcingWorkflow extends WorkflowEntrypoint<Env, RunRequest> {
 					// happens when the container itself failed. The research
 					// budget lives in the container's memory, so a crashed
 					// instance has nothing to reset.
-					retries: { limit: 2, delay: "10 seconds", backoff: "exponential" },
+					retries: { limit: mode === "SOURCING" && event.payload.pipelineId ? 0 : 2, delay: "10 seconds", backoff: "exponential" },
 					timeout: "20 minutes",
 				},
 				async () => {
@@ -1332,6 +1362,7 @@ export class SourcingWorkflow extends WorkflowEntrypoint<Env, RunRequest> {
 								? {
 									project_id: projectId,
 									run_id: runId,
+									pipeline_id: event.payload.pipelineId ?? null,
 									gateway_url: this.env.CONTAINER_GATEWAY_URL,
 									token: this.env.INTERNAL_GATEWAY_TOKEN,
 									runtime_config: runtimeConfig,
@@ -1432,10 +1463,13 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 					`SELECT id FROM runs WHERE id = ?1 AND project_id = ?2`,
 				).bind(runId, projectId).first<{ id: string }>();
 				if (!run) return json({ error: "run_not_found" }, 404);
-				const compilationRow = await env.DB.prepare(
-					`SELECT compilation_json FROM demand_compilations WHERE project_id = ?1 ORDER BY demand_revision DESC LIMIT 1`,
-				).bind(projectId).first<{ compilation_json: string }>();
-				if (!compilationRow) return json({ error: "demand_not_compiled" }, 404);
+				const pipelineId = url.searchParams.get("pipeline_id");
+				const compilationRow = pipelineId
+					? await readPipelineDemand(env.DB, pipelineId, projectId, runId)
+					: await env.DB.prepare(
+						`SELECT compilation_json FROM demand_compilations WHERE project_id = ?1 ORDER BY demand_revision DESC LIMIT 1`,
+					).bind(projectId).first<{ compilation_json: string }>();
+				if (!compilationRow) return json({ error: pipelineId ? "pipeline_input_not_found" : "demand_not_compiled" }, 404);
 				const compilation = JSON.parse(compilationRow.compilation_json) as { requirements?: unknown[] };
 				if (!Array.isArray(compilation.requirements) || compilation.requirements.length === 0) {
 					return json({ error: "structured_requirement_required_for_m2" }, 422);
@@ -1521,6 +1555,25 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 					compilation,
 					existing_intelligence: priorIntelligence,
 				});
+			}
+
+			const pipelineSnapshotMatch = url.pathname.match(/^\/internal\/pipelines\/([^/]+)\/snapshots\/(SPEC_CONTEXT|SPEC_RESULTS|DECISION_CONTEXT|DECISION_RESULTS|PRICE_CONTEXT)$/);
+			if (pipelineSnapshotMatch && (request.method === "GET" || request.method === "POST")) {
+				const pipelineId = decodeURIComponent(pipelineSnapshotMatch[1]);
+				const snapshotType = pipelineSnapshotMatch[2];
+				const projectId = url.searchParams.get("project_id");
+				const pipeline = await env.DB.prepare("SELECT id FROM project_pipelines WHERE id = ?1 AND project_id = ?2")
+					.bind(pipelineId, projectId).first<{ id: string }>();
+				if (!pipeline) return json({ error: "not_found" }, 404);
+				if (request.method === "POST") {
+					const body = await request.text();
+					const outcome = await storePipelineSnapshot(env.DB, pipelineId, snapshotType, body);
+					return outcome === "CONFLICT" ? json({ error: "snapshot_conflict" }, 409) : json({ status: outcome }, outcome === "CREATED" ? 201 : 200);
+				}
+				const snapshot = await env.DB.prepare("SELECT payload_json FROM pipeline_snapshots WHERE pipeline_id = ?1 AND snapshot_type = ?2")
+					.bind(pipelineId, snapshotType).first<{ payload_json: string }>();
+				if (!snapshot) return json({ error: "snapshot_not_found" }, 404);
+				return new Response(snapshot.payload_json, { headers: JSON_HEADERS });
 			}
 
 			const cacheLookupMatch = url.pathname.match(/^\/internal\/judgment-cache\/lookup$/);
@@ -1638,9 +1691,14 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 				const projectId = decodeURIComponent(specContextMatch[1]);
 				const wantedRequirements = (url.searchParams.get("requirement_ids") ?? "").split(",").filter(Boolean);
 				const wantedCandidates = (url.searchParams.get("candidate_ids") ?? "").split(",").filter(Boolean);
-				const compilationRow = await env.DB.prepare(
-					`SELECT demand_revision, compilation_json FROM demand_compilations WHERE project_id = ?1 ORDER BY demand_revision DESC LIMIT 1`,
-				).bind(projectId).first<{ demand_revision: number; compilation_json: string }>();
+				const pipelineId = url.searchParams.get("pipeline_id");
+				const sourcingRunId = url.searchParams.get("run_id");
+				if (pipelineId && (!sourcingRunId || wantedCandidates.length === 0)) return json({ error: "pipeline_input_required" }, 422);
+				const compilationRow = pipelineId && sourcingRunId
+					? await readPipelineDemand(env.DB, pipelineId, projectId, sourcingRunId)
+					: await env.DB.prepare(
+						`SELECT demand_revision, compilation_json FROM demand_compilations WHERE project_id = ?1 ORDER BY demand_revision DESC LIMIT 1`,
+					).bind(projectId).first<{ demand_revision: number; compilation_json: string }>();
 				if (!compilationRow) return json({ error: "demand_not_compiled" }, 404);
 				const compilation = JSON.parse(compilationRow.compilation_json) as {
 					requirements?: unknown[];
@@ -1654,13 +1712,13 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 
 				// The run that produced the candidates is part of the audit
 				// trail of every judgement that is cached.
-				const latestRun = await env.DB.prepare(
+				const latestRun = pipelineId && sourcingRunId ? { id: sourcingRunId } : await env.DB.prepare(
 					`SELECT id FROM runs WHERE project_id = ?1 ORDER BY created_at DESC LIMIT 1`,
 				).bind(projectId).first<{ id: string }>();
 
 				const { results: candidateRows } = await env.DB.prepare(
 					`SELECT c.id AS candidate_id, c.requirement_id, c.supplier_id, c.product_id, c.stage, c.rationale,
-					        c.open_questions_json, p.model AS product_model,
+					        c.last_seen_run_id, c.open_questions_json, p.model AS product_model,
 					        (SELECT group_concat(e.evidence_id) FROM project_candidate_evidence e
 					          WHERE e.workspace_id = c.workspace_id AND e.candidate_id = c.id) AS evidence_ids
 					 FROM project_candidates c
@@ -1669,11 +1727,14 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 					 ORDER BY c.updated_at DESC LIMIT 600`,
 				).bind(projectId).all<{
 					candidate_id: string; requirement_id: string; supplier_id: string; product_id: string | null;
-					stage: string; rationale: string; open_questions_json: string; product_model: string | null;
+					stage: string; rationale: string; last_seen_run_id: string; open_questions_json: string; product_model: string | null;
 					evidence_ids: string | null;
 				}>();
-				const candidates = candidateRows
-					.filter((row) => wantedCandidates.length === 0 || wantedCandidates.includes(row.candidate_id))
+				const selectedRows = candidateRows.filter((row) =>
+					(wantedCandidates.length === 0 || wantedCandidates.includes(row.candidate_id)) &&
+					(!pipelineId || row.last_seen_run_id === sourcingRunId));
+				if (pipelineId && selectedRows.length !== new Set(wantedCandidates).size) return json({ error: "pipeline_candidates_changed" }, 409);
+				const candidates = selectedRows
 					.map((row) => ({
 						candidate_id: row.candidate_id,
 						requirement_id: row.requirement_id,
@@ -1685,6 +1746,8 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 						open_questions: JSON.parse(row.open_questions_json ?? "[]") as string[],
 					}));
 
+				const selectedProductIds = [...new Set(selectedRows.map(row => row.product_id).filter((value): value is string => Boolean(value)))];
+				const productConstraint = pipelineId ? " AND cc.subject_id IN (SELECT value FROM json_each(?2))" : "";
 				const { results: claimRows } = await env.DB.prepare(
 					`SELECT cc.id AS claim_id, cc.subject_type, cc.subject_id, cc.attribute, cc.value, cc.unit,
 					        cc.status, cc.evaluation_method, ce.evidence_id, ce.source_quote
@@ -1693,14 +1756,18 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 					 WHERE cc.workspace_id = 'default' AND cc.subject_type = 'PRODUCT_MODEL'
 					   AND cc.subject_id IN (SELECT DISTINCT product_id FROM project_candidates
 					        WHERE workspace_id = 'default' AND project_id = ?1)
-					 LIMIT 2000`,
-				).bind(projectId).all<{
+					 ${productConstraint} LIMIT ${pipelineId ? 2001 : 2000}`,
+				).bind(projectId, ...(pipelineId ? [JSON.stringify(selectedProductIds)] : [])).all<{
 					claim_id: string; subject_type: string; subject_id: string; attribute: string; value: string;
 					unit: string | null; status: string; evaluation_method: string; evidence_id: string; source_quote: string;
 				}>();
+				if (pipelineId && claimRows.length > 2000) return json({ error: "pipeline_claim_limit_exceeded" }, 422);
 				const seenClaims = new Set<string>();
+				const selectedProducts = new Set(selectedProductIds);
+				const selectedEvidence = new Set(candidates.flatMap(candidate => candidate.evidence_ids));
 				const claims = claimRows
 					.filter((row) => {
+						if (pipelineId && (!selectedProducts.has(row.subject_id) || !selectedEvidence.has(row.evidence_id))) return false;
 						if (seenClaims.has(row.claim_id)) return false;
 						seenClaims.add(row.claim_id);
 						return true;
@@ -1719,7 +1786,7 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 					}));
 
 				const modelByProduct: Record<string, string> = {};
-				for (const row of candidateRows) {
+				for (const row of (pipelineId ? selectedRows : candidateRows)) {
 					if (row.product_id && row.product_model) modelByProduct[row.product_id] = row.product_model;
 				}
 
@@ -1729,9 +1796,10 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 				const evidenceHashes: Record<string, string> = {};
 				if (evidenceIds.length > 0) {
 					const { results: evidenceRows } = await env.DB.prepare(
-						`SELECT id, content_sha256 FROM research_evidence WHERE workspace_id = 'default' AND id IN (${evidenceIds.map((_, index) => `?${index + 1}`).join(",")})`,
-					).bind(...evidenceIds).all<{ id: string; content_sha256: string }>();
+						`SELECT id, content_sha256 FROM research_evidence WHERE workspace_id = 'default' AND id IN (SELECT value FROM json_each(?1))`,
+					).bind(JSON.stringify(evidenceIds)).all<{ id: string; content_sha256: string }>();
 					for (const row of evidenceRows) evidenceHashes[row.id] = row.content_sha256;
+					if (pipelineId && evidenceIds.some(id => !evidenceHashes[id])) return json({ error: "pipeline_evidence_missing" }, 409);
 				}
 				return json({
 					project_id: projectId,
@@ -2393,6 +2461,54 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 					.run();
 			}
 			return json({ project_id: projectId, source_id: sourceId, analysis_version: analysisVersion }, 201);
+		}
+
+		const pipelineMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/pipeline(?:\/([^/]+))?$/);
+		if (pipelineMatch) {
+			// B1 is restricted to the explicitly enabled server-side bearer path.
+			// Guest writes remain blocked by authorizeGuest, even when enabled.
+			if (env.PIPELINE_ENABLED !== "true" || guestSessionId) return json({ error: "operation_unavailable" }, 503);
+			const projectId = decodeURIComponent(pipelineMatch[1]);
+			if (request.method === "GET" && pipelineMatch[2]) {
+				const id = decodeURIComponent(pipelineMatch[2]);
+				const row = await env.DB.prepare(`SELECT id, project_id, run_id, demand_revision, status, stage, error, created_at, updated_at
+					FROM project_pipelines WHERE id = ?1 AND project_id = ?2`).bind(id, projectId).first<Record<string, unknown>>();
+				if (!row) return json({ error: "not_found" }, 404);
+				const stages = await env.DB.prepare("SELECT stage, status, started_at, finished_at, error_code FROM pipeline_stages WHERE pipeline_id = ?1 ORDER BY started_at, stage")
+					.bind(id).all<Record<string, unknown>>();
+				return json({ pipeline_id: row.id, project_id: row.project_id, run_id: row.run_id,
+					demand_revision: row.demand_revision, status: row.status, stage: row.stage, error: row.error,
+					stages: stages.results, created_at: row.created_at, updated_at: row.updated_at });
+			}
+			if (request.method === "POST" && !pipelineMatch[2]) {
+				const key = request.headers.get("idempotency-key") ?? "";
+				if (!key || key.length > 200 || !/^[\x21-\x7e]+$/.test(key)) return json({ error: "idempotency_key_required" }, 400);
+				const body = await request.json().catch(() => ({})) as { demand_revision?: unknown };
+				const revision = body.demand_revision;
+				if (!Number.isSafeInteger(revision) || Number(revision) < 1) return json({ error: "demand_revision_required" }, 422);
+				const compilation = await env.DB.prepare("SELECT compilation_json FROM demand_compilations WHERE project_id = ?1 AND demand_revision = ?2")
+					.bind(projectId, revision).first<{ compilation_json: string }>();
+				if (!compilation) return json({ error: "demand_not_compiled" }, 404);
+				const demand = JSON.parse(compilation.compilation_json) as { requirements?: unknown[] };
+				if (!Array.isArray(demand.requirements) || demand.requirements.length === 0) return json({ error: "no_recognizable_demand" }, 422);
+				const digest = await sha256Hex(new TextEncoder().encode(JSON.stringify({ demand_revision: revision })));
+				const result = await reservePipeline(env.DB, { projectId, pipelineId: crypto.randomUUID(), runId: crypto.randomUUID(),
+					idempotencyKey: key, requestHash: digest, demandRevision: Number(revision), demandJson: compilation.compilation_json });
+				if (!("pipeline" in result)) {
+					return json({ error: result.kind === "INPUT_CHANGED" ? "demand_revision_changed" : "idempotency_conflict" }, 409);
+				}
+				const row = result.pipeline;
+				if (row.status === "QUEUED") {
+					try {
+						await env.PIPELINE_WORKFLOW.create({ id: row.id, params: { pipelineId: row.id, projectId, runId: row.run_id } });
+					} catch {
+						try { await (await env.PIPELINE_WORKFLOW.get(row.id)).status(); }
+						catch { return json({ error: "workflow_start_failed" }, 503); }
+					}
+				}
+				return json({ pipeline_id: row.id, run_id: row.run_id, demand_revision: row.demand_revision, status: row.status, reused: result.kind === "REUSED" }, 202);
+			}
+			return json({ error: "not_found" }, 404);
 		}
 
 		const projectMatch = url.pathname.match(/^\/api\/projects\/([^/]+)$/);

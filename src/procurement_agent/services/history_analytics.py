@@ -76,11 +76,6 @@ class HistoryScopeResult(BaseModel):
     matched_by: str | None = None
 
 
-def _normalize_item_name(value: str | None) -> str:
-    """Normalize an item name so that spacing and case do not hide a match."""
-    return "".join((value or "").split()).casefold()
-
-
 def scope_history(
     transactions: Iterable[HistoricalTransaction],
     *,
@@ -90,10 +85,9 @@ def scope_history(
     """Find the rows of the history that speak about one requirement.
 
     An imported workbook holds many items. The rows are used for a single
-    requirement only when a confirmed equivalence names them, or when the item
-    name is exactly the name of the requirement. Anything else is a catalogue
-    overview: those rows are about other products, so they are reported as an
-    overview and never used as the price of this requirement.
+    requirement only when a confirmed equivalence names them. A matching name
+    alone does not establish SKU identity or comparability. Anything else is a
+    catalogue overview and never used as the price of this requirement.
     """
     rows = list(transactions)
     if not rows:
@@ -120,7 +114,7 @@ def scope_history(
                 row
                 for row in rows
                 if (row.sku and row.sku in references)
-                or (row.product_name and row.product_name in references)
+                or (not row.sku and row.product_name and row.product_name in references)
             ]
             if matched:
                 keys = sorted({row.sku or row.product_name or "" for row in matched} - {""})
@@ -132,24 +126,6 @@ def scope_history(
                     note=(
                         f"The price baseline of this requirement is the {len(matched)} history rows of "
                         f"the item that a confirmed equivalence names."
-                    ),
-                )
-
-        wanted = _normalize_item_name(requirement.product_name)
-        if wanted:
-            matched = [
-                row for row in rows if _normalize_item_name(row.product_name) == wanted
-            ]
-            if matched:
-                keys = sorted({row.sku or row.product_name or "" for row in matched} - {""})
-                return HistoryScopeResult(
-                    scope=HistoryScope.ITEM,
-                    rows=matched,
-                    item_keys=keys,
-                    matched_by="ITEM_NAME",
-                    note=(
-                        f"The price baseline of this requirement is the {len(matched)} history rows of "
-                        "the item that carries the same name."
                     ),
                 )
 

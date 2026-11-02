@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { it } from "node:test";
-import { recordPipelineStage, reservePipeline, storePipelineSnapshot } from "../src/pipeline_store.ts";
+import { readPipelineDemand, recordPipelineStage, reservePipeline, storePipelineSnapshot } from "../src/pipeline_store.ts";
 
 it("reserves once, checks inputs atomically, and retains the original demand", async () => {
 	const sqlite = new DatabaseSync(":memory:");
@@ -31,6 +31,13 @@ it("reserves once, checks inputs atomically, and retains the original demand", a
 	const snapshot = sqlite.prepare("SELECT demand_snapshot_json FROM project_pipelines WHERE id = ?").get("pipe-1");
 	assert.equal(snapshot?.demand_snapshot_json, input.demandJson);
 	assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM project_pipelines").get()?.n, 1);
+	assert.deepEqual(await readPipelineDemand(db as never, "pipe-1", "p", "run-1"), {
+		demand_revision: 1, compilation_json: input.demandJson,
+	});
+	assert.equal(await readPipelineDemand(db as never, "pipe-1", "other-project", "run-1"), null);
+	assert.equal(await readPipelineDemand(db as never, "pipe-1", "p", "other-run"), null);
+	sqlite.prepare("UPDATE project_pipelines SET demand_snapshot_json = ? WHERE id = ?").run("{}", "pipe-1");
+	await assert.rejects(() => readPipelineDemand(db as never, "pipe-1", "p", "run-1"), /integrity/);
 
 	assert.equal(await storePipelineSnapshot(db as never, "pipe-1", "RESEARCH_INPUT", '{"candidates":["a"]}'), "CREATED");
 	assert.equal(await storePipelineSnapshot(db as never, "pipe-1", "RESEARCH_INPUT", '{"candidates":["a"]}'), "REUSED");

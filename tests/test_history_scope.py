@@ -191,19 +191,18 @@ def test_an_unconfirmed_equivalence_scopes_nothing() -> None:
     assert context.findings == []
 
 
-def test_the_same_item_name_scopes_the_history() -> None:
-    """An exact item name is enough to pick the rows of that item."""
-    rows = catalogue()
+def test_the_same_item_name_does_not_confirm_sku_identity() -> None:
+    """Two different SKUs can share a name; neither becomes a baseline by name."""
+    rows = catalogue() + [transaction(9, "SKU-OTHER", "通用超清轻智能枪式探头", "1255")]
     context = build_price_context(
         requirement=requirement(product_name="通用超清轻智能枪式探头"),
         transactions=rows,
         history_price_unit="元/套",
     )
 
-    assert context.history_scope == HistoryScope.ITEM
-    assert context.history.transaction_count == 2
-    assert context.history.statistics is not None
-    assert context.history.statistics.minimum == "99"
+    assert context.history_scope == HistoryScope.TABLE_OVERVIEW
+    assert context.history.statistics is None
+    assert all(finding.lowest_basis != PriceBasis.HISTORICAL_TRANSACTION for finding in context.findings)
 
 
 def test_the_scope_function_reports_why_it_matched() -> None:

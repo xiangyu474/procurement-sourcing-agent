@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from procurement_agent.api.app import _price_contexts
 from procurement_agent.domain.requirements import HistoricalTransaction, Requirement
+from procurement_agent.services.product_equivalence import ProductEquivalence
 
 
 def requirement(**overrides) -> Requirement:
@@ -72,7 +73,7 @@ def test_the_item_of_the_requirement_is_its_price_baseline() -> None:
             transaction("SKU-A", "通用超清枪式探头", "99"),
             transaction("SKU-B", "通用超清云台探头", "77"),
         ],
-        equivalences=[],
+        equivalences=[ProductEquivalence(equivalence_key="eq", product_ref="SKU-A", sku="SKU-A", requirement_id="r1", confirmed_by="test buyer confirmation")],
         history_price_unit="元/台",
     )
 

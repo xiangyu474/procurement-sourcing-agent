@@ -43,9 +43,12 @@ export async function reservePipeline(db: D1Database, input: PipelineReservation
 	const digest = await sha256(input.demandJson);
 	const result = await db.prepare(`INSERT INTO project_pipelines
 		(id, workspace_id, project_id, run_id, demand_revision, status, stage, stages_json,
-		 created_at, updated_at, idempotency_key, request_hash, demand_snapshot_json, demand_snapshot_sha256)
-		SELECT ?1, 'default', p.id, ?2, ?3, 'QUEUED', 'QUEUED', '{}', ?4, ?4, ?5, ?6, c.compilation_json, ?7
+		 created_at, updated_at, idempotency_key, request_hash, demand_snapshot_json, demand_snapshot_sha256,
+		 history_dataset_id, history_r2_key, history_content_sha256)
+		SELECT ?1, 'default', p.id, ?2, ?3, 'QUEUED', 'QUEUED', '{}', ?4, ?4, ?5, ?6, c.compilation_json, ?7,
+		 h.id, h.normalized_r2_key, h.content_sha256
 		FROM projects p JOIN demand_compilations c ON c.project_id = p.id AND c.demand_revision = ?3
+		LEFT JOIN history_datasets h ON h.id = (SELECT hh.id FROM history_datasets hh WHERE hh.project_id = p.id ORDER BY hh.imported_at DESC, hh.id DESC LIMIT 1)
 		WHERE p.id = ?8 AND p.demand_revision = ?3 AND c.compilation_json = ?9
 		ON CONFLICT DO NOTHING`)
 		.bind(input.pipelineId, input.runId, input.demandRevision, now, input.idempotencyKey,
@@ -57,6 +60,20 @@ export async function reservePipeline(db: D1Database, input: PipelineReservation
 	if (!row) return { kind: "INPUT_CHANGED" };
 	if (row.request_hash !== input.requestHash) return { kind: "IDEMPOTENCY_CONFLICT" };
 	return { kind: result.meta.changes === 1 ? "CREATED" : "REUSED", pipeline: row };
+}
+
+/** Load only the exact demand frozen for this project and sourcing run. */
+export async function readPipelineDemand(
+	db: D1Database, pipelineId: string, projectId: string, runId: string,
+): Promise<{ demand_revision: number; compilation_json: string } | null> {
+	const row = await db.prepare(`SELECT demand_revision, demand_snapshot_json, demand_snapshot_sha256
+		FROM project_pipelines WHERE id = ?1 AND project_id = ?2 AND run_id = ?3`)
+		.bind(pipelineId, projectId, runId).first<{
+			demand_revision: number; demand_snapshot_json: string | null; demand_snapshot_sha256: string | null;
+		}>();
+	if (!row || row.demand_snapshot_json === null || !row.demand_snapshot_sha256) return null;
+	if (await sha256(row.demand_snapshot_json) !== row.demand_snapshot_sha256) throw new Error("pipeline_demand_integrity_error");
+	return { demand_revision: row.demand_revision, compilation_json: row.demand_snapshot_json };
 }
 
 export type SnapshotResult = "CREATED" | "REUSED" | "CONFLICT";

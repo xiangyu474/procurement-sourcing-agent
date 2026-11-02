@@ -4,13 +4,13 @@
 
 Session 基础实现：**LOCAL_ONLY / NOT_PRODUCTION_READY**。基线为 main `11f2fae`；实现提交 `e70afe8bb3dd4d4335e1042c4a0b186432d91694`。`GUEST_SESSION_ENABLED` 默认关闭，访客昂贵写操作保持禁用。Node/SQLite 本地测试通过，不代表 Cloudflare Worker 或生产验收。
 
-B1 进行中（LOCAL_ONLY，未提供 API）：migration `0013` 和 `pipeline_store.ts` 加入需求 JSON 快照、摘要、项目级幂等键预约、不可变快照存储及阶段状态记录；SQLite 测试覆盖重复键、输入变更、快照冲突和阶段终态。这不是完整 Pipeline：尚未启动 Workflow，也未冻结真实候选、证据或决策。
+B1 进行中（**LOCAL_IMPLEMENTED，尚无真实云端验收**）：新增受保护、配置开关控制的启动/状态路由和 Pipeline Workflow，绑定需求快照、run、候选、证据、评估和价格/决策上下文；带客户端幂等键，PARTIAL 可继续。新增云端验收模式，但尚未运行。没有完成 B2 的不可变决策版本、公开 Analysis 或自动 DOCX；不得当作完整产品交付。
 
 | 顺序 | 代码位置 | 当前状态 / 后续工作 |
 | --- | --- | --- |
 | Session | `cloudflare/gateway/src/guest_session.ts`, `index.ts`, migration `0012` | 本地实现显式会话、同源 Origin 检查和项目/运行/证据归属；默认关闭。需完成真实 Worker 路由、浏览器 A/B 隔离和运行时测试，以及严格限额后才可启用。旧无归属项目对访客不可见；管理路径须另行设计。 |
 | 总预算与滥用防护 | 现有 `runs`、`research_run_costs`、Workflow 入口 | 未实现全局原子预约、预算上限和并发控制，也未保护会话创建频率。仅按 session 计数或按地域限流均不足以保证全局预算；尚未启用公开访客任务。 |
-| Pipeline | `SourcingWorkflow`, `SourcingSpecWorkflow`, `SourcingDecisionWorkflow`, `SourcingReportWorkflow` 位于 `cloudflare/gateway/src/index.ts` | 尚未串联。应使用持久化步骤、显式版本与客户端幂等键，并让报告失败独立于已完成的决策。 |
+| Pipeline | `cloudflare/gateway/src/pipeline_workflow.ts`, `pipeline_store.ts`, `index.ts` | 本地实现研究→核验→价格/决策串联及不可变阶段快照；尚待真实云端验证、异常恢复和 Worker 路由测试。报告仍未接入。 |
 | Analysis 与版本 | `spec-context`, `decision-context`, `spec_assessments`, `sourcing_decisions` | 尚无统一 `/analysis`。当前部分上下文读取项目最新数据；决策表按项目/需求/候选唯一且会更新，不能视为按运行冻结的历史快照。须增加不可变的运行关联和 assessment/decision 引用。 |
 | Report | `SourcingReportWorkflow`, `/internal/projects/{id}/report-context`, `src/procurement_agent/reports/procurement_report.py` | 当前报告上下文读取当前项目数据，`run_id` 不能证明内容属于该运行；摘要并非完整不可变决策快照。必须先修复再用于自动生成当前版本报告。 |
 | 前端联调 | `docs/m4/backend_contract_response.md` | §5 仅为本地会话契约草案，未部署，不构成真实联调通知。每个接口部署后再记录固定版本、真实响应与测试结果。 |
@@ -24,4 +24,4 @@ B1 进行中（LOCAL_ONLY，未提供 API）：migration `0013` 和 `pipeline_st
 
 ## 版本与数据注意事项
 
-`scope_history()` 中同名匹配被用于历史 ITEM 范围；同名不一定是同 SKU，正式价格分析前还需核实/收紧。`TABLE_OVERVIEW` 不能用于单品基准或节支。`UNKNOWN` 不等同于技术通过。现有工作流 PASS、缓存命中和报告可下载不单独证明业务语义正确或版本冻结。
+`scope_history()` 已移除仅凭同名判定 ITEM 的分支；历史品项需确认等价关系。`TABLE_OVERVIEW` 不能用于单品基准或节支。`UNKNOWN` 不等同于技术通过。现有工作流 PASS、缓存命中和报告可下载不单独证明业务语义正确或版本冻结。

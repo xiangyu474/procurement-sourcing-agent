@@ -118,6 +118,7 @@ class ResearchRunRequest(BaseModel):
 
     project_id: str
     run_id: str
+    pipeline_id: str | None = None
     gateway_url: str
     token: str
     runtime_config: dict[str, str] = Field(default_factory=dict)
@@ -132,6 +133,7 @@ class SpecEvaluationRequest(BaseModel):
     """Internal request for the M3-A technical check of one project."""
 
     project_id: str
+    pipeline_id: str | None = None
     gateway_url: str
     token: str
     runtime_config: dict[str, str] = Field(default_factory=dict)
@@ -144,6 +146,7 @@ class DecisionRequest(BaseModel):
     """Internal request for the M3-C decision of one project."""
 
     project_id: str
+    pipeline_id: str | None = None
     gateway_url: str
     token: str
     runtime_config: dict[str, str] = Field(default_factory=dict)
@@ -322,7 +325,10 @@ async def research_run(payload: ResearchRunRequest, x_internal_token: str | None
     async with httpx.AsyncClient(timeout=60) as client:
         context_response = await client.get(
             f"{payload.gateway_url.rstrip('/')}/internal/projects/{payload.project_id}/sourcing-context",
-            params={"run_id": payload.run_id},
+            params={
+                "run_id": payload.run_id,
+                **({"pipeline_id": payload.pipeline_id} if payload.pipeline_id else {}),
+            },
             headers={"x-internal-token": payload.token},
         )
         if context_response.status_code == 404:
@@ -465,9 +471,30 @@ async def evaluate_spec(payload: SpecEvaluationRequest, x_internal_token: str | 
     )
 
     async with httpx.AsyncClient(timeout=120) as client:
+        if payload.pipeline_id:
+            previous = await client.get(
+                f"{payload.gateway_url.rstrip('/')}/internal/pipelines/{payload.pipeline_id}/snapshots/SPEC_RESULTS",
+                params={"project_id": payload.project_id},
+                headers={"x-internal-token": payload.token},
+            )
+            if previous.is_success:
+                rows = previous.json().get("assessments") or []
+                counts: dict[str, int] = {}
+                for row in rows:
+                    verdict = str(row.get("hard_spec_overall") or "UNKNOWN")
+                    counts[verdict] = counts.get(verdict, 0) + 1
+                return {"project_id": payload.project_id, "status": "COMPLETED", "assessments": len(rows), "by_overall": counts, "reused": True}
+            if previous.status_code != 404:
+                previous.raise_for_status()
+        context_path = (
+            f"/internal/pipelines/{payload.pipeline_id}/snapshots/SPEC_CONTEXT"
+            if payload.pipeline_id
+            else f"/internal/projects/{payload.project_id}/spec-context"
+        )
         context_response = await client.get(
-            f"{payload.gateway_url.rstrip('/')}/internal/projects/{payload.project_id}/spec-context",
+            f"{payload.gateway_url.rstrip('/')}{context_path}",
             params={
+                **({"project_id": payload.project_id} if payload.pipeline_id else {}),
                 "requirement_ids": ",".join(payload.requirement_ids),
                 "candidate_ids": ",".join(payload.candidate_ids),
             },
@@ -571,8 +598,14 @@ async def evaluate_spec(payload: SpecEvaluationRequest, x_internal_token: str | 
         for assessment in assessments
     ]
     async with httpx.AsyncClient(timeout=120) as client:
+        result_path = (
+            f"/internal/pipelines/{payload.pipeline_id}/snapshots/SPEC_RESULTS"
+            if payload.pipeline_id
+            else f"/internal/projects/{payload.project_id}/spec-results"
+        )
         stored = await client.post(
-            f"{payload.gateway_url.rstrip('/')}/internal/projects/{payload.project_id}/spec-results",
+            f"{payload.gateway_url.rstrip('/')}{result_path}",
+            params={"project_id": payload.project_id} if payload.pipeline_id else {},
             headers={"x-internal-token": payload.token},
             json={
                 "demand_revision": context.get("demand_revision", 1),
@@ -614,9 +647,29 @@ async def decide(payload: DecisionRequest, x_internal_token: str | None = Header
     from procurement_agent.services.sourcing_decision import decision_summary
 
     async with httpx.AsyncClient(timeout=180) as client:
+        if payload.pipeline_id:
+            previous = await client.get(
+                f"{payload.gateway_url.rstrip('/')}/internal/pipelines/{payload.pipeline_id}/snapshots/DECISION_RESULTS",
+                params={"project_id": payload.project_id},
+                headers={"x-internal-token": payload.token},
+            )
+            if previous.is_success:
+                rows = previous.json().get("decisions") or []
+                accepted = sum(row.get("accepted") is True for row in rows)
+                return {"project_id": payload.project_id, "status": "COMPLETED", "decisions": len(rows), "accepted": accepted, "rejected": len(rows) - accepted, "reused": True}
+            if previous.status_code != 404:
+                previous.raise_for_status()
+        context_path = (
+            f"/internal/pipelines/{payload.pipeline_id}/snapshots/DECISION_CONTEXT"
+            if payload.pipeline_id
+            else f"/internal/projects/{payload.project_id}/decision-context"
+        )
         context_response = await client.get(
-            f"{payload.gateway_url.rstrip('/')}/internal/projects/{payload.project_id}/decision-context",
-            params={"requirement_ids": ",".join(payload.requirement_ids)},
+            f"{payload.gateway_url.rstrip('/')}{context_path}",
+            params={
+                **({"project_id": payload.project_id} if payload.pipeline_id else {}),
+                "requirement_ids": ",".join(payload.requirement_ids),
+            },
             headers={"x-internal-token": payload.token},
         )
         if context_response.status_code == 404:
@@ -640,14 +693,26 @@ async def decide(payload: DecisionRequest, x_internal_token: str | None = Header
     evidence_ids = [str(item) for item in context.get("evidence_ids") or []]
 
     price_findings: dict[str, list[Any]] = {}
+    price_contexts: list[dict[str, Any]] = []
     for requirement in requirements:
         price_context = build_price_context(
             requirement=requirement,
             transactions=transactions,
             history_price_unit=context.get("history_price_unit"),
         )
+        price_contexts.append(price_context.model_dump(mode="json"))
         if price_context.findings:
             price_findings[requirement.requirement_id] = price_context.findings
+
+    if payload.pipeline_id:
+        async with httpx.AsyncClient(timeout=120) as client:
+            stored_prices = await client.post(
+                f"{payload.gateway_url.rstrip('/')}/internal/pipelines/{payload.pipeline_id}/snapshots/PRICE_CONTEXT",
+                params={"project_id": payload.project_id},
+                headers={"x-internal-token": payload.token},
+                json={"price_contexts": price_contexts},
+            )
+            stored_prices.raise_for_status()
 
     try:
         model = build_chat_model(
@@ -678,8 +743,14 @@ async def decide(payload: DecisionRequest, x_internal_token: str | None = Header
 
     serialized = [decision.model_dump(mode="json") for decision in decisions]
     async with httpx.AsyncClient(timeout=120) as client:
+        result_path = (
+            f"/internal/pipelines/{payload.pipeline_id}/snapshots/DECISION_RESULTS"
+            if payload.pipeline_id
+            else f"/internal/projects/{payload.project_id}/decision-results"
+        )
         stored = await client.post(
-            f"{payload.gateway_url.rstrip('/')}/internal/projects/{payload.project_id}/decision-results",
+            f"{payload.gateway_url.rstrip('/')}{result_path}",
+            params={"project_id": payload.project_id} if payload.pipeline_id else {},
             headers={"x-internal-token": payload.token},
             json={"decisions": serialized},
         )
@@ -796,6 +867,66 @@ async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = 
                 "requirements": len(requirements),
                 "constraints": len(constraints),
             }
+            return {"status": "FAIL" if failures else "OK", "failures": failures, "state": json.dumps(state), "done": True}
+
+        if stage == "pipeline-start":
+            project_response = await client.get(f"/api/projects/{project_id}")
+            if project_response.status_code != 200:
+                return {"status": "FAIL", "failures": ["project not found"], "state": "{}", "done": True}
+            revision = project_response.json().get("demand_revision")
+            key = f"acceptance-{project_id}"
+            first = await client.post(
+                f"/api/projects/{project_id}/pipeline",
+                headers={"idempotency-key": key}, json={"demand_revision": revision},
+            )
+            second = await client.post(
+                f"/api/projects/{project_id}/pipeline",
+                headers={"idempotency-key": key}, json={"demand_revision": revision},
+            )
+            if first.status_code != 202 or second.status_code != 202:
+                return {"status": "FAIL", "failures": [f"pipeline start returned {first.status_code}/{second.status_code}"], "state": "{}", "done": True}
+            first_body, second_body = first.json(), second.json()
+            if first_body.get("pipeline_id") != second_body.get("pipeline_id") or first_body.get("run_id") != second_body.get("run_id"):
+                return {"status": "FAIL", "failures": ["duplicate pipeline request created distinct jobs"], "state": "{}", "done": True}
+            return {"status": "OK", "failures": [], "state": json.dumps({"project_id": project_id, "pipeline_id": first_body.get("pipeline_id"), "run_id": first_body.get("run_id"), "demand_revision": revision, "reused": second_body.get("reused")}), "done": True}
+
+        if stage == "pipeline":
+            pipeline_id = payload.run_id or ""
+            response = await client.get(f"/api/projects/{project_id}/pipeline/{pipeline_id}")
+            if response.status_code != 200:
+                return {"status": "FAIL", "failures": [f"pipeline status returned {response.status_code}"], "state": "{}", "done": True}
+            pipeline = response.json()
+            status = pipeline.get("status")
+            state = {"project_id": project_id, "pipeline_id": pipeline_id, "run_id": pipeline.get("run_id"), "demand_revision": pipeline.get("demand_revision"), "pipeline_status": status, "stage": pipeline.get("stage"), "stages": pipeline.get("stages")}
+            if status == "FAILED":
+                return {"status": "FAIL", "failures": [f"pipeline failed at {pipeline.get('stage')}: {pipeline.get('error')}"], "state": json.dumps(state), "done": True}
+            if status not in {"COMPLETED", "PARTIAL"}:
+                return {"status": "OK", "failures": [], "state": json.dumps(state), "done": False}
+            snapshots: dict[str, Any] = {}
+            for name in ("SPEC_CONTEXT", "SPEC_RESULTS", "DECISION_CONTEXT", "DECISION_RESULTS", "PRICE_CONTEXT"):
+                item = await client.get(
+                    f"/internal/pipelines/{pipeline_id}/snapshots/{name}", params={"project_id": project_id},
+                    headers={"x-internal-token": payload.token},
+                )
+                if item.status_code != 200:
+                    return {"status": "FAIL", "failures": [f"missing {name}: {item.status_code}"], "state": json.dumps(state), "done": True}
+                snapshots[name] = item.json()
+            spec = snapshots["SPEC_CONTEXT"]
+            assessments = snapshots["SPEC_RESULTS"].get("assessments") or []
+            decisions = snapshots["DECISION_RESULTS"].get("decisions") or []
+            candidates = spec.get("candidates") or []
+            failures = []
+            if spec.get("run_id") != pipeline.get("run_id") or spec.get("demand_revision") != pipeline.get("demand_revision"):
+                failures.append("spec context is not bound to the pipeline run and revision")
+            candidate_ids = {row.get("candidate_id") for row in candidates}
+            if not candidates or not assessments or not decisions:
+                failures.append("candidate, assessment or decision collection is empty")
+            for decision in decisions:
+                if decision.get("product_candidate_id") not in candidate_ids:
+                    failures.append("decision points outside frozen candidates")
+                if decision.get("accepted") and decision.get("recommendation") == "SHORTLIST" and decision.get("hard_spec_overall") != "PASS":
+                    failures.append("non-PASS was recommended for shortlist")
+            state.update({"candidates": len(candidates), "assessments": len(assessments), "decisions": len(decisions), "snapshot_types": sorted(snapshots)})
             return {"status": "FAIL" if failures else "OK", "failures": failures, "state": json.dumps(state), "done": True}
 
         if stage == "research-start":
