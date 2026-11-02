@@ -330,4 +330,5 @@ GET /api/projects/{project_id}/requirement-text
 | 2026-10-31 | 后端 | 首次答复：§1 接口清单以真实响应为准；§2 正式报告接口已实现；§3 为待补项与负责人；§3.7 为鉴权方案，请确认是否接受 Cloudflare Access。 |
 | 2026-11-01 | 后端 | §3.1–§3.5 已实现并部署（项目列表、项目运行列表、需求正文回读、整理/核对/决策的任务状态）。新增响应字段：`POST .../requirement-compile` 返回 `compile_id`（作业 id）与 `workflow_id`；`POST .../spec-assessments` 与 `POST .../decisions` 返回 `job_id`。§3.6（项目级修订）本轮未做，原因见该节。 |
 | 2026-11-01 | 后端 | **答复前端来信**：① `assessment_id`/`decision_id` 是 workflow 实例 id（保留兼容，不改语义），`job_id`/`compile_id` 是作业 id；**查状态一律用状态接口**，详见 §3.5.1。② F2 需要 `history_scope`，此前没有公开接口能拿到——已新增 `GET /api/projects/{id}/price-context`（§2.3），与正式报告的价格章节同源。③ F1/F2/F3/F4 的工作拆分与后端现状一致：F1 用新接口、F2 用候选+核对+决策+价格口径、F3 接报告生成/状态/下载并显示决策版本、F4 做成分步引导。④ 生产鉴权仍待确认：推荐同源托管 + Cloudflare Access（§3.7）。 |
+| 2026-11-02 | 后端 | **价格接口已在云上验证**：验收流程现在会读 `GET /api/projects/{id}/price-context` 并把它纳入判据（最近一轮 `price_context_status=200`，`price_scopes=["NONE"]`——该验收项目未导入历史，scope 为 `NONE` ✓）。前端可直接按 §2.3 渲染：全表概览时 `overview_is_not_a_baseline=true`，界面不要出现「历史价」「节支」字样。 |
 |  |  |  |
