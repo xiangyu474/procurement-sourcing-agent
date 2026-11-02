@@ -76,6 +76,7 @@ M3-B 修了一个会误导买家的 bug：官方历史文件里是 **14 个不�
 | GET | `/api/runs/{id}` | `{id, project_id, status, current_stage, artifact_key, last_error, created_at, updated_at}` | 运行状态 | `status`：`QUEUED/RUNNING/COMPLETED/PARTIAL/FAILED` |
 | GET | `/api/runs/{id}/events` | `{events[]}` | 过程记录 | `detail` 含内部角色名，前端不要原样展示 |
 | GET | `/api/runs/{id}/research` | `{run, plan, tasks, actions, metrics}` | 研究详情 | `metrics` 含 token 与搜索次数，前端不要展示 |
+| GET | `/api/projects/{id}/price-context` | `{project_id, price_contexts[]}` | **F2 价格与口径** | 每个价格都带 `history_scope`；见 §0.3 与 §2.3 |
 | GET | `/api/evidence/{id}` | `{evidence}`（含快照正文） | 证据详情 | 快照缺失 404 |
 | GET | `/api/workspaces/default/suppliers` | `{suppliers}` | 供应商情报 | 工作区情报，不是本项目结论 |
 | GET | `/api/workspaces/default/suppliers/{id}` | `{supplier, products, evidence}` | 供应商详情 | 同上 |
@@ -138,6 +139,50 @@ GET /api/projects/{project_id}/reports/{report_id}
 **报告与「运行」的绑定**：`decision_version` 是本次决策集合内容的摘要（`sha256` 前 16 位）。同一个 `report_id` 永远对应同一份文档，之后再跑新的寻源不会改变它。
 
 ---
+
+## 2.3 价格与口径（F2 用）
+
+```http
+GET /api/projects/{id}/price-context
+```
+
+```json
+{
+  "project_id": "uuid",
+  "price_contexts": [
+    {
+      "requirement_id": "r1",
+      "product_name": "5MP 工业网络摄像机",
+      "budget": "500",
+      "budget_currency": "CNY",
+      "budget_unit": "元/套",
+      "history_scope": "TABLE_OVERVIEW",
+      "history_scope_note": "The imported history holds 14 other items and no row of them is confirmed to be this requirement's item. …",
+      "history_available": false,
+      "history_rows": 0,
+      "statistics": null,
+      "overview_statistics": { "count": 1000, "minimum": "77", "median": "113", "mean": "171.51", "maximum": "1255", "currency": "CNY", "unit": "元/台" },
+      "overview_is_not_a_baseline": true,
+      "findings": [],
+      "notes": ["…"]
+    }
+  ]
+}
+```
+
+字段含义（**前端必须按这个渲染**）：
+
+| 字段 | 含义 |
+| --- | --- |
+| `history_scope` | `ITEM`（本品项，可比价）/ `TABLE_OVERVIEW`（全表概览，**不可**用于比价、排名、节支）/ `NONE`（没有历史） |
+| `history_available` | 本需求是否有**可用的品项级**历史基准 |
+| `statistics` | 品项级统计（`history_scope=ITEM` 时才有值） |
+| `overview_statistics` | 全表概览统计（仅供参考） |
+| `overview_is_not_a_baseline` | 布尔值；为 `true` 时界面**不要出现**「历史价」「节支」字样 |
+| `findings[]` | 每种口径一条：`{basis, lowest_value, saving, saving_percent, comparability, explanation, lowest_observation_id}`；`basis` 取 `PLANNED_BUDGET/HISTORICAL_TRANSACTION/PUBLIC_REFERENCE/FORMAL_QUOTATION` |
+| `notes[]` | 口径说明（英文原文，可直接展示） |
+
+**同一份价格口径只有一个来源**：该接口与正式 DOCX 报告里的「四、价格与口径」章节由**同一段代码**产出（容器内的 `build_price_context`），不会出现两套数字。前端**不要**自己算历史价或节支。
 
 ## 3. 还需要补的接口（前端提出的缺口）
 
@@ -228,6 +273,26 @@ GET /api/projects/{project_id}/requirement-text
 
 只返回最新一条 `USER_TEXT`；没有则 404 `not_found`。
 
+### 3.5.1 前端的问题：到底用 `assessment_id`/`decision_id` 还是 `job_id`？
+
+**答案：两个都是真的，但它们是两种不同的东西，各有各的用途。**
+
+| 接口 | 返回的字段 | 它是什么 | 前端怎么用 |
+| --- | --- | --- | --- |
+| `POST .../requirement-compile` | `compile_id` | **作业 id**（`project_jobs` 表的一行） | **用这个**去查 `GET .../requirement-compile/{compile_id}` |
+| 同上 | `workflow_id` | Cloudflare Workflow 实例 id | 只用于日志排查，前端不用显示 |
+| `POST .../spec-assessments` | `assessment_id` | Workflow 实例 id（**旧字段，保留兼容**） | 不用管它 |
+| 同上 | `job_id` | 作业 id | 想关联作业时用它 |
+| `POST .../decisions` | `decision_id` | Workflow 实例 id（**旧字段，保留兼容**） | 不用管它 |
+| 同上 | `job_id` | 作业 id | 想关联作业时用它 |
+
+**结论**：
+- **查询任务状态一律用状态接口**：`GET .../requirement-compile/{compile_id}`、`GET .../spec-assessments/status`、`GET .../decisions/status`。
+  状态接口自己返回 `job_id`、`status`、`error`，**前端不需要用 POST 返回的任何 id 去拼状态请求**（除了整理状态必须带 `compile_id`，因为它要指明是哪一次整理）。
+- `assessment_id` / `decision_id` 是历史字段，**语义保持不变**（它们是 workflow 实例 id），后端不会改它们，前端现有代码不必改。
+
+文档里表格写的是 `assessment_id`/`decision_id`、回执里写的是 `job_id`，两处描述的是不同字段，不是同一字段的两个名字；这里写清楚以免误解。
+
 ### 3.6 项目级修订（`POST /api/projects/{project_id}/actions`）—— **后端，本轮未做**
 
 - 前端要求一个原子接口：`{text, base_demand_revision, base_run_id}` → 新修订 + 重新整理 + 重跑受影响候选，`base_demand_revision` 不一致返回 409。
@@ -264,4 +329,5 @@ GET /api/projects/{project_id}/requirement-text
 | --- | --- | --- |
 | 2026-10-31 | 后端 | 首次答复：§1 接口清单以真实响应为准；§2 正式报告接口已实现；§3 为待补项与负责人；§3.7 为鉴权方案，请确认是否接受 Cloudflare Access。 |
 | 2026-11-01 | 后端 | §3.1–§3.5 已实现并部署（项目列表、项目运行列表、需求正文回读、整理/核对/决策的任务状态）。新增响应字段：`POST .../requirement-compile` 返回 `compile_id`（作业 id）与 `workflow_id`；`POST .../spec-assessments` 与 `POST .../decisions` 返回 `job_id`。§3.6（项目级修订）本轮未做，原因见该节。 |
+| 2026-11-01 | 后端 | **答复前端来信**：① `assessment_id`/`decision_id` 是 workflow 实例 id（保留兼容，不改语义），`job_id`/`compile_id` 是作业 id；**查状态一律用状态接口**，详见 §3.5.1。② F2 需要 `history_scope`，此前没有公开接口能拿到——已新增 `GET /api/projects/{id}/price-context`（§2.3），与正式报告的价格章节同源。③ F1/F2/F3/F4 的工作拆分与后端现状一致：F1 用新接口、F2 用候选+核对+决策+价格口径、F3 接报告生成/状态/下载并显示决策版本、F4 做成分步引导。④ 生产鉴权仍待确认：推荐同源托管 + Cloudflare Access（§3.7）。 |
 |  |  |  |

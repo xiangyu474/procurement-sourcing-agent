@@ -2853,6 +2853,32 @@ export default {
 			});
 		}
 
+		// The price of every requirement, with the scope it was computed in.
+		// The rules live in the container, so the container computes them and
+		// the gateway passes the answer on unchanged: there is one price
+		// contract, not two.
+		const priceContextMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/price-context$/);
+		if (priceContextMatch && request.method === "GET") {
+			const projectId = decodeURIComponent(priceContextMatch[1]);
+			const response = await fetchContainer(
+				env,
+				env.CONTAINER_INSTANCE_NAME,
+				"/internal/projects/price-context",
+				{
+					project_id: projectId,
+					gateway_url: env.CONTAINER_GATEWAY_URL,
+					token: env.INTERNAL_GATEWAY_TOKEN,
+				},
+			);
+			if (response.status === 404) return json({ error: "not_found" }, 404);
+			if (!response.ok) {
+				const body = await response.text().catch(() => "");
+				return json({ error: "price_context_unavailable", detail: body.slice(0, 200) }, 502);
+			}
+			const payload = (await response.json()) as { price_contexts?: unknown[] };
+			return json({ project_id: projectId, price_contexts: payload.price_contexts ?? [] });
+		}
+
 		const specAssessmentsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/spec-assessments$/);
 		if (specAssessmentsMatch) {
 			const projectId = decodeURIComponent(specAssessmentsMatch[1]);
