@@ -3,7 +3,7 @@ import { isAbort, messageForApiError } from "../api/adapter";
 import type { ApiClient } from "../api/client";
 import { ApiError, type Report, type Run } from "../api/types";
 import { COMPILE_TIMEOUT_MS, POLL_INTERVAL_MS, pollUntil } from "./poll";
-import { reportFailure, reportFileName, selectReport } from "../view/report";
+import { PRIOR_REPORT_FAILURE, REPORT_NETWORK_FAILURE, reportFailure, reportFileName, selectReport } from "../view/report";
 
 export type ReportModel = {
 	report: Report | null;
@@ -53,11 +53,12 @@ export function useReport(
 				if (signal.aborted) return;
 				const selected = selectReport(listed, runId);
 				setReport(selected);
+				if (selected?.status === "FAILED") setNote(PRIOR_REPORT_FAILURE);
 				if (selected && (selected.status === "QUEUED" || selected.status === "RUNNING")) {
 					await settle(projectId, selected.report_id, signal);
 				}
 			} catch (caught) {
-				if (!isAbort(caught)) setNote(messageForApiError(caught).summary);
+				if (!isAbort(caught)) setNote(noteFor(caught));
 			}
 		})();
 		return () => controller.abort();
@@ -89,7 +90,7 @@ export function useReport(
 		} catch (caught) {
 			if (isAbort(caught)) return null;
 			const timeout = caught instanceof ApiError && caught.code === "timeout";
-			setNote(timeout ? "报告超过 20 分钟仍未生成。" : messageForApiError(caught).summary);
+			setNote(timeout ? "报告超过 20 分钟仍未生成。" : noteFor(caught));
 			setPending(false);
 			return null;
 		}
@@ -103,7 +104,7 @@ export function useReport(
 				const blob = await clientRef.current.downloadReport(report.download_path);
 				saveBlob(blob, filename);
 			} catch (caught) {
-				if (!isAbort(caught)) setNote(messageForApiError(caught).summary);
+				if (!isAbort(caught)) setNote(noteFor(caught));
 			}
 			return;
 		}
@@ -119,9 +120,14 @@ export function useReport(
 			if (controller.signal.aborted) return;
 			saveBlob(blob, filename);
 		} catch (caught) {
-			if (!isAbort(caught)) setNote(messageForApiError(caught).summary);
+			if (!isAbort(caught)) setNote(noteFor(caught));
 		}
 	};
 
 	return { report, pending, note, download };
+}
+
+function noteFor(caught: unknown): string {
+	if (caught instanceof ApiError && caught.code === "network") return REPORT_NETWORK_FAILURE;
+	return messageForApiError(caught).summary;
 }

@@ -63,7 +63,9 @@ export function App() {
 								>
 									下载这一版
 								</button>
-								{downloadPhase === "blocked" ? <span className="quiet">报告还没有生成</span> : null}
+								{downloadPhase === "blocked" ? (
+									<span className="quiet">{workspace.candidates.reportBlockReason ?? "报告还没有生成"}</span>
+								) : null}
 								{downloadPhase === "generating" ? <span className="quiet">正在生成报告</span> : null}
 								{workspace.report.note && downloadPhase !== "generating" && downloadPhase !== "blocked" ? (
 									<span className="quiet">{workspace.report.note}</span>
@@ -116,6 +118,8 @@ export function App() {
 									}
 								: null
 						}
+						runs={workspace.runHistory}
+						onSelectRun={workspace.selectRun}
 					/>
 					{workspace.candidates.progressLine ? <p className="quiet">{workspace.candidates.progressLine}</p> : null}
 					{workspace.candidates.listNote ? <p>{workspace.candidates.listNote}</p> : null}

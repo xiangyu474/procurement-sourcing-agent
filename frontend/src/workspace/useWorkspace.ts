@@ -13,7 +13,7 @@ export function useWorkspace(client: ApiClient = createApiClient()): WorkspaceMo
 	clientRef.current = client;
 	const runs = useRunWatch(clientRef);
 	const session = useProjectSession(clientRef, runs);
-	const candidates = useCandidates(clientRef, session.project?.id ?? null, runs.run);
+	const candidates = useCandidates(clientRef, session.project?.id ?? null, runs.run, session.project?.demand_revision ?? null);
 	const report = useReport(clientRef, session.project?.id ?? null, session.project?.title ?? "", runs.run, candidates.decisionsReady);
 	return {
 		...session,

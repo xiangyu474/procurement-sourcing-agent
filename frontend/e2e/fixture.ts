@@ -503,7 +503,7 @@ export function installReview(page: Page, variant: "mixed" | "none" = "mixed"): 
 			return;
 		}
 		if (request.method() === "GET" && path === `/api/projects/${REVIEW_PROJECT}/decisions/status`) {
-			await fulfill(200, { status: variant === "none" ? "IDLE" : "COMPLETED", job_id: variant === "none" ? null : "job-decision", demand_revision: 1, error: null, detail: { decisions: 3 } });
+			await fulfill(200, { status: variant === "none" ? "IDLE" : "COMPLETED", job_id: variant === "none" ? null : "job-decision", demand_revision: 1, error: null, updated_at: "2026-10-31T05:00:00.000Z", detail: { decisions: 3 } });
 			return;
 		}
 		if (request.method() === "GET" && path === `/api/projects/${REVIEW_PROJECT}/spec-assessments`) {
@@ -726,7 +726,7 @@ export function installKnownCase(page: Page): Promise<unknown> {
 			return;
 		}
 		if (request.method() === "GET" && (path.endsWith("/spec-assessments/status") || path.endsWith("/decisions/status"))) {
-			await fulfill(200, { status: "COMPLETED", job_id: "job-1", demand_revision: 1, error: null, updated_at: "2026-11-01T14:00:00.000Z" });
+			await fulfill(200, { status: "COMPLETED", job_id: "job-1", demand_revision: 1, error: null, updated_at: "2026-11-01T15:00:00.000Z" });
 			return;
 		}
 		if (request.method() === "GET" && path === `/api/projects/${KNOWN_PROJECT}/spec-assessments`) {
@@ -780,7 +780,7 @@ export function installKnownCase(page: Page): Promise<unknown> {
 const REPORT_PROJECT = "55555555-5555-4555-8555-555555555555";
 const REPORT_RUN = "66666666-6666-4666-8666-666666666666";
 
-export function installReportFlow(page: Page, mode: "generate" | "completed" | "failed" | "blocked"): Promise<unknown> {
+export function installReportFlow(page: Page, mode: "generate" | "completed" | "failed" | "blocked" | "prior-failed" | "older"): Promise<unknown> {
 	const posts: string[] = [];
 	let polls = 0;
 	const project = {
@@ -790,7 +790,7 @@ export function installReportFlow(page: Page, mode: "generate" | "completed" | "
 		demand_revision: 1,
 		analysis_version: 1,
 		created_at: "2026-10-31T00:00:00.000Z",
-		latest_run: { id: REPORT_RUN, status: "COMPLETED", current_stage: "WEB_RESEARCH", updated_at: "2026-10-31T02:00:00.000Z" },
+		latest_run: { id: mode === "older" ? "77777777-7777-4777-8777-777777777777" : REPORT_RUN, status: "COMPLETED", current_stage: "WEB_RESEARCH", updated_at: mode === "older" ? "2026-10-31T12:00:00.000Z" : "2026-10-31T02:00:00.000Z" },
 	};
 	const completed = {
 		report_id: "report-1",
@@ -818,7 +818,17 @@ export function installReportFlow(page: Page, mode: "generate" | "completed" | "
 			return;
 		}
 		if (request.method() === "GET" && path === `/api/projects/${REPORT_PROJECT}/runs`) {
-			await fulfill(200, { runs: [{ id: REPORT_RUN, status: "COMPLETED", current_stage: "WEB_RESEARCH", last_error: null, stop_reason_code: null, artifact_key_present: false, created_at: "2026-10-31T01:00:00.000Z", updated_at: "2026-10-31T02:00:00.000Z" }] });
+			const older = { id: REPORT_RUN, status: "COMPLETED", current_stage: "WEB_RESEARCH", last_error: null, stop_reason_code: null, artifact_key_present: false, created_at: "2026-10-31T01:00:00.000Z", updated_at: "2026-10-31T02:00:00.000Z" };
+			const newer = { id: "77777777-7777-4777-8777-777777777777", status: "COMPLETED", current_stage: "WEB_RESEARCH", last_error: null, stop_reason_code: null, artifact_key_present: false, created_at: "2026-10-31T12:00:00.000Z", updated_at: "2026-10-31T12:00:00.000Z" };
+			await fulfill(200, { runs: mode === "older" ? [newer, older] : [older] });
+			return;
+		}
+		if (request.method() === "GET" && path === "/api/runs/77777777-7777-4777-8777-777777777777") {
+			await fulfill(200, { id: "77777777-7777-4777-8777-777777777777", project_id: REPORT_PROJECT, status: "COMPLETED", current_stage: "WEB_RESEARCH", artifact_key: null, last_error: null, created_at: "2026-10-31T12:00:00.000Z", updated_at: "2026-10-31T12:00:00.000Z" });
+			return;
+		}
+		if (request.method() === "GET" && path === "/api/runs/77777777-7777-4777-8777-777777777777/events") {
+			await fulfill(200, { events: [] });
 			return;
 		}
 		if (request.method() === "GET" && path === `/api/runs/${REPORT_RUN}`) {
@@ -838,7 +848,8 @@ export function installReportFlow(page: Page, mode: "generate" | "completed" | "
 			return;
 		}
 		if (request.method() === "GET" && path === `/api/projects/${REPORT_PROJECT}/candidates`) {
-			await fulfill(200, { candidates: mode === "blocked" ? [] : [{
+			const runId = new URL(request.url()).searchParams.get("run_id");
+			await fulfill(200, { candidates: mode === "blocked" || runId === "77777777-7777-4777-8777-777777777777" ? [] : [{
 				candidate_id: "c1",
 				requirement_id: "r1",
 				stage: "RFQ_SHORTLIST",
@@ -855,7 +866,7 @@ export function installReportFlow(page: Page, mode: "generate" | "completed" | "
 			return;
 		}
 		if (request.method() === "GET" && path.endsWith("/decisions/status")) {
-			await fulfill(200, { status: mode === "blocked" ? "IDLE" : "COMPLETED", job_id: null, demand_revision: 1, error: null, updated_at: "2026-10-31T02:00:00.000Z" });
+			await fulfill(200, { status: mode === "blocked" ? "IDLE" : "COMPLETED", job_id: null, demand_revision: 1, error: null, updated_at: mode === "older" ? "2026-10-31T11:00:00.000Z" : "2026-10-31T03:00:00.000Z" });
 			return;
 		}
 		if (request.method() === "GET" && path === `/api/projects/${REPORT_PROJECT}/spec-assessments`) {
@@ -867,7 +878,14 @@ export function installReportFlow(page: Page, mode: "generate" | "completed" | "
 			return;
 		}
 		if (request.method() === "GET" && path === `/api/projects/${REPORT_PROJECT}/reports`) {
-			await fulfill(200, { project_id: REPORT_PROJECT, reports: mode === "completed" ? [completed] : [] });
+			const failed = {
+				...completed,
+				status: "FAILED",
+				error: "report generation failed with status 500: Error proxying request to container: The container is not running",
+				download_path: `/api/projects/${REPORT_PROJECT}/reports/report-1/download`,
+				decision_version: null,
+			};
+			await fulfill(200, { project_id: REPORT_PROJECT, reports: mode === "completed" ? [completed] : mode === "prior-failed" ? [failed] : [] });
 			return;
 		}
 		if (request.method() === "POST" && path === `/api/projects/${REPORT_PROJECT}/reports`) {

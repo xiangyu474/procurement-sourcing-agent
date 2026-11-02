@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Report } from "../api/types";
-import { reportFailure, reportFileName, reportPhase, selectReport } from "./report";
+import { decisionCoversRun, reportFailure, reportFileName, reportPhase, selectReport } from "./report";
 
 function report(patch: Partial<Report>): Report {
 	return {
@@ -42,8 +42,20 @@ describe("report download", () => {
 		expect(reportPhase({ runStatus: "COMPLETED", decisionsReady: true, report: report({ status: "RUNNING", download_path: null }), pending: false })).toBe("generating");
 		expect(reportPhase({ runStatus: "COMPLETED", decisionsReady: true, report: report({ status: "FAILED", error: "没有可写入的决策。", download_path: null }), pending: false })).toBe("failed");
 		const failed = reportFailure("Supervisor timeout token");
-		expect(failed.startsWith("生成失败。")).toBe(true);
+		expect(failed).toBe("生成失败。");
 		expect(failed).not.toMatch(/Supervisor|token/i);
+		expect(reportFailure("report generation failed with status 500: Error proxying request to container: The container is not running")).toBe("生成失败。");
 		expect(reportFailure("没有可写入的决策。")).toBe("生成失败。没有可写入的决策。");
+	});
+
+	it("enables a report only when the decision job finished after this run", () => {
+		const job = { status: "COMPLETED", demand_revision: 2, updated_at: "2026-11-01T12:00:00.000Z" };
+		expect(decisionCoversRun({ runUpdatedAt: "2026-11-01T11:00:00.000Z", projectDemandRevision: 2, job }).ready).toBe(true);
+		expect(decisionCoversRun({ runUpdatedAt: "2026-11-01T13:00:00.000Z", projectDemandRevision: 2, job })).toMatchObject({
+			ready: false,
+			reason: "还不能确认这次运行已经有决策。",
+		});
+		expect(decisionCoversRun({ runUpdatedAt: "2026-11-01T11:00:00.000Z", projectDemandRevision: 2, job: { ...job, updated_at: null } }).ready).toBe(false);
+		expect(decisionCoversRun({ runUpdatedAt: "2026-11-01T11:00:00.000Z", projectDemandRevision: 2, job: { ...job, status: "IDLE" } }).reason).toBe("报告还没有生成");
 	});
 });

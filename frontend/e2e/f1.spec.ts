@@ -315,6 +315,29 @@ test("a failed report shows the backend error and does not pretend success", asy
 	await page.screenshot({ path: `${screenshots}/f3-failed.png` });
 });
 
+test("a previous failed report does not show the container error", async ({ page }) => {
+	await installReportFlow(page, "prior-failed");
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto("/");
+	await page.getByRole("button", { name: /正式报告项目/ }).click();
+	await expect(page.getByText("上次生成失败，可以重新生成。")).toBeVisible();
+	await expect(page.locator("body")).not.toContainText("container");
+	await expect(page.getByRole("button", { name: "下载这一版" })).toBeEnabled();
+});
+
+test("an older run can be opened from the process log", async ({ page }) => {
+	await installReportFlow(page, "older");
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto("/");
+	await page.getByRole("button", { name: /正式报告项目/ }).click();
+	await expect(page.getByText("还不能确认这次运行已经有决策。")).toBeVisible();
+	await expect(page.getByText("这次没有候选供应商。")).toBeVisible();
+	await page.getByText("过程记录").click();
+	await page.getByRole("button", { name: /10月31日 01:00 的寻源/ }).click();
+	await expect(page.getByRole("cell", { name: "海康威视" })).toBeVisible();
+	await expect(page.getByRole("button", { name: "下载这一版" })).toBeEnabled();
+});
+
 test("live gateway rejects a project create when no access credential is configured", async ({ page }) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await page.goto("/");

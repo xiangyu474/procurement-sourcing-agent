@@ -36,6 +36,7 @@ export function CandidateTable(props: {
 				}}
 			>
 				<td data-label="供应商">
+					<span className="supplier-line">
 					<span className="supplier">{row.supplier}</span>
 					{leader && row.groupCount > 1 ? (
 						<button
@@ -49,6 +50,7 @@ export function CandidateTable(props: {
 							同型号 {row.groupCount} 条
 						</button>
 					) : null}
+					</span>
 				</td>
 				<td data-label="型号">
 					<span className="model">{row.model}</span>

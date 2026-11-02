@@ -13,7 +13,7 @@ import {
 	type UiError,
 } from "../api/adapter";
 import type { ApiClient } from "../api/client";
-import { ApiError, type CompileJob, type Project, type ProjectSummary, type Run } from "../api/types";
+import { ApiError, type CompileJob, type Project, type ProjectRunSummary, type ProjectSummary, type Run } from "../api/types";
 import { loadDraft, saveDraft } from "../storage";
 import { COMPILE_TIMEOUT_MS, POLL_INTERVAL_MS, pollUntil } from "./poll";
 import type { HistoryNote } from "./types";
@@ -39,6 +39,8 @@ export type ProjectSession = {
 	onUpload: (purpose: "REQUIREMENT" | "HISTORY", file: File) => Promise<void>;
 	onImportHistory: () => Promise<void>;
 	onStart: () => Promise<void>;
+	runHistory: ProjectRunSummary[];
+	selectRun: (runId: string) => void;
 };
 
 function readPending(projectId: string): string | null {
@@ -85,6 +87,8 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 	const [error, setError] = useState<UiError | null>(null);
 	const [compileView, setCompileView] = useState<CompileView | null>(null);
 	const [historyNote, setHistoryNote] = useState<HistoryNote | null>(null);
+	const [runHistory, setRunHistory] = useState<ProjectRunSummary[]>([]);
+	const runHistoryRef = useRef<ProjectRunSummary[]>([]);
 	const activeRef = useRef(activeProjectId);
 	const textRef = useRef(text);
 	const serverTextRef = useRef("");
@@ -165,6 +169,8 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 			setProject(null);
 			setCompileView(null);
 			setText("");
+			runHistoryRef.current = [];
+			setRunHistory([]);
 			return;
 		}
 		const signal = replaceAbort();
@@ -192,6 +198,8 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 				}
 				if (signal.aborted) return;
 				const listed = await clientRef.current.listRuns(projectId, { signal });
+				runHistoryRef.current = listed;
+				setRunHistory(listed);
 				const latest = listed[0];
 				if (!latest) return;
 				setActivity(null);
@@ -399,6 +407,19 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 				};
 				runsRef.current.adopt(placeholder);
 				noteRun(placeholder);
+				const summary: ProjectRunSummary = {
+					id: placeholder.id,
+					status: placeholder.status,
+					current_stage: placeholder.current_stage,
+					last_error: null,
+					stop_reason_code: null,
+					artifact_key_present: false,
+					created_at: placeholder.created_at,
+					updated_at: placeholder.updated_at,
+				};
+				const nextHistory = [summary, ...runHistoryRef.current.filter((item) => item.id !== summary.id)];
+				runHistoryRef.current = nextHistory;
+				setRunHistory(nextHistory);
 			} catch (caught) {
 				if (caught instanceof ApiError && (caught.code === "network" || caught.code === "timeout")) throw caught;
 				writePending(current.id, null);
@@ -418,6 +439,15 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		}
 	};
 
+	const selectRun = (runId: string) => {
+		const projectId = activeRef.current;
+		if (!projectId || runsRef.current.runRef.current?.id === runId) return;
+		const signal = replaceAbort();
+		void runsRef.current.watch(runId, signal, noteRun, runHistoryRef.current).catch((caught) => {
+			if (!isAbort(caught)) setError(messageForApiError(caught));
+		});
+	};
+
 	return {
 		projects,
 		activeProjectId,
@@ -435,5 +465,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		onUpload,
 		onImportHistory,
 		onStart,
+		runHistory,
+		selectRun,
 	};
 }

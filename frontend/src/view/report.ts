@@ -24,10 +24,36 @@ export function reportFileName(title: string, runCreatedAt: string): string {
 	return `${safe}-${month}月${day}日${hour}时${minute}分.docx`;
 }
 
+export const PRIOR_REPORT_FAILURE = "上次生成失败，可以重新生成。";
+export const REPORT_NETWORK_FAILURE = "网络中断，没有生成。";
+
+/** A short Chinese sentence from the backend. Internal logs stay off the page. */
+export function isPublicReportError(error: string | null): boolean {
+	const cleaned = error ? sanitizePublicText(error).trim() : "";
+	if (!cleaned || cleaned.length > 40) return false;
+	if (/container|proxy|exception|status\s*\d|stack|https?:|internal|error/i.test(error ?? "")) return false;
+	return /^[\u4e00-\u9fff0-9，。、；：！？\s]+$/.test(cleaned);
+}
+
 export function reportFailure(error: string | null): string {
-	const cleaned = error ? sanitizePublicText(error) : "";
-	if (!cleaned || /^[A-Za-z0-9_]+$/.test(cleaned)) return "生成失败。";
-	return `生成失败。${cleaned}`;
+	if (!isPublicReportError(error)) return "生成失败。";
+	return `生成失败。${sanitizePublicText(error ?? "").trim()}`;
+}
+
+export function decisionCoversRun(input: {
+	runUpdatedAt: string | null;
+	projectDemandRevision: number | null;
+	job: { status: string; demand_revision: number | null; updated_at: string | null } | null;
+}): { ready: boolean; reason: string } {
+	if (!input.job || input.job.status !== "COMPLETED") return { ready: false, reason: "报告还没有生成" };
+	const runEnded = input.runUpdatedAt ? Date.parse(input.runUpdatedAt) : Number.NaN;
+	const decided = input.job.updated_at ? Date.parse(input.job.updated_at) : Number.NaN;
+	const revisionMatches =
+		input.projectDemandRevision != null && input.job.demand_revision != null && input.job.demand_revision === input.projectDemandRevision;
+	if (!revisionMatches || !Number.isFinite(runEnded) || !Number.isFinite(decided) || decided <= runEnded) {
+		return { ready: false, reason: "还不能确认这次运行已经有决策。" };
+	}
+	return { ready: true, reason: "报告还没有生成" };
 }
 
 /** The download control. A long list cannot start a report. */
