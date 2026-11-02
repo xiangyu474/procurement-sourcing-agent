@@ -73,6 +73,9 @@ describe("adapter", () => {
 		expect(explainRun({ status: "PARTIAL", lastError: null, stopReason: "NO_SOURCE_BACKED_CANDIDATES", candidateCount: 0 })).not.toContain(
 			"已保留目前得到的结果",
 		);
+		expect(explainRun({ status: "PARTIAL", lastError: null, stopReason: "SOME_NEW_CODE", candidateCount: 1 })).toBe(
+			"这次寻源没有全部完成。",
+		);
 		expect(explainRun({ status: "COMPLETED", lastError: null, stopReason: null })).toBeNull();
 		const failed = explainRun({ status: "FAILED", lastError: "Supervisor used 12 tokens", stopReason: null });
 		expect(failed).toContain("寻源没有完成");
@@ -90,6 +93,7 @@ describe("adapter", () => {
 
 	it("maps unauthorized and history import failures", () => {
 		expect(messageForApiError(new ApiError(401, "unauthorized", null)).summary).toBe("访问被拒绝。");
+		expect(messageForApiError(new ApiError(401, "session_expired", null)).summary).toBe("这次访问已过期。请刷新页面后再试。");
 		const imported = messageForApiError(new ApiError(500, "history_import_failed", { detail: "Supervisor timeout token sk-abcdef" }));
 		expect(imported.summary).toBe("历史数据导入失败。");
 		expect(imported.technical).not.toMatch(/Supervisor|token|sk-abcdef/i);

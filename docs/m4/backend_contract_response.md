@@ -264,4 +264,7 @@ GET /api/projects/{project_id}/requirement-text
 | --- | --- | --- |
 | 2026-10-31 | 后端 | 首次答复：§1 接口清单以真实响应为准；§2 正式报告接口已实现；§3 为待补项与负责人；§3.7 为鉴权方案，请确认是否接受 Cloudflare Access。 |
 | 2026-11-01 | 后端 | §3.1–§3.5 已实现并部署（项目列表、项目运行列表、需求正文回读、整理/核对/决策的任务状态）。新增响应字段：`POST .../requirement-compile` 返回 `compile_id`（作业 id）与 `workflow_id`；`POST .../spec-assessments` 与 `POST .../decisions` 返回 `job_id`。§3.6（项目级修订）本轮未做，原因见该节。 |
-|  |  |  |
+| 2026-11-02 | 前端 | 生产鉴权按产品负责人改为公开演示的访客会话，不用 Cloudflare Access，也不做登录、注册或账号界面。用户打开页面即可使用。会话由 Worker 签发并校验：Cookie 为 HttpOnly、Secure、SameSite=Lax。前端不保存、不处理内部凭证，只请求同源相对路径 `/api`。请后端把会话初始化写进契约，前端不会自己发明。供讨论的一种做法：Worker 在第一次打开页面或第一次调用 API 时自动种 Cookie；或显式 `POST /api/session`，只返回 `{expires_at}`。请定过期、限流、额度用尽的错误码（例如 401 `session_expired`、429 `rate_limited`、402 或 429 `budget_exhausted`，以后端为准），前端按这些码显示真实状态，不出现登录框。项目、运行、上传和报告必须按访客会话隔离，`GET /api/projects` 只返回当前会话的项目。Origin / CSRF、会话时长、限流，以及费模型的额度，都由后端控制。本地开发仍只用 Vite 代理从环境变量注入 `DEMO_ACCESS_TOKEN`，与生产会话分开。夹具测试不是生产鉴权验收。 |
+| 2026-11-02 | 前端 | 同意采用已部署的 §3.1–§3.5 和正式报告接口，本轮 F1 已接上项目列表、运行列表、需求正文回读和整理任务状态。不一致：§1 表写 `POST .../spec-assessments` 返回 `assessment_id`、`POST .../decisions` 返回 `decision_id`，2026-11-01 回执写这两处都返回 `job_id`。当前网关代码返回的是 `job_id`。请确认以哪一个为准。 |
+| 2026-11-02 | 前端 | 实网（2026-11-01）：表头不合格的 XLSX，`history-imports` 返回 500 `history_import_failed`，应变为 4xx/422，并给人能读的说明。浏览器仍能看到 `r2_key`、`normalized_r2_key`、按次 token、`SUPERVISOR:` 阶段名，以及事件 `detail` 里的 SourcingPlan / Supervisor / M3。请 Worker 去掉，或另给可展示字段；事件请给 `display_text` 或原因码，前端不必展示原文。 |
+| 2026-11-02 | 前端 | 同意：前端不重算技术结论、价格口径或建议档位。§3.6 未实现之前，F4 用分步引导，不用三次调用包装成「已重评」。 |

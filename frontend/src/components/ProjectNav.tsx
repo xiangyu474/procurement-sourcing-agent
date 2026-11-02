@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
-import type { LocalProject } from "../storage";
+import { listStatus } from "../api/adapter";
+import type { ProjectSummary } from "../api/types";
 
 function statusText(label: string): string {
 	return label === "未完成" ? "未能完成" : label;
@@ -13,7 +14,7 @@ function statusTone(label: string): string {
 }
 
 export function ProjectNav(props: {
-	projects: LocalProject[];
+	projects: ProjectSummary[];
 	activeProjectId: string | null;
 	busy: boolean;
 	onCreate: (title: string) => Promise<boolean>;
@@ -53,15 +54,16 @@ export function ProjectNav(props: {
 			</form>
 			<div className="project-list">
 				{props.projects.map((project) => {
-					const label = statusText(project.lastStatusLabel);
-					const tone = statusTone(project.lastStatusLabel);
+					const raw = listStatus(project.latest_run?.status ?? null, null);
+					const label = statusText(raw);
+					const tone = statusTone(raw);
 					return (
 						<button
-							key={project.projectId}
+							key={project.id}
 							type="button"
-							className={project.projectId === props.activeProjectId ? "project current" : "project"}
-							aria-current={project.projectId === props.activeProjectId ? "true" : undefined}
-							onClick={() => props.onSelect(project.projectId)}
+							className={project.id === props.activeProjectId ? "project current" : "project"}
+							aria-current={project.id === props.activeProjectId ? "true" : undefined}
+							onClick={() => props.onSelect(project.id)}
 						>
 							<span className="project-name">{project.title}</span>
 							<span className={tone ? `project-status ${tone}` : "project-status"}>{label}</span>

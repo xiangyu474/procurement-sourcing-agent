@@ -1,8 +1,7 @@
 import { ApiError } from "../api/types";
 
 export const POLL_INTERVAL_MS = 3_000;
-export const COMPILE_TIMEOUT_MS = 3 * 60 * 1000;
-export const COMPILE_UNCERTAIN_AFTER_MS = 90_000;
+export const COMPILE_TIMEOUT_MS = 20 * 60 * 1000;
 
 export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 	return new Promise((resolve, reject) => {

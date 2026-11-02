@@ -8,7 +8,6 @@ import { useWorkspace } from "./workspace/useWorkspace";
 export function App() {
 	const workspace = useWorkspace();
 	const project = workspace.project;
-	const entry = project ? workspace.store.projects.find((item) => item.projectId === project.id) : undefined;
 	const run = workspace.run && workspace.run.project_id === project?.id ? workspace.run : null;
 	const runActive = Boolean(run && !isTerminalRun(run.status));
 	const collapsed = Boolean(run && isTerminalRun(run.status));
@@ -18,8 +17,8 @@ export function App() {
 		<WorkspaceShell
 			nav={
 				<ProjectNav
-					projects={workspace.store.projects}
-					activeProjectId={workspace.store.activeProjectId}
+					projects={workspace.projects}
+					activeProjectId={workspace.activeProjectId}
 					busy={workspace.busy}
 					onCreate={workspace.onCreate}
 					onOpen={workspace.onOpen}
@@ -35,11 +34,6 @@ export function App() {
 			{project ? (
 				<>
 					<h1>{project.title}</h1>
-					{entry?.unknownRun && !run ? (
-						<p className="abnormal" role="status">
-							此浏览器没有这次寻源的记录。开始寻源会再启动一次。
-						</p>
-					) : null}
 					<DemandForm
 						project={project}
 						text={workspace.text}
@@ -49,7 +43,7 @@ export function App() {
 						compileCount={workspace.compileView?.phase === "ready" ? workspace.compileView.requirementCount : null}
 						compileNotices={workspace.compileView?.phase === "ready" ? workspace.compileView.notices : []}
 						historyNote={workspace.historyNote}
-						synthetic={entry?.historySynthetic ?? null}
+						synthetic={workspace.historyNote?.synthetic ?? null}
 						startLabel={startLabel}
 						onText={workspace.onText}
 						onUpload={workspace.onUpload}

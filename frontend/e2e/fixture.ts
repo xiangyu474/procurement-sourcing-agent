@@ -21,8 +21,28 @@ export function installFixture(page: Page, mode: Mode): Promise<unknown> {
 		requirementReads: 0,
 		textRevision: 0,
 		runReads: 0,
+		compileReads: 0,
+		text: "",
+		created: false,
 		runId: "22222222-2222-4222-8222-222222222222",
 	};
+
+	const projectSummary = () => ({
+		id: state.id,
+		title: state.title,
+		history_availability: state.history,
+		demand_revision: state.demandRevision,
+		analysis_version: state.analysisVersion,
+		created_at: "2026-10-31T00:00:00.000Z",
+		latest_run: state.runReads > 0
+			? {
+					id: state.runId,
+					status: state.runReads >= 2 ? (mode === "completed" ? "COMPLETED" : mode === "failed" ? "FAILED" : "PARTIAL") : "RUNNING",
+					current_stage: state.runReads >= 2 ? (mode === "completed" ? "WEB_RESEARCH" : mode === "failed" ? "FAILED" : "PARTIAL") : "WEB_RESEARCH",
+					updated_at: "2026-10-31T00:04:00.000Z",
+				}
+			: null,
+	});
 
 	return page.route("**/api/**", async (route: Route) => {
 		const request = route.request();
@@ -35,8 +55,63 @@ export function installFixture(page: Page, mode: Mode): Promise<unknown> {
 		const fulfill = (status: number, body: unknown) =>
 			route.fulfill({ status, contentType: "application/json; charset=utf-8", body: JSON.stringify(body) });
 
+		if (request.method() === "GET" && path === "/api/projects") {
+			await fulfill(200, { projects: state.created ? [projectSummary()] : [] });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${state.id}/runs`) {
+			const terminal = mode === "completed" ? "COMPLETED" : mode === "failed" ? "FAILED" : "PARTIAL";
+			const status = state.runReads >= 2 ? terminal : state.runReads > 0 ? "RUNNING" : null;
+			await fulfill(200, {
+				runs: status
+					? [{
+							id: state.runId,
+							status,
+							current_stage: status === "RUNNING" ? "WEB_RESEARCH" : status,
+							last_error: status === "FAILED" ? "MODEL_TIMEOUT" : null,
+							stop_reason_code: status === "PARTIAL" ? "NO_SOURCE_BACKED_CANDIDATES" : status === "FAILED" ? "MODEL_TIMEOUT" : null,
+							artifact_key_present: false,
+							created_at: "2026-10-31T00:03:00.000Z",
+							updated_at: "2026-10-31T00:04:00.000Z",
+						}]
+					: [],
+			});
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${state.id}/requirement-text`) {
+			if (!state.text) {
+				await fulfill(404, { error: "not_found" });
+				return;
+			}
+			await fulfill(200, { source_id: "text-1", revision: state.textRevision, text: state.text });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${state.id}/requirement-compile/compile-1`) {
+			state.compileReads += 1;
+			if (mode === "compile-failed" && state.compileReads >= 2) {
+				await fulfill(200, {
+					compile_id: "compile-1",
+					project_id: state.id,
+					status: "FAILED",
+					analysis_version: state.analysisVersion,
+					demand_revision: state.demandRevision,
+					error: "需求整理失败。",
+				});
+				return;
+			}
+			await fulfill(200, {
+				compile_id: "compile-1",
+				project_id: state.id,
+				status: state.compileReads < 2 ? "RUNNING" : "COMPLETED",
+				analysis_version: state.analysisVersion,
+				demand_revision: state.demandRevision,
+				error: null,
+			});
+			return;
+		}
 		if (request.method() === "POST" && path === "/api/projects") {
 			const body = await json();
+			state.created = true;
 			state.title = typeof body.title === "string" && body.title.trim() ? body.title : "未命名寻源项目";
 			await fulfill(201, { project_id: state.id, source_id: null, analysis_version: 0 });
 			return;
@@ -57,6 +132,8 @@ export function installFixture(page: Page, mode: Mode): Promise<unknown> {
 			state.analysisVersion += 1;
 			state.demandRevision += 1;
 			state.textRevision += 1;
+			const posted = await json();
+			state.text = typeof posted.text === "string" ? posted.text : state.text;
 			state.sources.push({
 				id: "text-1",
 				purpose: "REQUIREMENT",

@@ -6,6 +6,10 @@ import {
 	type HistoryImport,
 	type Project,
 	type ProjectSource,
+	type CompileJob,
+	type ProjectRunSummary,
+	type ProjectSummary,
+	type RequirementText,
 	type RequirementsDocument,
 	type RequirementsResult,
 	type Run,
@@ -63,7 +67,50 @@ function asNumber(row: Record<string, unknown>, key: string): number {
 }
 
 function asOptionalString(value: unknown): string | null {
-	return typeof value === "string" ? value : null;
+	return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function asOptionalNumber(value: unknown): number | null {
+	return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function asListedRun(value: unknown): ProjectSummary["latest_run"] {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	const row = value as Record<string, unknown>;
+	if (typeof row.id !== "string") return null;
+	return {
+		id: row.id,
+		status: typeof row.status === "string" ? row.status : "",
+		current_stage: typeof row.current_stage === "string" ? row.current_stage : "",
+		updated_at: typeof row.updated_at === "string" ? row.updated_at : "",
+	};
+}
+
+function asProjectSummary(value: unknown): ProjectSummary {
+	const row = asRecord(value, "project_summary");
+	return {
+		id: asString(row, "id"),
+		title: asString(row, "title"),
+		history_availability: asString(row, "history_availability"),
+		demand_revision: asNumber(row, "demand_revision"),
+		analysis_version: asNumber(row, "analysis_version"),
+		created_at: asString(row, "created_at"),
+		latest_run: asListedRun(row.latest_run),
+	};
+}
+
+function asProjectRun(value: unknown): ProjectRunSummary {
+	const row = asRecord(value, "project_run");
+	return {
+		id: asString(row, "id"),
+		status: asString(row, "status"),
+		current_stage: asString(row, "current_stage"),
+		last_error: asOptionalString(row.last_error),
+		stop_reason_code: asOptionalString(row.stop_reason_code),
+		artifact_key_present: Boolean(row.artifact_key_present),
+		created_at: asString(row, "created_at"),
+		updated_at: asString(row, "updated_at"),
+	};
 }
 
 function asSource(value: unknown): ProjectSource {
@@ -129,6 +176,55 @@ export class ApiClient {
 		const impl = options.fetch ?? fetch;
 		this.fetchImpl = (input, init) => impl(input, init);
 		this.timeoutMs = options.timeoutMs ?? 30_000;
+	}
+
+	listProjects(call?: CallOptions): Promise<ProjectSummary[]> {
+		return this.request("/api/projects?limit=50", { call }).then((payload) => {
+			const row = asRecord(payload, "projects");
+			if (!Array.isArray(row.projects)) throw new ApiError(0, "invalid_response", { key: "projects" });
+			return row.projects.map(asProjectSummary);
+		});
+	}
+
+	listRuns(projectId: string, call?: CallOptions): Promise<ProjectRunSummary[]> {
+		return this.request(`/api/projects/${encodeURIComponent(projectId)}/runs`, { call }).then((payload) => {
+			const row = asRecord(payload, "runs");
+			if (!Array.isArray(row.runs)) throw new ApiError(0, "invalid_response", { key: "runs" });
+			return row.runs.map(asProjectRun);
+		});
+	}
+
+	getRequirementText(projectId: string, call?: CallOptions): Promise<RequirementText | null> {
+		return this.request(`/api/projects/${encodeURIComponent(projectId)}/requirement-text`, { call })
+			.then((payload) => {
+				const row = asRecord(payload, "requirement_text");
+				return {
+					source_id: asString(row, "source_id"),
+					revision: asNumber(row, "revision"),
+					text: asString(row, "text"),
+				};
+			})
+			.catch((error: unknown) => {
+				if (error instanceof ApiError && error.status === 404) return null;
+				throw error;
+			});
+	}
+
+	getCompileJob(projectId: string, compileId: string, call?: CallOptions): Promise<CompileJob> {
+		return this.request(
+			`/api/projects/${encodeURIComponent(projectId)}/requirement-compile/${encodeURIComponent(compileId)}`,
+			{ call },
+		).then((payload) => {
+			const row = asRecord(payload, "compile_job");
+			return {
+				compile_id: asString(row, "compile_id"),
+				project_id: asString(row, "project_id"),
+				status: asString(row, "status"),
+				analysis_version: asOptionalNumber(row.analysis_version),
+				demand_revision: asOptionalNumber(row.demand_revision),
+				error: asOptionalString(row.error),
+			};
+		});
 	}
 
 	createProject(title: string | undefined, call?: CallOptions): Promise<CreatedProject> {
@@ -304,6 +400,7 @@ export class ApiClient {
 				method: init.method ?? "GET",
 				body: init.json !== undefined ? JSON.stringify(init.json) : init.body,
 				headers,
+				credentials: "same-origin",
 				signal,
 			});
 			const text = await response.text();

@@ -34,11 +34,11 @@ export function useRunWatch(clientRef: MutableRefObject<ApiClient>): RunPort {
 			if (signal.aborted || generation.current !== ticket) return;
 			let reason: string | null = null;
 			let count: number | null = null;
-			if (next.status === "PARTIAL" || next.status === "FAILED") {
+			if (next.status === "PARTIAL" || next.status === "FAILED" || next.status === "COMPLETED") {
 				try {
-					const summary = await clientRef.current.getResearchSummary(runId, { signal });
-					reason = summary.stopReason;
-					count = summary.candidateCount;
+					const listed = await clientRef.current.listRuns(next.project_id, { signal });
+					reason = listed.find((item) => item.id === next.id)?.stop_reason_code ?? null;
+					if (reason === "NO_SOURCE_BACKED_CANDIDATES") count = 0;
 				} catch (caught) {
 					if (isAbort(caught) || signal.aborted || generation.current !== ticket) return;
 				}

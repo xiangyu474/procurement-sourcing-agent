@@ -25,6 +25,7 @@ describe("ApiClient", () => {
 		const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
 		expect(url).toBe("http://gateway.test/api/projects");
 		expect(init.method).toBe("POST");
+		expect(init.credentials).toBe("same-origin");
 		expect(init.headers).toEqual({ "content-type": "application/json; charset=utf-8" });
 		expect(JSON.parse(String(init.body))).toEqual({ title: "工业相机" });
 		expect(JSON.stringify(init.headers).toLowerCase()).not.toContain("authorization");

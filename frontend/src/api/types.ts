@@ -50,6 +50,49 @@ export type CompileQueued = {
 	analysis_version: number;
 };
 
+export type CompileJob = {
+	compile_id: string;
+	project_id: string;
+	status: string;
+	analysis_version: number | null;
+	demand_revision: number | null;
+	error: string | null;
+};
+
+export type ListedRun = {
+	id: string;
+	status: string;
+	current_stage: string;
+	updated_at: string;
+};
+
+export type ProjectSummary = {
+	id: string;
+	title: string;
+	history_availability: string;
+	demand_revision: number;
+	analysis_version: number;
+	created_at: string;
+	latest_run: ListedRun | null;
+};
+
+export type ProjectRunSummary = {
+	id: string;
+	status: string;
+	current_stage: string;
+	last_error: string | null;
+	stop_reason_code: string | null;
+	artifact_key_present: boolean;
+	created_at: string;
+	updated_at: string;
+};
+
+export type RequirementText = {
+	source_id: string;
+	revision: number;
+	text: string;
+};
+
 export type RequirementsDocument = {
 	analysis_version: number;
 	compilation: Record<string, unknown>;

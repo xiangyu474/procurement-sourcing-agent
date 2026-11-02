@@ -42,6 +42,9 @@ const REASONS: Record<string, string> = {
 	structured_requirement_required_for_m2: "没有整理出可以寻源的采购条目。",
 	no_recognizable_demand: "没有识别出采购需求。",
 	unauthorized: "访问被拒绝。",
+	session_expired: "这次访问已过期。请刷新页面后再试。",
+	rate_limited: "请求过于频繁，请稍后再试。",
+	budget_exhausted: "这次分析的额度已用完。",
 	demo_access_not_configured: "服务没有配置访问凭证。",
 	requirement_text_required: "请填写需求文字。",
 	requirement_text_too_large: "需求文字超过长度限制。",
@@ -108,6 +111,9 @@ export function explainRun(input: {
 	candidateCount?: number | null;
 }): string | null {
 	if (input.status !== "PARTIAL" && input.status !== "FAILED") return null;
+	if (input.stopReason && !REASONS[input.stopReason]) {
+		return input.status === "FAILED" ? "寻源没有完成。" : "这次寻源没有全部完成。";
+	}
 	const mapped =
 		(input.stopReason ? REASONS[input.stopReason] : undefined) ??
 		(input.lastError ? REASONS[input.lastError] : undefined) ??
@@ -246,8 +252,7 @@ export function formatTimestamp(value: string): string {
 	}).format(date);
 }
 
-export const COMPILE_STILL_WAITING = "仍在整理需求。服务暂时不能告知进度。";
-export const COMPILE_WAIT_TIMEOUT = "需求整理超过 3 分钟，服务还不能告知是否完成。可以稍后刷新再看。";
+export const COMPILE_WAIT_TIMEOUT = "需求整理超过 20 分钟仍未结束。可以稍后刷新再看。";
 
 export function isTerminalRun(status: string): boolean {
 	return status === "COMPLETED" || status === "PARTIAL" || status === "FAILED";

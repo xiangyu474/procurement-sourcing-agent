@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { blankProject } from "../storage";
+import type { ProjectSummary } from "../api/types";
 import { ProjectNav } from "./ProjectNav";
 
 const longName = "集团总部2026年度工业视觉与网络摄像机框架寻源（含多园区、多品牌、超长供应商名称不应撑破导航）";
@@ -8,7 +8,15 @@ const longName = "集团总部2026年度工业视觉与网络摄像机框架寻�
 describe("ProjectNav", () => {
 	it("creates a project and keeps a long name inside the navigation item", async () => {
 		const onCreate = vi.fn(async () => true);
-		const project = blankProject("p1", longName, false);
+		const project: ProjectSummary = {
+			id: "p1",
+			title: longName,
+			history_availability: "NOT_PROVIDED",
+			demand_revision: 0,
+			analysis_version: 0,
+			created_at: "2026-10-31T00:00:00.000Z",
+			latest_run: null,
+		};
 		render(
 			<ProjectNav
 				projects={[project]}
