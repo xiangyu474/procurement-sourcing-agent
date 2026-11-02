@@ -6,10 +6,22 @@ import {
 	type HistoryImport,
 	type Project,
 	type ProjectSource,
+	type CompileJob,
+	type ProjectRunSummary,
+	type ProjectSummary,
+	type Report,
+	type RequirementText,
 	type RequirementsDocument,
 	type RequirementsResult,
+	type Candidate,
+	type CandidateEvidence,
+	type EvidenceDetail,
+	type JobStatus,
 	type Run,
 	type RunEvent,
+	type SourcingDecision,
+	type SpecAssessment,
+	type SpecCheck,
 	type StartedRun,
 	type TextRevision,
 	type UploadedSource,
@@ -63,7 +75,50 @@ function asNumber(row: Record<string, unknown>, key: string): number {
 }
 
 function asOptionalString(value: unknown): string | null {
-	return typeof value === "string" ? value : null;
+	return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function asOptionalNumber(value: unknown): number | null {
+	return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function asListedRun(value: unknown): ProjectSummary["latest_run"] {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	const row = value as Record<string, unknown>;
+	if (typeof row.id !== "string") return null;
+	return {
+		id: row.id,
+		status: typeof row.status === "string" ? row.status : "",
+		current_stage: typeof row.current_stage === "string" ? row.current_stage : "",
+		updated_at: typeof row.updated_at === "string" ? row.updated_at : "",
+	};
+}
+
+function asProjectSummary(value: unknown): ProjectSummary {
+	const row = asRecord(value, "project_summary");
+	return {
+		id: asString(row, "id"),
+		title: asString(row, "title"),
+		history_availability: asString(row, "history_availability"),
+		demand_revision: asNumber(row, "demand_revision"),
+		analysis_version: asNumber(row, "analysis_version"),
+		created_at: asString(row, "created_at"),
+		latest_run: asListedRun(row.latest_run),
+	};
+}
+
+function asProjectRun(value: unknown): ProjectRunSummary {
+	const row = asRecord(value, "project_run");
+	return {
+		id: asString(row, "id"),
+		status: asString(row, "status"),
+		current_stage: asString(row, "current_stage"),
+		last_error: asOptionalString(row.last_error),
+		stop_reason_code: asOptionalString(row.stop_reason_code),
+		artifact_key_present: Boolean(row.artifact_key_present),
+		created_at: asString(row, "created_at"),
+		updated_at: asString(row, "updated_at"),
+	};
 }
 
 function asSource(value: unknown): ProjectSource {
@@ -118,6 +173,109 @@ export function readStopReason(body: unknown): string | null {
 	return readResearchSummary(body).stopReason;
 }
 
+function asStringList(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	return value.filter((item): item is string => typeof item === "string" && item.length > 0);
+}
+
+function asCandidateEvidence(value: unknown): CandidateEvidence | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	const row = value as Record<string, unknown>;
+	if (typeof row.evidence_id !== "string" || !row.evidence_id) return null;
+	return {
+		evidence_id: row.evidence_id,
+		source_url: asOptionalString(row.source_url),
+		title: asOptionalString(row.title),
+		retrieved_at: asOptionalString(row.retrieved_at),
+		excerpt: asOptionalString(row.excerpt),
+	};
+}
+
+function asCandidate(value: unknown): Candidate {
+	const row = asRecord(value, "candidate");
+	const supplier = row.supplier && typeof row.supplier === "object" ? (row.supplier as Record<string, unknown>) : {};
+	const product = row.product && typeof row.product === "object" ? (row.product as Record<string, unknown>) : null;
+	const name = asOptionalString(supplier.display_name) ?? "未注明供应商";
+	const model = product ? asOptionalString(product.model) ?? asOptionalString(product.product_name) : null;
+	const evidence = Array.isArray(row.evidence) ? row.evidence.map(asCandidateEvidence).filter((item): item is CandidateEvidence => item !== null) : [];
+	return {
+		candidate_id: asString(row, "candidate_id"),
+		requirement_id: asOptionalString(row.requirement_id),
+		stage: asString(row, "stage"),
+		last_seen_run_id: asOptionalString(row.last_seen_run_id),
+		updated_at: asOptionalString(row.updated_at),
+		supplier_name: name,
+		model,
+		evidence,
+	};
+}
+
+function asCheck(value: unknown): SpecCheck | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	const row = value as Record<string, unknown>;
+	return {
+		constraint_id: asOptionalString(row.constraint_id),
+		requirement_id: asOptionalString(row.requirement_id),
+		status: asOptionalString(row.status),
+		reason_code: asOptionalString(row.reason_code),
+		operation: asOptionalString(row.operation),
+		normalized_actual: asOptionalString(row.normalized_actual),
+		normalized_required: asOptionalString(row.normalized_required),
+		unit: asOptionalString(row.unit),
+		evidence_ids: asStringList(row.evidence_ids),
+		explanation: asOptionalString(row.explanation),
+		importance: asOptionalString(row.importance),
+	};
+}
+
+function asAssessment(value: unknown): SpecAssessment {
+	const row = asRecord(value, "assessment");
+	const body = row.assessment && typeof row.assessment === "object" ? (row.assessment as Record<string, unknown>) : {};
+	const checks = Array.isArray(body.checks) ? body.checks.map(asCheck).filter((item): item is SpecCheck => item !== null) : [];
+	return {
+		assessment_id: asString(row, "assessment_id"),
+		requirement_id: asOptionalString(row.requirement_id),
+		product_candidate_id: asOptionalString(row.product_candidate_id),
+		demand_revision: asOptionalNumber(row.demand_revision),
+		hard_spec_overall: asOptionalString(row.hard_spec_overall),
+		evidence_ids: asStringList(row.evidence_ids),
+		evaluated_at: asOptionalString(row.evaluated_at),
+		created_at: asOptionalString(row.created_at),
+		checks,
+	};
+}
+
+function asReport(value: unknown): Report {
+	const row = asRecord(value, "report");
+	return {
+		report_id: asString(row, "report_id"),
+		run_id: asOptionalString(row.run_id),
+		status: asString(row, "status"),
+		decision_version: asOptionalString(row.decision_version),
+		error: asOptionalString(row.error),
+		download_path: asOptionalString(row.download_path),
+		created_at: asOptionalString(row.created_at),
+		updated_at: asOptionalString(row.updated_at),
+	};
+}
+
+function asDecision(value: unknown): SourcingDecision {
+	const row = asRecord(value, "decision");
+	return {
+		decision_id: asString(row, "decision_id"),
+		requirement_id: asOptionalString(row.requirement_id),
+		product_candidate_id: asOptionalString(row.product_candidate_id),
+		recommendation: asOptionalString(row.recommendation),
+		technical_verdict: asOptionalString(row.technical_verdict),
+		hard_spec_overall: asOptionalString(row.hard_spec_overall),
+		accepted: row.accepted === true,
+		rationale: asOptionalString(row.rationale),
+		evidence_ids: asStringList(row.evidence_ids),
+		decided_at: asOptionalString(row.decided_at),
+		created_at: asOptionalString(row.created_at),
+	};
+}
+
 export class ApiClient {
 	private readonly baseUrl: string;
 	private readonly fetchImpl: typeof fetch;
@@ -129,6 +287,55 @@ export class ApiClient {
 		const impl = options.fetch ?? fetch;
 		this.fetchImpl = (input, init) => impl(input, init);
 		this.timeoutMs = options.timeoutMs ?? 30_000;
+	}
+
+	listProjects(call?: CallOptions): Promise<ProjectSummary[]> {
+		return this.request("/api/projects?limit=50", { call }).then((payload) => {
+			const row = asRecord(payload, "projects");
+			if (!Array.isArray(row.projects)) throw new ApiError(0, "invalid_response", { key: "projects" });
+			return row.projects.map(asProjectSummary);
+		});
+	}
+
+	listRuns(projectId: string, call?: CallOptions): Promise<ProjectRunSummary[]> {
+		return this.request(`/api/projects/${encodeURIComponent(projectId)}/runs`, { call }).then((payload) => {
+			const row = asRecord(payload, "runs");
+			if (!Array.isArray(row.runs)) throw new ApiError(0, "invalid_response", { key: "runs" });
+			return row.runs.map(asProjectRun);
+		});
+	}
+
+	getRequirementText(projectId: string, call?: CallOptions): Promise<RequirementText | null> {
+		return this.request(`/api/projects/${encodeURIComponent(projectId)}/requirement-text`, { call })
+			.then((payload) => {
+				const row = asRecord(payload, "requirement_text");
+				return {
+					source_id: asString(row, "source_id"),
+					revision: asNumber(row, "revision"),
+					text: asString(row, "text"),
+				};
+			})
+			.catch((error: unknown) => {
+				if (error instanceof ApiError && error.status === 404) return null;
+				throw error;
+			});
+	}
+
+	getCompileJob(projectId: string, compileId: string, call?: CallOptions): Promise<CompileJob> {
+		return this.request(
+			`/api/projects/${encodeURIComponent(projectId)}/requirement-compile/${encodeURIComponent(compileId)}`,
+			{ call },
+		).then((payload) => {
+			const row = asRecord(payload, "compile_job");
+			return {
+				compile_id: asString(row, "compile_id"),
+				project_id: asString(row, "project_id"),
+				status: asString(row, "status"),
+				analysis_version: asOptionalNumber(row.analysis_version),
+				demand_revision: asOptionalNumber(row.demand_revision),
+				error: asOptionalString(row.error),
+			};
+		});
 	}
 
 	createProject(title: string | undefined, call?: CallOptions): Promise<CreatedProject> {
@@ -289,6 +496,118 @@ export class ApiClient {
 		return this.request(`/api/runs/${encodeURIComponent(runId)}/research`, { call }).then(readResearchSummary);
 	}
 
+	listCandidates(projectId: string, runId: string, call?: CallOptions): Promise<Candidate[]> {
+		const query = new URLSearchParams({ run_id: runId });
+		return this.request(`/api/projects/${encodeURIComponent(projectId)}/candidates?${query}`, { call }).then((payload) => {
+			const row = asRecord(payload, "candidates");
+			if (!Array.isArray(row.candidates)) throw new ApiError(0, "invalid_response", { key: "candidates" });
+			return row.candidates.map(asCandidate);
+		});
+	}
+
+	listAssessments(projectId: string, call?: CallOptions): Promise<SpecAssessment[]> {
+		return this.request(`/api/projects/${encodeURIComponent(projectId)}/spec-assessments`, { call }).then((payload) => {
+			const row = asRecord(payload, "assessments");
+			if (!Array.isArray(row.assessments)) throw new ApiError(0, "invalid_response", { key: "assessments" });
+			return row.assessments.map(asAssessment);
+		});
+	}
+
+	listDecisions(projectId: string, call?: CallOptions): Promise<SourcingDecision[]> {
+		return this.request(`/api/projects/${encodeURIComponent(projectId)}/decisions`, { call }).then((payload) => {
+			const row = asRecord(payload, "decisions");
+			if (!Array.isArray(row.decisions)) throw new ApiError(0, "invalid_response", { key: "decisions" });
+			return row.decisions.map(asDecision);
+		});
+	}
+
+	getJobStatus(projectId: string, kind: "spec" | "decision", call?: CallOptions): Promise<JobStatus> {
+		const path = kind === "spec" ? "spec-assessments/status" : "decisions/status";
+		return this.request(`/api/projects/${encodeURIComponent(projectId)}/${path}`, { call }).then((payload) => {
+			const row = asRecord(payload, "job_status");
+			return {
+				status: asString(row, "status"),
+				job_id: asOptionalString(row.job_id),
+				demand_revision: asOptionalNumber(row.demand_revision),
+				error: asOptionalString(row.error),
+				updated_at: asOptionalString(row.updated_at),
+			};
+		});
+	}
+
+	/** Explicit guest session. The body shape is unpublished, so a 2xx is enough and nothing is stored. */
+	openSession(call?: CallOptions): Promise<void> {
+		return this.request("/api/session", { method: "POST", json: {}, call }).then(() => undefined);
+	}
+
+	readSession(call?: CallOptions): Promise<void> {
+		return this.request("/api/session", { call }).then(() => undefined);
+	}
+
+	listReports(projectId: string, call?: CallOptions): Promise<Report[]> {
+		return this.request(`/api/projects/${encodeURIComponent(projectId)}/reports`, { call }).then((payload) => {
+			const row = asRecord(payload, "reports");
+			if (!Array.isArray(row.reports)) throw new ApiError(0, "invalid_response", { key: "reports" });
+			return row.reports.map(asReport);
+		});
+	}
+
+	createReport(projectId: string, runId: string, call?: CallOptions): Promise<Report> {
+		return this.request(`/api/projects/${encodeURIComponent(projectId)}/reports`, {
+			method: "POST",
+			json: { run_id: runId },
+			call,
+		}).then((payload) => asReport(payload));
+	}
+
+	getReport(projectId: string, reportId: string, call?: CallOptions): Promise<Report> {
+		return this.request(`/api/projects/${encodeURIComponent(projectId)}/reports/${encodeURIComponent(reportId)}`, { call }).then(asReport);
+	}
+
+	downloadReport(downloadPath: string, call?: CallOptions): Promise<Blob> {
+		if (!downloadPath.startsWith("/api/projects/") || !downloadPath.endsWith("/download")) {
+			return Promise.reject(new ApiError(0, "invalid_response", { key: "download_path" }));
+		}
+		return this.fetchBlob(downloadPath, call);
+	}
+
+	getEvidence(evidenceId: string, call?: CallOptions): Promise<EvidenceDetail> {
+		return this.request(`/api/evidence/${encodeURIComponent(evidenceId)}`, { call }).then((payload) => {
+			const row = asRecord(payload, "evidence");
+			const evidence = asRecord(row.evidence, "evidence");
+			return {
+				evidence_id: asString(evidence, "evidence_id"),
+				title: asOptionalString(evidence.title),
+				source_url: asOptionalString(evidence.source_url),
+				retrieved_at: asOptionalString(evidence.retrieved_at),
+				excerpt: asOptionalString(evidence.excerpt),
+				snapshot_text: asOptionalString(evidence.snapshot_text),
+			};
+		});
+	}
+
+	private async fetchBlob(path: string, call?: CallOptions): Promise<Blob> {
+		const timeout = new AbortController();
+		const timer = setTimeout(() => timeout.abort(), call?.timeoutMs ?? this.timeoutMs);
+		const signal = call?.signal ? AbortSignal.any([call.signal, timeout.signal]) : timeout.signal;
+		try {
+			const response = await this.fetchImpl(`${this.baseUrl}${path}`, { credentials: "same-origin", signal });
+			if (!response.ok) {
+				const text = await response.text();
+				const body = text ? parseBody(text) : null;
+				throw new ApiError(response.status, errorCode(body, response.status), body);
+			}
+			return await response.blob();
+		} catch (error) {
+			if (error instanceof ApiError) throw error;
+			if (call?.signal?.aborted) throw new ApiError(0, "aborted", null);
+			if (timeout.signal.aborted) throw new ApiError(0, "timeout", null);
+			throw new ApiError(0, "network", null);
+		} finally {
+			clearTimeout(timer);
+		}
+	}
+
 	private async request(
 		path: string,
 		init: { method?: string; json?: unknown; body?: BodyInit; call?: CallOptions } = {},
@@ -304,6 +623,7 @@ export class ApiClient {
 				method: init.method ?? "GET",
 				body: init.json !== undefined ? JSON.stringify(init.json) : init.body,
 				headers,
+				credentials: "same-origin",
 				signal,
 			});
 			const text = await response.text();

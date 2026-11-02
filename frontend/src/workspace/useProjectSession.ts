@@ -1,36 +1,30 @@
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import {
-	COMPILE_STILL_WAITING,
 	COMPILE_WAIT_TIMEOUT,
+	NO_RECOGNIZABLE_DEMAND,
 	hasDemandSource,
 	interpretCompilation,
 	isAbort,
+	isTerminalRun,
 	latestSource,
-	listStatus,
 	messageForApiError,
 	validateUpload,
 	type CompileView,
 	type UiError,
 } from "../api/adapter";
 import type { ApiClient } from "../api/client";
-import { ApiError, type Project, type Run } from "../api/types";
-import {
-	blankProject,
-	loadDraft,
-	loadStore,
-	patchProject,
-	saveDraft,
-	saveStore,
-	upsertProject,
-	type LocalProject,
-	type WorkspaceStore,
-} from "../storage";
-import { COMPILE_TIMEOUT_MS, COMPILE_UNCERTAIN_AFTER_MS, POLL_INTERVAL_MS, pollUntil } from "./poll";
+import { ApiError, type CompileJob, type Project, type ProjectRunSummary, type ProjectSummary, type Run } from "../api/types";
+import { loadDraft, saveDraft } from "../storage";
+import { COMPILE_TIMEOUT_MS, POLL_INTERVAL_MS, pollUntil } from "./poll";
 import type { HistoryNote } from "./types";
 import type { RunPort } from "./useRunWatch";
 
+const ACTIVE_KEY = "psi.activeProjectId";
+const PENDING_KEY = "psi.pendingRuns.v1";
+
 export type ProjectSession = {
-	store: WorkspaceStore;
+	projects: ProjectSummary[];
+	activeProjectId: string | null;
 	project: Project | null;
 	text: string;
 	activity: string | null;
@@ -45,14 +39,47 @@ export type ProjectSession = {
 	onUpload: (purpose: "REQUIREMENT" | "HISTORY", file: File) => Promise<void>;
 	onImportHistory: () => Promise<void>;
 	onStart: () => Promise<void>;
+	runHistory: ProjectRunSummary[];
+	selectRun: (runId: string) => void;
 };
 
-function entryOf(store: WorkspaceStore, projectId: string): LocalProject | null {
-	return store.projects.find((item) => item.projectId === projectId) ?? null;
+function readPending(projectId: string): string | null {
+	try {
+		const parsed = JSON.parse(sessionStorage.getItem(PENDING_KEY) ?? "{}") as Record<string, unknown>;
+		const value = parsed[projectId];
+		return typeof value === "string" ? value : null;
+	} catch {
+		return null;
+	}
+}
+
+function writePending(projectId: string, key: string | null): void {
+	try {
+		const parsed = JSON.parse(sessionStorage.getItem(PENDING_KEY) ?? "{}") as Record<string, unknown>;
+		if (key) parsed[projectId] = key;
+		else delete parsed[projectId];
+		sessionStorage.setItem(PENDING_KEY, JSON.stringify(parsed));
+	} catch {
+		/* A lost idempotency key only risks a second run after a failed refresh. */
+	}
+}
+
+function stampKey(projectId: string): string {
+	return `psi.compileDemand.${projectId}`;
+}
+
+function readStamp(projectId: string): number | null {
+	const value = Number(sessionStorage.getItem(stampKey(projectId)));
+	return Number.isInteger(value) ? value : null;
+}
+
+function writeStamp(projectId: string, revision: number): void {
+	sessionStorage.setItem(stampKey(projectId), String(revision));
 }
 
 export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: RunPort): ProjectSession {
-	const [store, setStore] = useState<WorkspaceStore>(() => loadStore());
+	const [projects, setProjects] = useState<ProjectSummary[]>([]);
+	const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
 	const [project, setProject] = useState<Project | null>(null);
 	const [text, setText] = useState("");
 	const [activity, setActivity] = useState<string | null>(null);
@@ -60,26 +87,17 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 	const [error, setError] = useState<UiError | null>(null);
 	const [compileView, setCompileView] = useState<CompileView | null>(null);
 	const [historyNote, setHistoryNote] = useState<HistoryNote | null>(null);
-	const storeRef = useRef(store);
+	const [runHistory, setRunHistory] = useState<ProjectRunSummary[]>([]);
+	const runHistoryRef = useRef<ProjectRunSummary[]>([]);
+	const activeRef = useRef(activeProjectId);
 	const textRef = useRef(text);
+	const serverTextRef = useRef("");
+	const listAbortRef = useRef<AbortController | null>(null);
 	const abortRef = useRef<AbortController | null>(null);
 	const runsRef = useRef(runs);
-	storeRef.current = store;
+	activeRef.current = activeProjectId;
 	textRef.current = text;
 	runsRef.current = runs;
-
-	useEffect(() => {
-		saveStore(store);
-	}, [store]);
-
-	function commit(next: WorkspaceStore): void {
-		storeRef.current = next;
-		setStore(next);
-	}
-
-	function updateEntry(projectId: string, patch: Partial<LocalProject>): void {
-		commit(patchProject(storeRef.current, projectId, patch));
-	}
 
 	function replaceAbort(): AbortSignal {
 		abortRef.current?.abort();
@@ -88,23 +106,71 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		return controller.signal;
 	}
 
+	function remember(projectId: string | null): void {
+		activeRef.current = projectId;
+		setActiveProjectId(projectId);
+		if (projectId) sessionStorage.setItem(ACTIVE_KEY, projectId);
+		else sessionStorage.removeItem(ACTIVE_KEY);
+	}
+
 	function noteRun(next: Run): void {
-		updateEntry(next.project_id, { lastStatusLabel: listStatus(next.status, null), runId: next.id, unknownRun: false });
+		setProjects((current) =>
+			current.map((item) =>
+				item.id === next.project_id
+					? {
+							...item,
+							latest_run: {
+								id: next.id,
+								status: next.status,
+								current_stage: next.current_stage,
+								updated_at: next.updated_at,
+							},
+						}
+					: item,
+			),
+		);
+	}
+
+	async function refreshList(signal?: AbortSignal): Promise<ProjectSummary[]> {
+		const listed = await clientRef.current.listProjects({ signal });
+		setProjects(listed);
+		return listed;
 	}
 
 	async function refreshProject(projectId: string, signal?: AbortSignal): Promise<Project> {
 		const loaded = await clientRef.current.getProject(projectId, { signal });
 		setProject(loaded);
-		updateEntry(projectId, { title: loaded.title });
+		setProjects((current) => current.map((item) => (item.id === loaded.id ? { ...item, title: loaded.title, history_availability: loaded.history_availability, demand_revision: loaded.demand_revision, analysis_version: loaded.analysis_version } : item)));
 		return loaded;
 	}
 
 	useEffect(() => {
-		const projectId = store.activeProjectId;
+		const controller = new AbortController();
+		listAbortRef.current = controller;
+		void (async () => {
+			try {
+				const listed = await refreshList(controller.signal);
+				if (controller.signal.aborted) return;
+				const saved = sessionStorage.getItem(ACTIVE_KEY);
+				if (saved && listed.some((item) => item.id === saved)) remember(saved);
+			} catch (caught) {
+				if (!isAbort(caught)) setError(messageForApiError(caught));
+			}
+		})();
+		return () => controller.abort();
+		// The catalogue is loaded once. Selecting a project has its own effect.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, []);
+
+	useEffect(() => {
+		const projectId = activeProjectId;
 		runsRef.current.reset();
 		if (!projectId) {
 			setProject(null);
 			setCompileView(null);
+			setText("");
+			runHistoryRef.current = [];
+			setRunHistory([]);
 			return;
 		}
 		const signal = replaceAbort();
@@ -115,32 +181,36 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 				const loaded = await clientRef.current.getProject(projectId, { signal });
 				if (signal.aborted) return;
 				setProject(loaded);
-				setText(loadDraft(projectId));
-				const entry = entryOf(storeRef.current, projectId);
-				if (entry && entry.title !== loaded.title) updateEntry(projectId, { title: loaded.title });
-				if (entry && entry.compiledAnalysisVersion != null && entry.demandRevisionAtCompile === loaded.demand_revision) {
-					const requirements = await clientRef.current.getRequirements(projectId, { signal });
-					if (!signal.aborted) {
-						setCompileView(requirements.state === "ready" ? interpretCompilation(requirements.body, entry.compiledAnalysisVersion) : null);
-					}
+				const savedDraft = loadDraft(projectId);
+				const requirement = await clientRef.current.getRequirementText(projectId, { signal });
+				if (signal.aborted) return;
+				const serverText = requirement?.text ?? "";
+				serverTextRef.current = serverText;
+				setText(savedDraft || serverText);
+				const requirements = await clientRef.current.getRequirements(projectId, { signal });
+				if (!signal.aborted && requirements.state === "ready" && requirements.body.analysis_version === loaded.analysis_version) {
+					const view = interpretCompilation(requirements.body, requirements.body.analysis_version);
+					setCompileView(view);
+					if (view.phase === "ready" && view.requirementCount > 0) writeStamp(projectId, loaded.demand_revision);
+					else sessionStorage.removeItem(stampKey(projectId));
 				} else if (!signal.aborted) {
 					setCompileView(null);
 				}
 				if (signal.aborted) return;
-				const runId = entryOf(storeRef.current, projectId)?.runId;
-				if (runId) {
-					setActivity(null);
-					await runsRef.current.watch(runId, signal, noteRun);
-					return;
-				}
+				const listed = await clientRef.current.listRuns(projectId, { signal });
+				runHistoryRef.current = listed;
+				setRunHistory(listed);
+				const latest = listed[0];
+				if (!latest) return;
+				setActivity(null);
+				await runsRef.current.watch(latest.id, signal, noteRun, listed);
 			} catch (caught) {
 				if (!isAbort(caught)) setError(messageForApiError(caught));
 			}
 		})();
 		return () => abortRef.current?.abort();
-		// Reload only when the selected project changes.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [store.activeProjectId]);
+	}, [activeProjectId]);
 
 	const onCreate = async (title: string) => {
 		if (busy) return false;
@@ -148,7 +218,8 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		setError(null);
 		try {
 			const created = await clientRef.current.createProject(title);
-			commit(upsertProject(storeRef.current, blankProject(created.project_id, title.trim() || "未命名寻源项目", false)));
+			await refreshList();
+			remember(created.project_id);
 			return true;
 		} catch (caught) {
 			setError(messageForApiError(caught));
@@ -164,10 +235,24 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		setBusy(true);
 		setError(null);
 		try {
-			const loaded = await clientRef.current.getProject(id);
-			const existing = entryOf(storeRef.current, loaded.id);
-			const entry = existing ? { ...existing, title: loaded.title } : blankProject(loaded.id, loaded.title, true);
-			commit(upsertProject(storeRef.current, entry));
+			await clientRef.current.getProject(id);
+			const listed = await refreshList();
+			if (!listed.some((item) => item.id === id)) {
+				const loaded = await clientRef.current.getProject(id);
+				setProjects((current) => [
+					{
+						id: loaded.id,
+						title: loaded.title,
+						history_availability: loaded.history_availability,
+						demand_revision: loaded.demand_revision,
+						analysis_version: loaded.analysis_version,
+						created_at: loaded.created_at,
+						latest_run: null,
+					},
+					...current,
+				]);
+			}
+			remember(id);
 			return true;
 		} catch (caught) {
 			setError(messageForApiError(caught));
@@ -178,14 +263,13 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 	};
 
 	const onSelect = (projectId: string) => {
-		if (projectId === storeRef.current.activeProjectId) return;
-		commit({ ...storeRef.current, activeProjectId: projectId });
+		if (projectId === activeRef.current) return;
+		remember(projectId);
 	};
 
 	const onText = (value: string) => {
 		setText(value);
-		const projectId = storeRef.current.activeProjectId;
-		if (projectId) saveDraft(projectId, value);
+		if (activeRef.current) saveDraft(activeRef.current, value);
 	};
 
 	const onUpload = async (purpose: "REQUIREMENT" | "HISTORY", file: File) => {
@@ -200,9 +284,9 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		setActivity("正在上传");
 		try {
 			await clientRef.current.upload(project.id, purpose, file);
-			const loaded = await refreshProject(project.id);
+			await refreshProject(project.id);
 			if (purpose === "REQUIREMENT") {
-				updateEntry(loaded.id, { demandRevisionAtCompile: null, compiledAnalysisVersion: null });
+				sessionStorage.removeItem(stampKey(project.id));
 				setCompileView(null);
 			}
 		} catch (caught) {
@@ -228,7 +312,6 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		try {
 			const imported = await clientRef.current.importHistory(projectId, source.id);
 			setHistoryNote({ synthetic: imported.is_synthetic, rowCount: imported.row_count });
-			updateEntry(projectId, { historySynthetic: imported.is_synthetic });
 		} catch (caught) {
 			failed = true;
 			setHistoryNote(null);
@@ -247,7 +330,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 	const onStart = async () => {
 		if (!project || busy) return;
 		const currentRun = runsRef.current.runRef.current;
-		if (currentRun && currentRun.project_id === project.id && (currentRun.status === "QUEUED" || currentRun.status === "RUNNING")) return;
+		if (currentRun && currentRun.project_id === project.id && !isTerminalRun(currentRun.status)) return;
 		const signal = replaceAbort();
 		setBusy(true);
 		setError(null);
@@ -255,38 +338,29 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		try {
 			let current = project;
 			const draft = textRef.current.trim();
-			const entry = entryOf(storeRef.current, current.id);
-			if (draft && draft !== entry?.submittedText) {
+			if (draft && draft !== serverTextRef.current) {
 				await clientRef.current.addRequirementText(current.id, draft, { signal });
 				current = await refreshProject(current.id, signal);
-				updateEntry(current.id, {
-					submittedText: draft,
-					demandRevisionAtCompile: null,
-					compiledAnalysisVersion: null,
-				});
+				serverTextRef.current = draft;
+				sessionStorage.removeItem(stampKey(current.id));
 			}
 			if (!hasDemandSource(current.sources, "")) {
 				setError({ summary: "请填写需求或上传 PPTX。" });
 				return;
 			}
-			const stamped = entryOf(storeRef.current, current.id);
-			if (stamped?.demandRevisionAtCompile !== current.demand_revision) {
+			if (readStamp(current.id) !== current.demand_revision) {
 				setActivity("正在整理需求");
-				updateEntry(current.id, { lastStatusLabel: "整理需求" });
 				const queued = await clientRef.current.compile(current.id, { signal });
-				const compileStarted = Date.now();
-				let outcome: CompileView;
+				let job: CompileJob;
 				try {
-					outcome = await pollUntil<CompileView>({
+					job = await pollUntil<CompileJob>({
 						intervalMs: POLL_INTERVAL_MS,
 						timeoutMs: COMPILE_TIMEOUT_MS,
 						signal,
 						tick: async () => {
-							if (Date.now() - compileStarted >= COMPILE_UNCERTAIN_AFTER_MS) setActivity(COMPILE_STILL_WAITING);
-							const requirements = await clientRef.current.getRequirements(current.id, { signal });
-							if (requirements.state === "missing") return null;
-							const view = interpretCompilation(requirements.body, queued.analysis_version);
-							return view.phase === "pending" ? null : view;
+							const currentJob = await clientRef.current.getCompileJob(current.id, queued.compile_id, { signal });
+							if (currentJob.status === "QUEUED" || currentJob.status === "RUNNING") return null;
+							return currentJob;
 						},
 					});
 				} catch (caught) {
@@ -296,29 +370,31 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 					}
 					throw caught;
 				}
-				if (outcome.phase === "failed") {
-					setCompileView(outcome);
-					updateEntry(current.id, { lastStatusLabel: "未能完成" });
-					setError({
-						summary: "需求整理失败。",
-						technical: outcome.issues.join("\n") || undefined,
-					});
+				if (job.status === "FAILED") {
+					setError({ summary: job.error?.trim() || "需求整理失败。" });
 					return;
 				}
-				setCompileView(outcome);
-				updateEntry(current.id, {
-					demandRevisionAtCompile: current.demand_revision,
-					compiledAnalysisVersion: queued.analysis_version,
-					lastStatusLabel: "待寻源",
-				});
+				const requirements = await clientRef.current.getRequirements(current.id, { signal });
+				if (requirements.state !== "ready") {
+					setError({ summary: "需求整理没有读到结果。" });
+					return;
+				}
+				const view = interpretCompilation(requirements.body, requirements.body.analysis_version);
+				setCompileView(view);
+				if (view.phase !== "ready" || view.requirementCount === 0) {
+					sessionStorage.removeItem(stampKey(current.id));
+					setError({ summary: view.phase === "failed" ? "需求整理失败。" : NO_RECOGNIZABLE_DEMAND });
+					return;
+				}
+				writeStamp(current.id, current.demand_revision);
 			}
 			setActivity("正在启动寻源");
-			const pending = entryOf(storeRef.current, current.id);
-			const key = pending?.pendingRunKey || crypto.randomUUID();
-			updateEntry(current.id, { pendingRunKey: key });
+			const key = readPending(current.id) || crypto.randomUUID();
+			writePending(current.id, key);
 			try {
 				const started = await clientRef.current.startRun(current.id, key, { signal });
 				startedRunId = started.run_id;
+				writePending(current.id, null);
 				const placeholder: Run = {
 					id: started.run_id,
 					project_id: current.id,
@@ -330,17 +406,23 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 					updated_at: new Date().toISOString(),
 				};
 				runsRef.current.adopt(placeholder);
-				updateEntry(current.id, {
-					runId: started.run_id,
-					pendingRunKey: null,
-					unknownRun: false,
-					lastStatusLabel: "进行中",
-				});
+				noteRun(placeholder);
+				const summary: ProjectRunSummary = {
+					id: placeholder.id,
+					status: placeholder.status,
+					current_stage: placeholder.current_stage,
+					last_error: null,
+					stop_reason_code: null,
+					artifact_key_present: false,
+					created_at: placeholder.created_at,
+					updated_at: placeholder.updated_at,
+				};
+				const nextHistory = [summary, ...runHistoryRef.current.filter((item) => item.id !== summary.id)];
+				runHistoryRef.current = nextHistory;
+				setRunHistory(nextHistory);
 			} catch (caught) {
-				if (caught instanceof ApiError && (caught.code === "network" || caught.code === "timeout")) {
-					throw caught;
-				}
-				updateEntry(current.id, { pendingRunKey: null });
+				if (caught instanceof ApiError && (caught.code === "network" || caught.code === "timeout")) throw caught;
+				writePending(current.id, null);
 				throw caught;
 			}
 		} catch (caught) {
@@ -357,8 +439,18 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		}
 	};
 
+	const selectRun = (runId: string) => {
+		const projectId = activeRef.current;
+		if (!projectId || runsRef.current.runRef.current?.id === runId) return;
+		const signal = replaceAbort();
+		void runsRef.current.watch(runId, signal, noteRun, runHistoryRef.current).catch((caught) => {
+			if (!isAbort(caught)) setError(messageForApiError(caught));
+		});
+	};
+
 	return {
-		store,
+		projects,
+		activeProjectId,
 		project,
 		text,
 		activity,
@@ -373,5 +465,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		onUpload,
 		onImportHistory,
 		onStart,
+		runHistory,
+		selectRun,
 	};
 }

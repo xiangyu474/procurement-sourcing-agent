@@ -43,14 +43,18 @@ describe("adapter", () => {
 		).toEqual({ phase: "ready", requirementCount: 0, unstructuredCount: 1, notices: ["有 1 条需求没能整理"] });
 	});
 
-	it("notices an unconfirmed budget without dumping the raw issue", () => {
+	it("notices an unconfirmed planned budget from the issue field", () => {
 		const view = interpretCompilation(
 			{
 				analysis_version: 4,
 				compilation: {
 					requirements: [{ product_name: "摄像机" }],
 					unstructured_requirements: [{ text: "a" }, { text: "b" }, { text: "c" }],
-					issues: ["budget 200000 not confirmed", "delivery note unclear"],
+					issues: [
+						"The planned_total_budget of r1 could not be confirmed: the cited fragments do not state 200000.",
+						{ field: "planned_unit_price", detail: "could not be confirmed" },
+						"delivery note unclear",
+					],
 				},
 			},
 			4,
@@ -59,8 +63,39 @@ describe("adapter", () => {
 			phase: "ready",
 			requirementCount: 1,
 			unstructuredCount: 3,
-			notices: ["有 3 条需求没能整理", "预算未确认", "另有 1 条内容需要确认"],
+			notices: ["有 3 条需求没能整理", "计划预算未确认", "另有 2 条内容需要确认"],
 		});
+	});
+
+	it("does not treat a free-text budget sentence as the planned-budget field", () => {
+		const view = interpretCompilation(
+			{
+				analysis_version: 4,
+				compilation: {
+					requirements: [{ product_name: "摄像机" }],
+					issues: ["budget 200000 not confirmed", { code: "AMBIGUOUS", detail: "budget looks unclear" }],
+				},
+			},
+			4,
+		);
+		expect(view).toMatchObject({
+			phase: "ready",
+			notices: ["另有 2 条内容需要确认"],
+		});
+	});
+
+	it("reads a structured planned_total_budget issue", () => {
+		const view = interpretCompilation(
+			{
+				analysis_version: 5,
+				compilation: {
+					requirements: [{ product_name: "摄像机" }],
+					issues: [{ field: "planned_total_budget", code: "UNCONFIRMED", detail: "cited text does not state the amount" }],
+				},
+			},
+			5,
+		);
+		expect(view).toMatchObject({ phase: "ready", notices: ["计划预算未确认"] });
 	});
 
 	it("describes partial and failed runs without internal terms", () => {
@@ -72,6 +107,9 @@ describe("adapter", () => {
 		);
 		expect(explainRun({ status: "PARTIAL", lastError: null, stopReason: "NO_SOURCE_BACKED_CANDIDATES", candidateCount: 0 })).not.toContain(
 			"已保留目前得到的结果",
+		);
+		expect(explainRun({ status: "PARTIAL", lastError: null, stopReason: "SOME_NEW_CODE", candidateCount: 1 })).toBe(
+			"这次寻源没有全部完成。",
 		);
 		expect(explainRun({ status: "COMPLETED", lastError: null, stopReason: null })).toBeNull();
 		const failed = explainRun({ status: "FAILED", lastError: "Supervisor used 12 tokens", stopReason: null });
@@ -90,9 +128,15 @@ describe("adapter", () => {
 
 	it("maps unauthorized and history import failures", () => {
 		expect(messageForApiError(new ApiError(401, "unauthorized", null)).summary).toBe("访问被拒绝。");
+		expect(messageForApiError(new ApiError(401, "session_expired", null)).summary).toBe("这次访问已过期。请刷新页面后再试。");
 		const imported = messageForApiError(new ApiError(500, "history_import_failed", { detail: "Supervisor timeout token sk-abcdef" }));
 		expect(imported.summary).toBe("历史数据导入失败。");
-		expect(imported.technical).not.toMatch(/Supervisor|token|sk-abcdef/i);
+		expect(imported.technical).toBeUndefined();
+		const raw = messageForApiError(new ApiError(500, "http_500", { detail: "Error proxying request to container: The container is not running" }));
+		expect(raw.summary).toBe("服务暂时不可用。");
+		expect(raw.technical).toBeUndefined();
+		expect(messageForApiError(new ApiError(429, "rate_limited", null)).summary).toBe("请求过于频繁，请稍后再试。");
+		expect(messageForApiError(new ApiError(403, "forbidden", null)).summary).toBe("访问被拒绝。");
 		const parsed = messageForApiError(
 			new ApiError(500, "history_import_failed", {
 				detail: JSON.stringify({ error_type: "ValueError", detail: "ValueError: 工作表没有表头" }),

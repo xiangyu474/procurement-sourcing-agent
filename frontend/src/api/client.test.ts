@@ -25,6 +25,7 @@ describe("ApiClient", () => {
 		const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
 		expect(url).toBe("http://gateway.test/api/projects");
 		expect(init.method).toBe("POST");
+		expect(init.credentials).toBe("same-origin");
 		expect(init.headers).toEqual({ "content-type": "application/json; charset=utf-8" });
 		expect(JSON.parse(String(init.body))).toEqual({ title: "工业相机" });
 		expect(JSON.stringify(init.headers).toLowerCase()).not.toContain("authorization");
@@ -83,5 +84,81 @@ describe("ApiClient", () => {
 			}),
 		);
 		await expect(client(fetchImpl).getStopReason("run-1")).resolves.toBe("BUDGET_EXHAUSTED");
+	});
+
+	it("loads candidates for one run and drops internal evidence fields", async () => {
+		const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+			const url = String(input);
+			if (url.includes("/candidates")) {
+				return jsonResponse({
+					candidates: [{
+						candidate_id: "c1",
+						requirement_id: "r1",
+						stage: "DISCOVERED_LONG_LIST",
+						last_seen_run_id: "run-1",
+						updated_at: "2026-11-01T00:00:00.000Z",
+						supplier: { display_name: "海康威视" },
+						product: { model: "DS-1" },
+						evidence: [{ evidence_id: "ev_1", source_url: "https://example.com/a", title: "页", retrieved_at: null, excerpt: "摘录" }],
+					}],
+				});
+			}
+			return jsonResponse({
+				evidence: {
+					evidence_id: "ev_1",
+					title: "页",
+					source_url: "https://example.com/a",
+					retrieved_at: null,
+					excerpt: "摘录",
+					snapshot_text: "正文",
+					snapshot_r2_key: "workspaces/default/secret",
+					content_sha256: "abc",
+				},
+			});
+		});
+		const api = client(fetchImpl);
+		const listed = await api.listCandidates("p1", "run 1");
+		expect(String(fetchImpl.mock.calls[0][0])).toBe("http://gateway.test/api/projects/p1/candidates?run_id=run+1");
+		expect(listed[0].supplier_name).toBe("海康威视");
+		const evidence = await api.getEvidence("ev_1");
+		expect(evidence.snapshot_text).toBe("正文");
+		expect(JSON.stringify(evidence)).not.toContain("secret");
+		expect(JSON.stringify(evidence)).not.toContain("content_sha256");
+	});
+
+	it("uses the formal report routes and refuses the spike download", async () => {
+		const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = String(input);
+			expect(init?.credentials).toBe("same-origin");
+			expect(JSON.stringify(init?.headers ?? {}).toLowerCase()).not.toContain("authorization");
+			if (url.endsWith("/reports") && init?.method === "POST") {
+				expect(JSON.parse(String(init.body))).toEqual({ run_id: "run-1" });
+				return jsonResponse({ report_id: "rep-1", run_id: "run-1", status: "QUEUED", workflow_id: "cf-secret" });
+			}
+			if (url.endsWith("/download")) return new Response("PK", { status: 200 });
+			return jsonResponse({
+				reports: [{
+					report_id: "rep-1",
+					run_id: "run-1",
+					status: "COMPLETED",
+					decision_version: "abc",
+					sha256: "secret-hash",
+					error: null,
+					download_path: "/api/projects/p1/reports/rep-1/download",
+					created_at: "2026-11-02T00:00:00.000Z",
+					updated_at: "2026-11-02T00:01:00.000Z",
+				}],
+			});
+		});
+		const api = client(fetchImpl);
+		const listed = await api.listReports("p1");
+		expect(listed[0].download_path).toBe("/api/projects/p1/reports/rep-1/download");
+		expect(JSON.stringify(listed[0])).not.toContain("secret-hash");
+		const created = await api.createReport("p1", "run-1");
+		expect(created.status).toBe("QUEUED");
+		expect(JSON.stringify(created)).not.toContain("cf-secret");
+		const blob = await api.downloadReport("/api/projects/p1/reports/rep-1/download");
+		expect(blob.size).toBeGreaterThan(0);
+		await expect(api.downloadReport("/api/runs/run-1/report/download")).rejects.toMatchObject({ code: "invalid_response" });
 	});
 });

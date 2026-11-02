@@ -1,7 +1,7 @@
 import { useRef, useState, type MutableRefObject } from "react";
 import { isAbort, isTerminalRun } from "../api/adapter";
 import type { ApiClient } from "../api/client";
-import type { Run, RunEvent } from "../api/types";
+import type { ProjectRunSummary, Run, RunEvent } from "../api/types";
 import { POLL_INTERVAL_MS, sleep } from "./poll";
 
 export type RunPort = {
@@ -10,7 +10,7 @@ export type RunPort = {
 	stopReason: string | null;
 	candidateCount: number | null;
 	runRef: MutableRefObject<Run | null>;
-	watch: (runId: string, signal: AbortSignal, onRun: (run: Run) => void) => Promise<void>;
+	watch: (runId: string, signal: AbortSignal, onRun: (run: Run) => void, knownRuns?: ProjectRunSummary[]) => Promise<void>;
 	reset: () => void;
 	adopt: (run: Run) => void;
 };
@@ -24,8 +24,9 @@ export function useRunWatch(clientRef: MutableRefObject<ApiClient>): RunPort {
 	const generation = useRef(0);
 	runRef.current = run;
 
-	async function watch(runId: string, signal: AbortSignal, onRun: (run: Run) => void): Promise<void> {
+	async function watch(runId: string, signal: AbortSignal, onRun: (run: Run) => void, knownRuns?: ProjectRunSummary[]): Promise<void> {
 		const ticket = ++generation.current;
+		let primed = knownRuns;
 		while (!signal.aborted && generation.current === ticket) {
 			const [next, events] = await Promise.all([
 				clientRef.current.getRun(runId, { signal }),
@@ -34,13 +35,21 @@ export function useRunWatch(clientRef: MutableRefObject<ApiClient>): RunPort {
 			if (signal.aborted || generation.current !== ticket) return;
 			let reason: string | null = null;
 			let count: number | null = null;
-			if (next.status === "PARTIAL" || next.status === "FAILED") {
-				try {
-					const summary = await clientRef.current.getResearchSummary(runId, { signal });
-					reason = summary.stopReason;
-					count = summary.candidateCount;
-				} catch (caught) {
-					if (isAbort(caught) || signal.aborted || generation.current !== ticket) return;
+			if (next.status === "PARTIAL" || next.status === "FAILED" || next.status === "COMPLETED") {
+				const primedRow = primed?.find((item) => item.id === next.id);
+				primed = undefined;
+				const sameTerminal = Boolean(primedRow && primedRow.status === next.status && isTerminalRun(primedRow.status));
+				if (sameTerminal && primedRow) {
+					reason = primedRow.stop_reason_code;
+					if (reason === "NO_SOURCE_BACKED_CANDIDATES") count = 0;
+				} else {
+					try {
+						const listed = await clientRef.current.listRuns(next.project_id, { signal });
+						reason = listed.find((item) => item.id === next.id)?.stop_reason_code ?? null;
+						if (reason === "NO_SOURCE_BACKED_CANDIDATES") count = 0;
+					} catch (caught) {
+						if (isAbort(caught) || signal.aborted || generation.current !== ticket) return;
+					}
 				}
 			}
 			if (signal.aborted || generation.current !== ticket) return;

@@ -1,5 +1,5 @@
 import { explainRun, runStatusLabel, stageLabel } from "../api/adapter";
-import type { Run, RunEvent } from "../api/types";
+import type { ProjectRunSummary, Run, RunEvent } from "../api/types";
 
 function formatRunStamp(iso: string): string {
 	const date = new Date(iso);
@@ -21,7 +21,15 @@ function statusTone(status: string): string {
 	return "";
 }
 
-export function RunPanel(props: { run: Run | null; events: RunEvent[]; stopReason: string | null; candidateCount?: number | null }) {
+export function RunPanel(props: {
+	run: Run | null;
+	events: RunEvent[];
+	stopReason: string | null;
+	candidateCount?: number | null;
+	reportNote?: { at: string | null; decisionVersion: string | null } | null;
+	runs?: ProjectRunSummary[];
+	onSelectRun?: (runId: string) => void;
+}) {
 	const { run, events, stopReason, candidateCount = null } = props;
 	if (!run) return null;
 	const abnormal = explainRun({ status: run.status, lastError: run.last_error, stopReason, candidateCount });
@@ -56,6 +64,23 @@ export function RunPanel(props: { run: Run | null; events: RunEvent[]; stopReaso
 				<p className="run-id" data-testid="run-id">
 					编号 {run.id}
 				</p>
+				{props.reportNote?.at ? <p className="quiet">报告生成于 {formatRunStamp(props.reportNote.at)}</p> : null}
+				{props.reportNote?.decisionVersion ? <p className="quiet">决策版本 {props.reportNote.decisionVersion}</p> : null}
+				{props.runs && props.runs.length > 1 ? (
+					<div className="past-runs">
+						{props.runs.map((item) => (
+							<button
+								key={item.id}
+								type="button"
+								className="text-button"
+								aria-current={item.id === run.id ? "true" : undefined}
+								onClick={() => props.onSelectRun?.(item.id)}
+							>
+								{formatRunStamp(item.created_at)} 的寻源
+							</button>
+						))}
+					</div>
+				) : null}
 			</details>
 		</section>
 	);

@@ -329,6 +329,32 @@ GET /api/projects/{project_id}/requirement-text
 | --- | --- | --- |
 | 2026-10-31 | 后端 | 首次答复：§1 接口清单以真实响应为准；§2 正式报告接口已实现；§3 为待补项与负责人；§3.7 为鉴权方案，请确认是否接受 Cloudflare Access。 |
 | 2026-11-01 | 后端 | §3.1–§3.5 已实现并部署（项目列表、项目运行列表、需求正文回读、整理/核对/决策的任务状态）。新增响应字段：`POST .../requirement-compile` 返回 `compile_id`（作业 id）与 `workflow_id`；`POST .../spec-assessments` 与 `POST .../decisions` 返回 `job_id`。§3.6（项目级修订）本轮未做，原因见该节。 |
+| 2026-11-02 | 前端 | 生产鉴权按产品负责人改为公开演示的访客会话，不用 Cloudflare Access，也不做登录、注册或账号界面。用户打开页面即可使用。会话由 Worker 签发并校验：Cookie 为 HttpOnly、Secure、SameSite=Lax。前端不保存、不处理内部凭证，只请求同源相对路径 `/api`。请后端把会话初始化写进契约，前端不会自己发明。供讨论的一种做法：Worker 在第一次打开页面或第一次调用 API 时自动种 Cookie；或显式 `POST /api/session`，只返回 `{expires_at}`。请定过期、限流、额度用尽的错误码（例如 401 `session_expired`、429 `rate_limited`、402 或 429 `budget_exhausted`，以后端为准），前端按这些码显示真实状态，不出现登录框。项目、运行、上传和报告必须按访客会话隔离，`GET /api/projects` 只返回当前会话的项目。Origin / CSRF、会话时长、限流，以及费模型的额度，都由后端控制。本地开发仍只用 Vite 代理从环境变量注入 `DEMO_ACCESS_TOKEN`，与生产会话分开。夹具测试不是生产鉴权验收。 |
+| 2026-11-02 | 前端 | 同意采用已部署的 §3.1–§3.5 和正式报告接口，本轮 F1 已接上项目列表、运行列表、需求正文回读和整理任务状态。不一致：§1 表写 `POST .../spec-assessments` 返回 `assessment_id`、`POST .../decisions` 返回 `decision_id`，2026-11-01 回执写这两处都返回 `job_id`。当前网关代码返回的是 `job_id`。请确认以哪一个为准。 |
+| 2026-11-02 | 前端 | 实网（2026-11-01）：表头不合格的 XLSX，`history-imports` 返回 500 `history_import_failed`，应变为 4xx/422，并给人能读的说明。浏览器仍能看到 `r2_key`、`normalized_r2_key`、按次 token、`SUPERVISOR:` 阶段名，以及事件 `detail` 里的 SourcingPlan / Supervisor / M3。请 Worker 去掉，或另给可展示字段；事件请给 `display_text` 或原因码，前端不必展示原文。 |
+| 2026-11-02 | 前端 | 同意：前端不重算技术结论、价格口径或建议档位。§3.6 未实现之前，F4 用分步引导，不用三次调用包装成「已重评」。 |
+| 2026-11-02 | 前端 | 实网：没有采购内容的文字（例如「你好，今天天气不错。」）整理任务返回 COMPLETED，且 `requirements` 为 0。前端因此不启动寻源，显示「没有识别出采购需求。」，也不把这次整理记成已完成。请确认这种情况应返回 FAILED，还是在 `issues` 里带一个原因码。 |
+| 2026-11-02 | 前端 | 技术核对和决策是否会在寻源运行结束后自动开始？代码里 `POST /api/projects/{id}/runs` 只启动 `SourcingWorkflow`（研究）。`POST .../spec-assessments` 和 `POST .../decisions` 是另外的工作流，不在这次运行里。前端本轮不放触发按钮，只显示 `GET .../status` 的 IDLE / QUEUED / RUNNING / COMPLETED / FAILED。请确认应该自动做，还是留给用户分步发起。 |
+| 2026-11-02 | 前端 | 价格和历史口径：公开的候选、技术核对、决策响应里没有 `history_scope`，也没有公网参考价和正式报价。计划预算目前只读整理结果里 `planned_total_budget`（`kind` 为 `PLANNED_BUDGET`）。历史成交价仅在需求对象上若已有 `history_scope` / `history_price` 时显示；`TABLE_OVERVIEW` 不写「历史价」「节支」，也不展示那个数字。请给出这三个价格和 `history_scope` 应出现的响应和字段名。在没有字段时，对应一行写「还没有」。 |
+| 2026-11-02 | 前端 | 关联：候选用 `candidate_id` + `requirement_id`，技术核对和决策用 `product_candidate_id` + `requirement_id`。同一对有多条时，取 `demand_revision` 最大、其次时间最新的一条，不合并结论。请确认是否就按这一对关联；若同一修订有多条，以哪条为准。 |
+| 2026-11-02 | 前端 | 产品负责人已定：一次寻源是完整采购任务，后端在研究之后自动接上技术核对和决策。前端只保留「开始寻源」，不另放「开始技术核对」「开始决策」。请在运行上给出一条稳定进度，例如 `run.current_stage` 增加 `SPEC_ASSESSMENT` / `DECISION`，或把 `run_id` 连到这两个作业的 id。在这之前，前端只根据已有的 `GET .../spec-assessments/status` 和 `GET .../decisions/status` 显示一行「研究 → 核验 → 决策 → 完成」，不自己编进度。决策结果还没有时，候选一律显示为长名单，并写「还没有核验和决策，以下只是长名单。」，不出现「建议先询价」。 |
+| 2026-11-02 | 前端 | 实网 33 个项目：`history_scope`、历史成交价、公网参考价、正式报价都没有出现在任何公开响应里。计划预算 `planned_total_budget` 也都是空的，整理结果里有的是 `planned_unit_price`（例如 100 CNY 元/套）。前端在没有总预算时只读这个字段，显示为「计划单价」，不把单价乘数量。请把 `history_scope`、历史统计、公网参考价、正式报价放到需求或分析结果对象上；没有这些字段时，对应一行继续写「还没有」。 |
+| 2026-11-02 | 前端 | 约 14 个较早的项目已经有技术核对和决策记录，但两个 `/status` 都返回 `IDLE`。前端因此在 `IDLE` 时仍去读列表，有记录就显示。请补写这些项目的作业状态，让 `/status` 和列表一致。另有项目 `a54edd18` 的决策作业从 2026-11-01 17:55（阿姆斯特丹）起一直是 `QUEUED`。`updated_at` 超过 30 分钟的 `QUEUED` / `RUNNING`，前端视为停住并停止轮询，请查这条作业。 |
+| 2026-11-02 | 前端 | 浏览器仍能看到内部字段：`GET /api/evidence/{id}` 的 `snapshot_r2_key`、`locator`（如 `tavily-extract:…`）；技术核对上的 `dsl_schema_version`、带 PPTX 路径的 `source_refs`；运行列表的 `stop_reason_code` `SUPERVISOR_RESEARCHER_ERROR`。请从公开响应去掉，或改成可展示的短句。判断句请不要只给英文 `explanation`；前端现已改用结构化字段（要求、读到的值、运算符、原因码），不再展示 `explanation`。 |
+| 2026-11-02 | 前端 | `GET /api/projects?limit=50` 只有最近 50 条，更早的项目会被截掉。请加游标翻页（`cursor` / `next_cursor`）。前端不放假的「更多」。 |
+| 2026-11-02 | 前端 | 正式报告按 §2 接上：有决策之后，「下载这一版」才可点。已有 `COMPLETED` 且属于这次 `run_id` 的报告就直接下载；否则 `POST /api/projects/{id}/reports` 带 `run_id`，轮询到 `COMPLETED` 再下，失败显示返回的短句。不用 M0 的 `/api/runs/{id}/report/download`。请确认报告要不要接在自动链的决策之后（研究 → 核验 → 决策 → 报告）。前端没有自己把报告生成塞进寻源请求。 |
+| 2026-11-02 | 前端 | 决策和核对记录是项目级的，没有 `run_id`。一次新的运行如果自己还没有决策，不能靠「项目里曾经有过决策」打开发报告。请把决策、核对连到 `run_id`，或在决策作业上返回 `run_id`。在这之前，前端只在决策作业为 `COMPLETED`、`demand_revision` 与项目一致、且 `updated_at` 晚于这次运行结束时才允许生成；对不上就保持禁用，并写「还不能确认这次运行已经有决策。」。另外：`artifact_key_present` 请按正式报告填写，或不再返回；失败的报告 `download_path` 应为 null；`error` 请分成错误码和一句可展示的说明，不要把容器代理日志放进响应。 |
 | 2026-11-01 | 后端 | **答复前端来信**：① `assessment_id`/`decision_id` 是 workflow 实例 id（保留兼容，不改语义），`job_id`/`compile_id` 是作业 id；**查状态一律用状态接口**，详见 §3.5.1。② F2 需要 `history_scope`，此前没有公开接口能拿到——已新增 `GET /api/projects/{id}/price-context`（§2.3），与正式报告的价格章节同源。③ F1/F2/F3/F4 的工作拆分与后端现状一致：F1 用新接口、F2 用候选+核对+决策+价格口径、F3 接报告生成/状态/下载并显示决策版本、F4 做成分步引导。④ 生产鉴权仍待确认：推荐同源托管 + Cloudflare Access（§3.7）。 |
 | 2026-11-02 | 后端 | **价格接口已在云上验证**：验收流程现在会读 `GET /api/projects/{id}/price-context` 并把它纳入判据（最近一轮 `price_context_status=200`，`price_scopes=["NONE"]`——该验收项目未导入历史，scope 为 `NONE` ✓）。前端可直接按 §2.3 渲染：全表概览时 `overview_is_not_a_baseline=true`，界面不要出现「历史价」「节支」字样。 |
-|  |  |  |
+| 2026-11-02 | 前端 | 同意方案 A 和五步顺序：访客会话 → 一次点击的完整分析 → 按运行读取分析结果 → 决策完成后自动生成 DOCX → 公开全流程。报告生成失败不撤销决策。F4 多轮修订先不做。前端不另做一套页面。正常情况下按钮在报告完成后直接是「下载这一版」；自动生成失败或旧版本还没有报告时，仍保留现在的按需生成作为后备。 |
+| 2026-11-02 | 前端 | 契约还没发布，前端不会自己编响应形状。各批需要这些材料才能联调。A 会话：`POST /api/session`、`GET /api/session` 的真实响应样例；会话过期、限流、额度用尽、以及他人资源 404 的 HTTP 状态和公开 `code`。B 流水线：`POST /api/projects/{id}/pipeline` 与 `GET .../pipeline/{pipeline_id}` 的真实样例；状态值（可映射 `RESEARCHING` / `EVALUATING` / `DECIDING` / `REPORT_GENERATING` / `COMPLETED` / `PARTIAL` / `FAILED`）和单独的 `report_status`；与 `run_id` 的关联。C 分析：`GET /api/projects/{id}/analysis` 的真实样例，以及它如何给出这次运行的 `run_id`、`decision_version`、assessment id、`history_scope` 和报告引用。D 报告：自动生成后的状态与下载引用样例，失败时的公开错误码和短句。价格口径已有 §2.3，接入 C 时按该接口读，不在前端重算。 |
+| 2026-11-02 | 前端 | 已知缺口：当前核对仍按项目关联，不按运行。切到更早的一次运行时，可能看到后来的判定，直到 `/analysis` 按运行返回。这不是前端再猜版本能补上的。 |
+| 2026-11-02 | 前端 | 集成检查表（未验收；勾选只在真实测试之后）： |
+
+| 项 | 状态 | 负责人 | 前端对接 | 验收 |
+| --- | --- | --- | --- | --- |
+| 访客 Session 与隔离 | ☐ | 后端 | 真实 Session 联调 | A/B 访客互不可见 |
+| 一次点击 Pipeline | ☐ | 后端 | 启动及状态展示 | 一次启动自动完成 M2–M3 |
+| 统一 Analysis API | ☐ | 后端 | F2 候选与判定 | 当前运行版本关联正确 |
+| DOCX 自动生成 | ☐ | 后端 | F3 下载状态 | 当前决策版本可下载 |
+| 公开完整流程 | ☐ | 双方 | 真实浏览器测试 | 公开链接全流程通过 |

@@ -42,6 +42,9 @@ const REASONS: Record<string, string> = {
 	structured_requirement_required_for_m2: "没有整理出可以寻源的采购条目。",
 	no_recognizable_demand: "没有识别出采购需求。",
 	unauthorized: "访问被拒绝。",
+	session_expired: "这次访问已过期。请刷新页面后再试。",
+	rate_limited: "请求过于频繁，请稍后再试。",
+	budget_exhausted: "这次分析的额度已用完。",
 	demo_access_not_configured: "服务没有配置访问凭证。",
 	requirement_text_required: "请填写需求文字。",
 	requirement_text_too_large: "需求文字超过长度限制。",
@@ -108,6 +111,9 @@ export function explainRun(input: {
 	candidateCount?: number | null;
 }): string | null {
 	if (input.status !== "PARTIAL" && input.status !== "FAILED") return null;
+	if (input.stopReason && !REASONS[input.stopReason]) {
+		return input.status === "FAILED" ? "寻源没有完成。" : "这次寻源没有全部完成。";
+	}
 	const mapped =
 		(input.stopReason ? REASONS[input.stopReason] : undefined) ??
 		(input.lastError ? REASONS[input.lastError] : undefined) ??
@@ -129,11 +135,10 @@ export function interpretCompilation(body: RequirementsDocument | null, expected
 	if (expectedAnalysisVersion != null && body.analysis_version !== expectedAnalysisVersion) return { phase: "pending" };
 	const requirements = body.compilation.requirements;
 	const issuesRaw = body.compilation.issues;
-	const issues = Array.isArray(issuesRaw)
-		? issuesRaw.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-		: [];
+	const issues = Array.isArray(issuesRaw) ? issuesRaw.filter((item) => item != null && item !== "") : [];
 	if (!Array.isArray(requirements)) {
-		if (issues.length > 0) return { phase: "failed", issues };
+		const texts = issues.map(issueText).filter((item) => item.length > 0);
+		if (texts.length > 0) return { phase: "failed", issues: texts };
 		return { phase: "pending" };
 	}
 	const unstructured = body.compilation.unstructured_requirements;
@@ -146,12 +151,43 @@ export function interpretCompilation(body: RequirementsDocument | null, expected
 	};
 }
 
-export function compileNotices(issues: string[], unstructuredCount: number): string[] {
+function fieldToken(text: string): string | null {
+	const match = text.match(/\b(planned_total_budget|planned_unit_price|planned_sales_unit_price)\b/i);
+	return match ? match[1].toLowerCase() : null;
+}
+
+/** The amount field named by an issue. A code or field wins over the sentence. */
+export function issueField(issue: unknown): string | null {
+	if (typeof issue === "string") return fieldToken(issue);
+	if (!issue || typeof issue !== "object" || Array.isArray(issue)) return null;
+	const row = issue as Record<string, unknown>;
+	const named = [row.field, row.code, row.kind].filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+	if (named.length > 0) {
+		for (const value of named) {
+			if (/^planned_total_budget$/i.test(value.trim()) || /^PLANNED_BUDGET$/i.test(value.trim())) return "planned_total_budget";
+			const token = fieldToken(value);
+			if (token) return token;
+		}
+		return null;
+	}
+	const text = [row.detail, row.message, row.text].filter((item): item is string => typeof item === "string").join(" ");
+	return fieldToken(text);
+}
+
+function issueText(issue: unknown): string {
+	if (typeof issue === "string") return issue.trim();
+	if (!issue || typeof issue !== "object" || Array.isArray(issue)) return "";
+	const row = issue as Record<string, unknown>;
+	const text = [row.detail, row.message, row.text].find((item): item is string => typeof item === "string" && item.trim().length > 0);
+	return text?.trim() ?? "";
+}
+
+export function compileNotices(issues: unknown[], unstructuredCount: number): string[] {
 	const notices: string[] = [];
 	if (unstructuredCount > 0) notices.push(`有 ${unstructuredCount} 条需求没能整理`);
-	const budget = issues.some((issue) => /预算|budget|planned_(?:total_budget|unit_price)/i.test(issue) && /未确认|不确认|待确认|not confirmed|unconfirmed|unclear/i.test(issue));
-	if (budget) notices.push("预算未确认");
-	const otherIssues = issues.filter((issue) => !(/预算|budget|planned_(?:total_budget|unit_price)/i.test(issue) && /未确认|不确认|待确认|not confirmed|unconfirmed|unclear/i.test(issue)));
+	const fields = issues.map(issueField);
+	if (fields.some((field) => field === "planned_total_budget")) notices.push("计划预算未确认");
+	const otherIssues = issues.filter((_, index) => fields[index] !== "planned_total_budget");
 	if (otherIssues.length > 0) notices.push(otherIssues.length === 1 ? "另有 1 条内容需要确认" : `另有 ${otherIssues.length} 条内容需要确认`);
 	return notices;
 }
@@ -187,14 +223,21 @@ export function messageForApiError(error: unknown): UiError {
 	if (error.code === "timeout") return { summary: "请求超时。" };
 	if (error.code === "network") return { summary: "网络中断。" };
 	const known = REASONS[error.code];
-	const technical = technicalDetail(error.body);
+	const technical = publicDetail(error.body);
 	if (known) return technical ? { summary: known, technical } : { summary: known };
-	if (error.status === 401) return { summary: "访问被拒绝。" };
+	if (error.status === 401 || error.status === 403) return { summary: "访问被拒绝。" };
 	if (error.status === 404) return { summary: "没有找到对应的记录。" };
-	if (error.status >= 500) {
-		return technical ? { summary: "服务暂时不可用。", technical } : { summary: "服务暂时不可用。" };
-	}
+	if (error.status === 429) return { summary: error.code === "budget_exhausted" ? REASONS.budget_exhausted : "请求过于频繁，请稍后再试。" };
+	if (error.status >= 500) return { summary: "服务暂时不可用。" };
 	return technical ? { summary: "请求没有被接受。", technical } : { summary: "请求没有被接受。" };
+}
+
+function publicDetail(body: unknown): string | undefined {
+	const text = technicalDetail(body);
+	if (!text || text.length > 80) return undefined;
+	if (/container|proxy|exception|stack|https?:|error/i.test(text)) return undefined;
+	if (!/^[\u4e00-\u9fff0-9，。、；：！？\s]+$/.test(text)) return undefined;
+	return text;
 }
 
 function technicalDetail(body: unknown): string | undefined {
@@ -233,6 +276,20 @@ function withoutExceptionName(text: string): string {
 	return text.replace(/\b[A-Z][A-Za-z0-9_]*(?:Error|Exception)\b:?\s*/g, "").trim();
 }
 
+export function formatProjectDate(value: string): string {
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return "";
+	const now = new Date();
+	return new Intl.DateTimeFormat("zh-CN", {
+		year: date.getFullYear() === now.getFullYear() ? undefined : "numeric",
+		month: "numeric",
+		day: "numeric",
+		hour: "2-digit",
+		minute: "2-digit",
+		hourCycle: "h23",
+	}).format(date);
+}
+
 export function formatTimestamp(value: string): string {
 	const date = new Date(value);
 	if (Number.isNaN(date.getTime())) return value;
@@ -246,8 +303,8 @@ export function formatTimestamp(value: string): string {
 	}).format(date);
 }
 
-export const COMPILE_STILL_WAITING = "仍在整理需求。服务暂时不能告知进度。";
-export const COMPILE_WAIT_TIMEOUT = "需求整理超过 3 分钟，服务还不能告知是否完成。可以稍后刷新再看。";
+export const COMPILE_WAIT_TIMEOUT = "需求整理超过 20 分钟仍未结束。可以稍后刷新再看。";
+export const NO_RECOGNIZABLE_DEMAND = "没有识别出采购需求。";
 
 export function isTerminalRun(status: string): boolean {
 	return status === "COMPLETED" || status === "PARTIAL" || status === "FAILED";
