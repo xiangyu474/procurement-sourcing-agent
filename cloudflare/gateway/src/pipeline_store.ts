@@ -25,7 +25,7 @@ export type ReservationResult =
 	| { kind: "CREATED" | "REUSED"; pipeline: ReservedPipeline }
 	| { kind: "IDEMPOTENCY_CONFLICT" | "INPUT_CHANGED" };
 
-async function sha256(value: string): Promise<string> {
+export async function sha256(value: string): Promise<string> {
 	const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
 	return Array.from(digest, byte => byte.toString(16).padStart(2, "0")).join("");
 }

@@ -205,6 +205,13 @@ describe("the shape of the answers", () => {
 		assert.equal(row.status, "COMPLETED");
 	});
 
+	it("hides internal report errors and never advertises a failed download", () => {
+		const row = shapeReport({ id: "rep2", status: "FAILED", error: "private SQL and container details" }, "p1");
+		assert.equal(row.download_path, null);
+		assert.equal(row.error_code, "REPORT_GENERATION_FAILED");
+		assert.ok(!JSON.stringify(row).includes("private SQL"));
+	});
+
 	it("says that a task has not started", () => {
 		const row = shapeJobStatus(null, 3);
 

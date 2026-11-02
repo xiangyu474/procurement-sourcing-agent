@@ -108,6 +108,8 @@ class BuildReportRequest(BaseModel):
 
     project_id: str
     run_id: str | None = None
+    pipeline_id: str | None = None
+    decision_version: str | None = None
     gateway_url: str
     token: str
     runtime_config: dict[str, str] = Field(default_factory=dict)
@@ -902,8 +904,13 @@ async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = 
                 return {"status": "FAIL", "failures": [f"pipeline failed at {pipeline.get('stage')}: {pipeline.get('error')}"], "state": json.dumps(state), "done": True}
             if status not in {"COMPLETED", "PARTIAL"}:
                 return {"status": "OK", "failures": [], "state": json.dumps(state), "done": False}
+            report_status = pipeline.get("report_status")
+            if report_status == "FAILED":
+                return {"status": "FAIL", "failures": [f"report failed independently: {pipeline.get('report_error_code')}"], "state": json.dumps(state), "done": True}
+            if report_status != "COMPLETED":
+                return {"status": "OK", "failures": [], "state": json.dumps({**state, "report_status": report_status}), "done": False}
             snapshots: dict[str, Any] = {}
-            for name in ("SPEC_CONTEXT", "SPEC_RESULTS", "DECISION_CONTEXT", "DECISION_RESULTS", "PRICE_CONTEXT"):
+            for name in ("SPEC_CONTEXT", "SPEC_RESULTS", "DECISION_CONTEXT", "DECISION_RESULTS", "PRICE_CONTEXT", "FINAL_CONTEXT"):
                 item = await client.get(
                     f"/internal/pipelines/{pipeline_id}/snapshots/{name}", params={"project_id": project_id},
                     headers={"x-internal-token": payload.token},
@@ -926,7 +933,48 @@ async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = 
                     failures.append("decision points outside frozen candidates")
                 if decision.get("accepted") and decision.get("recommendation") == "SHORTLIST" and decision.get("hard_spec_overall") != "PASS":
                     failures.append("non-PASS was recommended for shortlist")
-            state.update({"candidates": len(candidates), "assessments": len(assessments), "decisions": len(decisions), "snapshot_types": sorted(snapshots)})
+            analysis_response = await client.get(f"/api/projects/{project_id}/analysis", params={"pipeline_id": pipeline_id})
+            if analysis_response.status_code != 200:
+                failures.append(f"analysis returned {analysis_response.status_code}")
+                analysis: dict[str, Any] = {}
+            else:
+                analysis = analysis_response.json()
+                if analysis.get("run_id") != pipeline.get("run_id") or analysis.get("decision_version") != pipeline.get("decision_version"):
+                    failures.append("analysis version does not match the selected pipeline")
+                if not all(item.get("assessment_id") for item in analysis.get("assessments") or []):
+                    failures.append("analysis has an assessment without a stable ID")
+            report_id = pipeline.get("report_id")
+            path = pipeline.get("download_path")
+            download = await client.get(path) if path else None
+            report_info = await client.get(f"/api/projects/{project_id}/reports/{report_id}") if report_id else None
+            report_bytes = await download.aread() if download is not None and download.status_code == 200 else b""
+            if not report_bytes.startswith(b"PK") or len(report_bytes) < 10000:
+                failures.append("report download did not return a valid-sized DOCX")
+            if report_info is None or report_info.status_code != 200:
+                failures.append("report status unavailable")
+                report_body: dict[str, Any] = {}
+            else:
+                report_body = report_info.json()
+                import hashlib
+                if hashlib.sha256(report_bytes).hexdigest() != report_body.get("sha256"):
+                    failures.append("report download hash does not match the report record")
+                if report_body.get("decision_version") != pipeline.get("decision_version"):
+                    failures.append("report belongs to a different decision version")
+            if report_bytes:
+                try:
+                    from io import BytesIO
+
+                    from docx import Document
+                    doc = Document(BytesIO(report_bytes))
+                    doc_text = "\\n".join([paragraph.text for paragraph in doc.paragraphs] + [cell.text for table in doc.tables for row in table.rows for cell in row.cells])
+                    if str(pipeline.get("decision_version")) not in doc_text or str(pipeline.get("run_id")) not in doc_text:
+                        failures.append("downloaded DOCX does not identify this decision version and run")
+                except Exception:
+                    failures.append("downloaded DOCX could not be opened")
+            retry = await client.post(f"/api/projects/{project_id}/pipeline/{pipeline_id}/report")
+            if retry.status_code != 200 or retry.json().get("report_id") != report_id:
+                failures.append("completed report was not reused")
+            state.update({"candidates": len(candidates), "assessments": len(assessments), "decisions": len(decisions), "snapshot_types": sorted(snapshots), "report_status": report_status, "report_id": report_id, "report_bytes": len(report_bytes), "report_sha256": report_body.get("sha256"), "decision_version": pipeline.get("decision_version")})
             return {"status": "FAIL" if failures else "OK", "failures": failures, "state": json.dumps(state), "done": True}
 
         if stage == "research-start":
@@ -1270,6 +1318,51 @@ async def build_report(payload: BuildReportRequest, x_internal_token: str | None
     from procurement_agent.domain.requirements import HistoricalTransaction, Requirement
     from procurement_agent.reports.procurement_report import ReportInput, build_procurement_docx
     from procurement_agent.services.product_equivalence import ProductEquivalence
+
+    if payload.pipeline_id:
+        if not payload.decision_version or not payload.run_id:
+            raise HTTPException(status_code=422, detail="pipeline report needs a frozen version and run")
+        async with httpx.AsyncClient(timeout=120) as client:
+            response = await client.get(
+                f"{payload.gateway_url.rstrip('/')}/internal/pipelines/{payload.pipeline_id}/snapshots/FINAL_CONTEXT",
+                params={"project_id": payload.project_id}, headers={"x-internal-token": payload.token},
+            )
+            response.raise_for_status()
+            digest = hashlib.sha256(response.content).hexdigest()
+            context = response.json()
+        if (digest != payload.decision_version or response.headers.get("x-snapshot-sha256") != digest
+                or context.get("project_id") != payload.project_id or context.get("pipeline_id") != payload.pipeline_id
+                or context.get("run_id") != payload.run_id):
+            raise HTTPException(status_code=409, detail="pipeline decision snapshot mismatch")
+        decisions = context.get("decisions") or []
+        if not any(item.get("accepted") is True for item in decisions):
+            raise HTTPException(status_code=409, detail="no gate-accepted decisions")
+        questions = [
+            _text_value(question)
+            for item in (context.get("requirements") or []) + (context.get("candidates") or [])
+            for question in (item.get("open_questions") or [])
+        ]
+        report_input = ReportInput(
+            project_id=payload.project_id, project_title=_text_value(context.get("project_title")),
+            run_id=payload.run_id, demand_revision=int(context.get("demand_revision") or 1),
+            decision_version=digest, requirements=context.get("requirements") or [],
+            candidates=context.get("candidates") or [], assessments=context.get("assessments") or [],
+            decisions=decisions, price_contexts=context.get("price_contexts") or [],
+            evidence=context.get("evidence") or [], open_questions=questions,
+        )
+        document = build_procurement_docx(report_input)
+        async with httpx.AsyncClient(timeout=60) as client:
+            upload = await client.post(
+                f"{payload.gateway_url.rstrip('/')}/internal/projects/{payload.project_id}/report-artifact",
+                headers={"x-internal-token": payload.token}, content=document,
+                params={"pipeline_id": payload.pipeline_id, "decision_version": digest,
+                        "sha256": hashlib.sha256(document).hexdigest()},
+            )
+            upload.raise_for_status()
+            stored = upload.json()
+        return {"status": "COMPLETED", "project_id": payload.project_id, "run_id": payload.run_id,
+                "decision_version": digest, "bytes": stored.get("bytes"), "r2_key": stored.get("key"),
+                "sha256": stored.get("sha256"), "reused": stored.get("reused", False)}
 
     async with httpx.AsyncClient(timeout=120) as client:
         context_response = await client.get(

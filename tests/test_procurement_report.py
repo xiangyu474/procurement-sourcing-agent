@@ -214,6 +214,29 @@ def all_text(document) -> str:
     return "\n".join(parts)
 
 
+def test_rejected_shortlist_is_not_shown_as_inquiry_advice() -> None:
+    data = report_input()
+    data.decisions[0]["accepted"] = False
+    data.decisions[0]["violations"] = ["HARD_FAIL"]
+    doc = document_of(data)
+    heading_index = next(i for i, p in enumerate(doc.paragraphs) if p.text == "建议询价（技术核对通过）")
+    assert doc.paragraphs[heading_index + 1].text == "（无）"
+    assert "[未采纳] CAM-A" in all_text(doc)
+
+
+def test_frozen_price_context_uses_real_dto_fields() -> None:
+    data = report_input()
+    data.price_contexts = [{
+        "requirement_id": "r1", "history_scope": "ITEM",
+        "history": {"scope_note": "confirmed", "statistics": {"count": 1, "minimum": "88", "currency": "CNY", "unit": "元/套"}},
+        "findings": [{"lowest_basis": "HISTORICAL_TRANSACTION", "lowest_value": "88", "saving": "12", "comparability": "COMPARABLE"}],
+    }]
+    text = all_text(document_of(data))
+    assert "历史成交价" in text
+    assert "88" in text
+    assert "12" in text
+
+
 def test_the_report_names_the_project_the_run_and_the_decision_version() -> None:
     document = document_of(report_input())
     text = all_text(document)

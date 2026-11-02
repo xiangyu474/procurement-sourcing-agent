@@ -109,14 +109,14 @@ export const jobStatusSql = `
 
 /** The reports of one project. */
 export const reportsListSql = `
-	SELECT id, run_id, status, decision_version, byte_size, sha256, error, created_at, updated_at
+	SELECT id, run_id, pipeline_id, status, decision_version, byte_size, sha256, error, created_at, updated_at
 	FROM project_reports
 	WHERE workspace_id = 'default' AND project_id = ?1
 	ORDER BY created_at DESC LIMIT 100`;
 
 /** One report. */
 export const reportStatusSql = `
-	SELECT id, run_id, status, decision_version, byte_size, sha256, error, created_at, updated_at
+	SELECT id, run_id, pipeline_id, status, decision_version, byte_size, sha256, error, created_at, updated_at
 	FROM project_reports
 	WHERE workspace_id = 'default' AND project_id = ?1 AND id = ?2`;
 
@@ -190,12 +190,14 @@ export function shapeReport(
 	return {
 		report_id: row.id,
 		run_id: row.run_id,
+		pipeline_id: row.pipeline_id ?? null,
 		status: row.status,
 		decision_version: row.decision_version,
 		byte_size: row.byte_size,
 		sha256: row.sha256,
-		error: row.error,
-		download_path: `/api/projects/${projectId}/reports/${String(row.id)}/download`,
+		error: row.error ? "报告生成失败，请重试。" : null,
+		error_code: row.error ? "REPORT_GENERATION_FAILED" : null,
+		download_path: row.status === "COMPLETED" ? `/api/projects/${projectId}/reports/${String(row.id)}/download` : null,
 		created_at: row.created_at,
 		updated_at: row.updated_at,
 	};

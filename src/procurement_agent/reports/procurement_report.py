@@ -114,6 +114,7 @@ class ReportInput:
             if (
                 item.get("requirement_id") == requirement_id
                 and item.get("product_candidate_id") == candidate_id
+                and item.get("accepted") is True
             ):
                 return item
         return {}
@@ -205,8 +206,10 @@ def _price_section(document: Document, data: ReportInput) -> None:
     for context in data.price_contexts:
         requirement = data.requirement(_text(context.get("requirement_id")))
         document.add_heading(f"品项：{_text(requirement.get('product_name')) or '未命名品项'}", level=2)
-        scope = _text(context.get("scope"))
-        note = _text(context.get("scope_note"))
+        scope = _text(context.get("scope") or context.get("history_scope"))
+        history = context.get("history") or {}
+        overview = context.get("history_overview") or {}
+        note = _text(context.get("scope_note") or context.get("history_scope_note") or history.get("scope_note"))
         if scope == "ITEM":
             document.add_paragraph(f"历史价格基准范围：本品项（{note}）")
         elif scope == "TABLE_OVERVIEW":
@@ -215,7 +218,13 @@ def _price_section(document: Document, data: ReportInput) -> None:
             )
             if note:
                 document.add_paragraph(note)
-        statistics = context.get("statistics") or {}
+        statistics = (
+            context.get("statistics")
+            or (history.get("statistics") if scope == "ITEM" else None)
+            or (context.get("overview_statistics") if scope == "TABLE_OVERVIEW" else None)
+            or (overview.get("statistics") if scope == "TABLE_OVERVIEW" else None)
+            or {}
+        )
         if statistics and scope == "ITEM":
             rows = [
                 ["笔数", _text(statistics.get("count"))],
@@ -242,11 +251,11 @@ def _price_section(document: Document, data: ReportInput) -> None:
         if findings:
             rows = []
             for finding in findings:
-                basis = _text(finding.get("basis"))
+                basis = _text(finding.get("basis") or finding.get("lowest_basis"))
                 rows.append(
                     [
                         PRICE_BASIS_LABELS.get(basis, basis),
-                        _money(finding.get("lowest"), finding.get("currency"), finding.get("unit")),
+                        _money(finding.get("lowest") or finding.get("lowest_value"), finding.get("currency"), finding.get("unit")),
                         _money(finding.get("saving"), finding.get("currency"), finding.get("unit")),
                         _text(finding.get("comparability")),
                         _text(finding.get("explanation")),
@@ -271,6 +280,8 @@ def _decision_section(document: Document, data: ReportInput) -> None:
         "EXCLUDE": [],
     }
     for decision in data.decisions:
+        if decision.get("accepted") is not True:
+            continue
         recommendation = _text(decision.get("recommendation")) or "INVESTIGATE"
         groups.setdefault(recommendation, []).append(decision)
 
@@ -455,6 +466,11 @@ def build_procurement_docx(data: ReportInput) -> bytes:
     document.add_heading("六、未解决问题与下一步", level=1)
     open_questions = list(data.open_questions)
     for decision in data.decisions:
+        if decision.get("accepted") is not True:
+            open_questions.append(
+                f"[未采纳] {_text(decision.get('product_model_ref')) or '候选'}："
+                + "；".join(_text(item) for item in (decision.get("violations") or []))
+            )
         for gap in decision.get("gaps") or []:
             open_questions.append(f"[{_text(decision.get('product_model_ref')) or '候选'}] {_text(gap)}")
         for action in decision.get("next_actions") or []:

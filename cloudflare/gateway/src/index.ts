@@ -4,6 +4,8 @@ import { authorizeGuest } from "./guest_session";
 import { retryContainerNotRunning } from "./container_startup";
 import { readPipelineDemand, reservePipeline, storePipelineSnapshot } from "./pipeline_store";
 import { ProcurementPipelineWorkflow, type PipelineRequest } from "./pipeline_workflow";
+import { startPipelineReport } from "./pipeline_report";
+import { shapePipelineAnalysis } from "./pipeline_analysis";
 export { ProcurementPipelineWorkflow };
 import {
 	checkInternalAuth,
@@ -803,10 +805,13 @@ interface SpecRequest {
 	jobId: string;
 }
 
-interface ReportRequest {
+export interface ReportRequest {
 	projectId: string;
 	runId: string | null;
 	reportId: string;
+	pipelineId?: string;
+	decisionVersion?: string;
+	workflowId?: string;
 }
 
 interface DecisionRequest {
@@ -1254,8 +1259,23 @@ export class SourcingSpecWorkflow extends WorkflowEntrypoint<Env, SpecRequest> {
 
 export class SourcingReportWorkflow extends WorkflowEntrypoint<Env, ReportRequest> {
 	async run(event: WorkflowEvent<ReportRequest>, step: WorkflowStep) {
-		const { projectId, runId, reportId } = event.payload;
+		const { projectId, runId, reportId, pipelineId, decisionVersion, workflowId } = event.payload;
 		try {
+			if (pipelineId) {
+				const current = await step.do("mark-report-running", async () => {
+					const row = await this.env.DB.prepare("SELECT status, workflow_id FROM project_reports WHERE id = ?1 AND pipeline_id = ?2 AND project_id = ?3")
+						.bind(reportId, pipelineId, projectId).first<{ status: string; workflow_id: string }>();
+					if (!row || row.workflow_id !== workflowId) return "STALE";
+					if (row.status === "COMPLETED") return "COMPLETED";
+					if (!["QUEUED", "RUNNING"].includes(row.status)) return "STALE";
+					await this.env.DB.batch([
+						this.env.DB.prepare("UPDATE project_reports SET status = 'RUNNING', updated_at = ?3 WHERE id = ?1 AND workflow_id = ?2").bind(reportId, workflowId, new Date().toISOString()),
+						this.env.DB.prepare("UPDATE project_pipelines SET report_status = 'RUNNING', updated_at = ?2 WHERE id = ?1 AND report_id = ?3 AND EXISTS (SELECT 1 FROM project_reports WHERE id = ?3 AND workflow_id = ?4 AND status = 'RUNNING')").bind(pipelineId, new Date().toISOString(), reportId, workflowId),
+					]);
+					return "RUNNING";
+				});
+				if (current !== "RUNNING") return { status: current, report_id: reportId };
+			}
 			const result = await step.do(
 				"build-report",
 				{ retries: { limit: 1, delay: "10 seconds", backoff: "exponential" }, timeout: "15 minutes" },
@@ -1267,6 +1287,8 @@ export class SourcingReportWorkflow extends WorkflowEntrypoint<Env, ReportReques
 						{
 							project_id: projectId,
 							run_id: runId,
+							pipeline_id: pipelineId ?? null,
+							decision_version: decisionVersion ?? null,
 							gateway_url: this.env.CONTAINER_GATEWAY_URL,
 							token: this.env.INTERNAL_GATEWAY_TOKEN,
 							runtime_config: {
@@ -1296,10 +1318,11 @@ export class SourcingReportWorkflow extends WorkflowEntrypoint<Env, ReportReques
 				r2_key?: string;
 				decision_version?: string;
 			};
+			if (pipelineId && (!outcome.r2_key || !outcome.sha256 || outcome.decision_version !== decisionVersion)) throw new Error("REPORT_VERSION_MISMATCH");
 			await this.env.DB.prepare(
 				`UPDATE project_reports SET status = 'COMPLETED', r2_key = ?2, sha256 = ?3, byte_size = ?4,
 				 decision_version = COALESCE(?5, decision_version), updated_at = ?6
-				 WHERE workspace_id = 'default' AND id = ?1`,
+				 WHERE workspace_id = 'default' AND id = ?1 AND (?7 IS NULL OR workflow_id = ?7)`,
 			)
 				.bind(
 					reportId,
@@ -1308,18 +1331,26 @@ export class SourcingReportWorkflow extends WorkflowEntrypoint<Env, ReportReques
 					Number(outcome.bytes ?? 0),
 					outcome.decision_version ?? null,
 					new Date().toISOString(),
+					workflowId ?? null,
 				)
 				.run();
+			if (pipelineId) await this.env.DB.prepare(`UPDATE project_pipelines SET report_status = 'COMPLETED', report_error_code = NULL, updated_at = ?2
+				WHERE id = ?1 AND report_id = ?3 AND EXISTS (SELECT 1 FROM project_reports WHERE id = ?3 AND workflow_id = ?4 AND status = 'COMPLETED')`)
+				.bind(pipelineId, new Date().toISOString(), reportId, workflowId).run();
 			return { status: "COMPLETED", report_id: reportId };
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
+			console.error("report generation failed", reportId, message);
 			await this.env.DB.prepare(
 				`UPDATE project_reports SET status = 'FAILED', error = ?2, updated_at = ?3
-				 WHERE workspace_id = 'default' AND id = ?1`,
+				 WHERE workspace_id = 'default' AND id = ?1 AND (?4 IS NULL OR workflow_id = ?4)`,
 			)
-				.bind(reportId, message.slice(0, 500), new Date().toISOString())
+				.bind(reportId, pipelineId ? "REPORT_GENERATION_FAILED" : message.slice(0, 500), new Date().toISOString(), workflowId ?? null)
 				.run();
-			return { status: "FAILED", error: message.slice(0, 400) };
+			if (pipelineId) await this.env.DB.prepare(`UPDATE project_pipelines SET report_status = 'FAILED', report_error_code = 'REPORT_GENERATION_FAILED', updated_at = ?2
+				WHERE id = ?1 AND report_id = ?3 AND EXISTS (SELECT 1 FROM project_reports WHERE id = ?3 AND workflow_id = ?4 AND status = 'FAILED')`)
+				.bind(pipelineId, new Date().toISOString(), reportId, workflowId).run();
+			return { status: "FAILED", error: pipelineId ? "REPORT_GENERATION_FAILED" : message.slice(0, 400) };
 		}
 	}
 }
@@ -1560,7 +1591,7 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 				});
 			}
 
-			const pipelineSnapshotMatch = url.pathname.match(/^\/internal\/pipelines\/([^/]+)\/snapshots\/(SPEC_CONTEXT|SPEC_RESULTS|DECISION_CONTEXT|DECISION_RESULTS|PRICE_CONTEXT)$/);
+			const pipelineSnapshotMatch = url.pathname.match(/^\/internal\/pipelines\/([^/]+)\/snapshots\/(SPEC_CONTEXT|SPEC_RESULTS|DECISION_CONTEXT|DECISION_RESULTS|PRICE_CONTEXT|FINAL_CONTEXT)$/);
 			if (pipelineSnapshotMatch && (request.method === "GET" || request.method === "POST")) {
 				const pipelineId = decodeURIComponent(pipelineSnapshotMatch[1]);
 				const snapshotType = pipelineSnapshotMatch[2];
@@ -1573,10 +1604,11 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 					const outcome = await storePipelineSnapshot(env.DB, pipelineId, snapshotType, body);
 					return outcome === "CONFLICT" ? json({ error: "snapshot_conflict" }, 409) : json({ status: outcome }, outcome === "CREATED" ? 201 : 200);
 				}
-				const snapshot = await env.DB.prepare("SELECT payload_json FROM pipeline_snapshots WHERE pipeline_id = ?1 AND snapshot_type = ?2")
-					.bind(pipelineId, snapshotType).first<{ payload_json: string }>();
+				const snapshot = await env.DB.prepare("SELECT payload_json, sha256 FROM pipeline_snapshots WHERE pipeline_id = ?1 AND snapshot_type = ?2")
+					.bind(pipelineId, snapshotType).first<{ payload_json: string; sha256: string }>();
 				if (!snapshot) return json({ error: "snapshot_not_found" }, 404);
-				return new Response(snapshot.payload_json, { headers: JSON_HEADERS });
+				if (await sha256Hex(new TextEncoder().encode(snapshot.payload_json)) !== snapshot.sha256) return json({ error: "snapshot_integrity_error" }, 500);
+				return new Response(snapshot.payload_json, { headers: { ...JSON_HEADERS, "x-snapshot-sha256": snapshot.sha256, "cache-control": "no-store" } });
 			}
 
 			const cacheLookupMatch = url.pathname.match(/^\/internal\/judgment-cache\/lookup$/);
@@ -1722,16 +1754,18 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 				const { results: candidateRows } = await env.DB.prepare(
 					`SELECT c.id AS candidate_id, c.requirement_id, c.supplier_id, c.product_id, c.stage, c.rationale,
 					        c.last_seen_run_id, c.open_questions_json, p.model AS product_model,
+					        p.product_name, s.display_name AS supplier_name,
 					        (SELECT group_concat(e.evidence_id) FROM project_candidate_evidence e
 					          WHERE e.workspace_id = c.workspace_id AND e.candidate_id = c.id) AS evidence_ids
 					 FROM project_candidates c
 					 LEFT JOIN intelligence_products p ON p.workspace_id = c.workspace_id AND p.id = c.product_id
+					 LEFT JOIN intelligence_suppliers s ON s.workspace_id = c.workspace_id AND s.id = c.supplier_id
 					 WHERE c.workspace_id = 'default' AND c.project_id = ?1
 					 ORDER BY c.updated_at DESC LIMIT 600`,
 				).bind(projectId).all<{
 					candidate_id: string; requirement_id: string; supplier_id: string; product_id: string | null;
 					stage: string; rationale: string; last_seen_run_id: string; open_questions_json: string; product_model: string | null;
-					evidence_ids: string | null;
+					product_name: string | null; supplier_name: string | null; evidence_ids: string | null;
 				}>();
 				const selectedRows = candidateRows.filter((row) =>
 					(wantedCandidates.length === 0 || wantedCandidates.includes(row.candidate_id)) &&
@@ -1795,14 +1829,19 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 
 				// The hash of the snapshot a claim rests on belongs in the
 				// cache key, so a claim whose evidence changed is judged again.
-				const evidenceIds = [...new Set(claims.map((claim) => claim.evidence_id))].filter(Boolean);
+				const evidenceIds = [...new Set([
+					...claims.map((claim) => claim.evidence_id),
+					...(pipelineId ? candidates.flatMap(candidate => candidate.evidence_ids) : []),
+				])].filter(Boolean);
 				const evidenceHashes: Record<string, string> = {};
+				let frozenEvidence: { evidence_id: string; title: string; url: string; quote: string; content_sha256: string }[] = [];
 				if (evidenceIds.length > 0) {
 					const { results: evidenceRows } = await env.DB.prepare(
-						`SELECT id, content_sha256 FROM research_evidence WHERE workspace_id = 'default' AND id IN (SELECT value FROM json_each(?1))`,
-					).bind(JSON.stringify(evidenceIds)).all<{ id: string; content_sha256: string }>();
+						`SELECT id, content_sha256, title, source_url, excerpt FROM research_evidence WHERE workspace_id = 'default' AND id IN (SELECT value FROM json_each(?1))`,
+					).bind(JSON.stringify(evidenceIds)).all<{ id: string; content_sha256: string; title: string; source_url: string; excerpt: string }>();
 					for (const row of evidenceRows) evidenceHashes[row.id] = row.content_sha256;
 					if (pipelineId && evidenceIds.some(id => !evidenceHashes[id])) return json({ error: "pipeline_evidence_missing" }, 409);
+					frozenEvidence = evidenceRows.map(row => ({ evidence_id: row.id, title: row.title, url: row.source_url, quote: row.excerpt, content_sha256: row.content_sha256 }));
 				}
 				return json({
 					project_id: projectId,
@@ -1814,6 +1853,16 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 					claims,
 					model_by_product: modelByProduct,
 					evidence_hashes: evidenceHashes,
+					...(pipelineId ? {
+						report_candidates: selectedRows.map(row => ({
+							candidate_id: row.candidate_id, requirement_id: row.requirement_id, supplier_id: row.supplier_id,
+							product_id: row.product_id, supplier_name: row.supplier_name, product_model: row.product_model,
+							product_name: row.product_name, stage: row.stage, rationale: row.rationale,
+							evidence_ids: (row.evidence_ids ?? "").split(",").filter(Boolean),
+							open_questions: JSON.parse(row.open_questions_json ?? "[]") as string[],
+						})),
+						report_evidence: frozenEvidence,
+					} : {}),
 				});
 			}
 
@@ -2027,14 +2076,31 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 			if (reportArtifactMatch && request.method === "POST") {
 				const projectId = decodeURIComponent(reportArtifactMatch[1]);
 				const body = await request.arrayBuffer();
-				const sha256 = url.searchParams.get("sha256") ?? "";
+				const suppliedSha = url.searchParams.get("sha256") ?? "";
+				const pipelineId = url.searchParams.get("pipeline_id");
+				if (pipelineId) {
+					const version = url.searchParams.get("decision_version") ?? "";
+					if (!/^[a-f0-9]{64}$/.test(version) || body.byteLength > 20 * 1024 * 1024 || await sha256Hex(body) !== suppliedSha) return json({ error: "invalid_report_artifact" }, 422);
+					const pipeline = await env.DB.prepare("SELECT id FROM project_pipelines WHERE id = ?1 AND project_id = ?2 AND decision_version = ?3")
+						.bind(pipelineId, projectId, version).first<{ id: string }>();
+					if (!pipeline) return json({ error: "not_found" }, 404);
+					const key = `workspaces/default/projects/${projectId}/pipeline-reports/${pipelineId}/${version}.docx`;
+					const created = await env.BUCKET.put(key, body, {
+						onlyIf: new Headers({ "if-none-match": "*" }),
+						customMetadata: { sha256: suppliedSha, decision_version: version },
+						httpMetadata: { contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
+					});
+					const object = created ?? await env.BUCKET.head(key);
+					if (!object || object.customMetadata?.decision_version !== version || !object.customMetadata?.sha256) return json({ error: "report_artifact_unavailable" }, 500);
+					return json({ ok: true, key, sha256: object.customMetadata.sha256, bytes: object.size, reused: !created });
+				}
 				const key = `workspaces/default/projects/${projectId}/reports/report-${Date.now()}.docx`;
 				await env.BUCKET.put(key, body, {
 					httpMetadata: {
 						contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 					},
 				});
-				return json({ ok: true, key, sha256, bytes: body.byteLength });
+				return json({ ok: true, key, sha256: suppliedSha, bytes: body.byteLength });
 			}
 
 			const decisionContextMatch = url.pathname.match(/^\/internal\/projects\/([^/]+)\/decision-context$/);
@@ -2466,6 +2532,37 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 			return json({ project_id: projectId, source_id: sourceId, analysis_version: analysisVersion }, 201);
 		}
 
+		const analysisMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/analysis$/);
+		if (analysisMatch && request.method === "GET") {
+			if (env.PIPELINE_ENABLED !== "true") return json({ error: "operation_unavailable" }, 503);
+			const projectId = decodeURIComponent(analysisMatch[1]);
+			const pipelineId = url.searchParams.get("pipeline_id");
+			const runId = url.searchParams.get("run_id");
+			if (Boolean(pipelineId) === Boolean(runId)) return json({ error: "one_version_selector_required" }, 400);
+			const pipeline = await env.DB.prepare(`SELECT id, project_id, run_id, decision_version, report_id, report_status, report_error_code
+				FROM project_pipelines WHERE project_id = ?1 AND ${pipelineId ? "id" : "run_id"} = ?2`)
+				.bind(projectId, pipelineId ?? runId).first<Record<string, unknown>>();
+			if (!pipeline) return json({ error: "not_found" }, 404);
+			const saved = await env.DB.prepare("SELECT payload_json, sha256 FROM pipeline_snapshots WHERE pipeline_id = ?1 AND snapshot_type = 'FINAL_CONTEXT'")
+				.bind(pipeline.id).first<{ payload_json: string; sha256: string }>();
+			if (!saved || !pipeline.decision_version) return json({ error: "analysis_version_unavailable" }, 409);
+			if (saved.sha256 !== pipeline.decision_version || await sha256Hex(new TextEncoder().encode(saved.payload_json)) !== saved.sha256) return json({ error: "analysis_snapshot_integrity_error" }, 500);
+			const final = JSON.parse(saved.payload_json) as Record<string, unknown>;
+			if (final.project_id !== projectId || final.pipeline_id !== pipeline.id || final.run_id !== pipeline.run_id) return json({ error: "analysis_snapshot_integrity_error" }, 500);
+			const report = { report_id: pipeline.report_id, status: pipeline.report_status, error_code: pipeline.report_error_code,
+				decision_version: saved.sha256, download_path: pipeline.report_status === "COMPLETED" && pipeline.report_id
+					? `/api/projects/${encodeURIComponent(projectId)}/reports/${encodeURIComponent(String(pipeline.report_id))}/download` : null };
+			return json({ ...shapePipelineAnalysis(final, report), decision_version: saved.sha256 });
+		}
+
+		const pipelineReportMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/pipeline\/([^/]+)\/report$/);
+		if (pipelineReportMatch && request.method === "POST") {
+			if (env.PIPELINE_ENABLED !== "true" || guestSessionId) return json({ error: "operation_unavailable" }, 503);
+			const result = await startPipelineReport(env, decodeURIComponent(pipelineReportMatch[1]), decodeURIComponent(pipelineReportMatch[2]));
+			if (result.kind !== "OK") return json({ error: result.kind.toLowerCase() }, result.kind === "NOT_FOUND" ? 404 : result.kind === "DECISION_UNAVAILABLE" ? 409 : 503);
+			return json({ report_id: result.reportId, status: result.status, decision_version: result.decisionVersion }, result.status === "COMPLETED" ? 200 : 202);
+		}
+
 		const pipelineMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/pipeline(?:\/([^/]+))?$/);
 		if (pipelineMatch) {
 			// B1 is restricted to the explicitly enabled server-side bearer path.
@@ -2474,13 +2571,17 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 			const projectId = decodeURIComponent(pipelineMatch[1]);
 			if (request.method === "GET" && pipelineMatch[2]) {
 				const id = decodeURIComponent(pipelineMatch[2]);
-				const row = await env.DB.prepare(`SELECT id, project_id, run_id, demand_revision, status, stage, error, created_at, updated_at
+				const row = await env.DB.prepare(`SELECT id, project_id, run_id, demand_revision, status, stage, error, created_at, updated_at,
+					decision_version, report_id, report_status, report_error_code
 					FROM project_pipelines WHERE id = ?1 AND project_id = ?2`).bind(id, projectId).first<Record<string, unknown>>();
 				if (!row) return json({ error: "not_found" }, 404);
 				const stages = await env.DB.prepare("SELECT stage, status, started_at, finished_at, error_code FROM pipeline_stages WHERE pipeline_id = ?1 ORDER BY started_at, stage")
 					.bind(id).all<Record<string, unknown>>();
 				return json({ pipeline_id: row.id, project_id: row.project_id, run_id: row.run_id,
 					demand_revision: row.demand_revision, status: row.status, stage: row.stage, error: row.error,
+					decision_version: row.decision_version, report_id: row.report_id, report_status: row.report_status,
+					report_error_code: row.report_error_code,
+					download_path: row.report_status === "COMPLETED" && row.report_id ? `/api/projects/${encodeURIComponent(projectId)}/reports/${encodeURIComponent(String(row.report_id))}/download` : null,
 					stages: stages.results, created_at: row.created_at, updated_at: row.updated_at });
 			}
 			if (request.method === "POST" && !pipelineMatch[2]) {
@@ -2913,37 +3014,15 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 		if (reportsMatch) {
 			const projectId = decodeURIComponent(reportsMatch[1]);
 			if (request.method === "POST") {
-				const project = await env.DB.prepare(`SELECT id FROM projects WHERE id = ?1`)
-					.bind(projectId)
-					.first<{ id: string }>();
-				if (!project) return json({ error: "not_found" }, 404);
-				const body = (await request.json().catch(() => ({}))) as { run_id?: string };
-				const now = new Date().toISOString();
-				const reportId = crypto.randomUUID();
-				// The report names the run and the decision version it was
-				// written from, so that it stays the report of that run even
-				// when the project is analysed again later.
-				const runId = body.run_id ?? null;
-				await env.DB.prepare(
-					`INSERT INTO project_reports (id, workspace_id, project_id, run_id, status, created_at, updated_at)
-					 VALUES (?1, 'default', ?2, ?3, 'QUEUED', ?4, ?4)`,
-				)
-					.bind(reportId, projectId, runId, now)
-					.run();
-				// The document is written by the container, which holds the
-				// report builder, so the work runs as a workflow.
-				const instance = await env.REPORT_WORKFLOW.create({
-					params: { projectId, runId, reportId },
-				});
-				return json(
-					{
-						report_id: reportId,
-						run_id: runId,
-						status: "QUEUED",
-						workflow_id: instance.id,
-					},
-					202,
-				);
+				const body = (await request.json().catch(() => ({}))) as { run_id?: string; pipeline_id?: string };
+				if (Boolean(body.run_id) === Boolean(body.pipeline_id)) return json({ error: "one_version_selector_required" }, 400);
+				const pipeline = await env.DB.prepare(`SELECT id, run_id FROM project_pipelines WHERE project_id = ?1 AND ${body.pipeline_id ? "id" : "run_id"} = ?2`)
+					.bind(projectId, body.pipeline_id ?? body.run_id).first<{ id: string; run_id: string }>();
+				if (!pipeline) return json({ error: "analysis_version_unavailable" }, 409);
+				const result = await startPipelineReport(env, projectId, pipeline.id);
+				if (result.kind !== "OK") return json({ error: result.kind.toLowerCase() }, result.kind === "NOT_FOUND" ? 404 : result.kind === "DECISION_UNAVAILABLE" ? 409 : 503);
+				return json({ report_id: result.reportId, run_id: pipeline.run_id, pipeline_id: pipeline.id,
+					decision_version: result.decisionVersion, status: result.status }, result.status === "COMPLETED" ? 200 : 202);
 			}
 			if (request.method === "GET") {
 				const { results } = await env.DB.prepare(reportsListSql)
@@ -2972,17 +3051,18 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 			const projectId = decodeURIComponent(reportDownloadMatch[1]);
 			const reportId = decodeURIComponent(reportDownloadMatch[2]);
 			const report = await env.DB.prepare(
-				`SELECT status, r2_key FROM project_reports
+				`SELECT status, r2_key, pipeline_id, decision_version, sha256 FROM project_reports
 				 WHERE workspace_id = 'default' AND project_id = ?1 AND id = ?2`,
 			)
 				.bind(projectId, reportId)
-				.first<{ status: string; r2_key: string | null }>();
+				.first<{ status: string; r2_key: string | null; pipeline_id: string | null; decision_version: string | null; sha256: string | null }>();
 			if (!report) return json({ error: "not_found" }, 404);
 			if (report.status !== "COMPLETED" || !report.r2_key) {
 				return json({ error: "report_not_ready", status: report.status }, 409);
 			}
 			const object = await env.BUCKET.get(report.r2_key);
 			if (!object) return json({ error: "report_missing" }, 404);
+			if (report.pipeline_id && (object.customMetadata?.decision_version !== report.decision_version || object.customMetadata?.sha256 !== report.sha256)) return json({ error: "report_integrity_error" }, 500);
 			return new Response(object.body, {
 				headers: {
 					"content-type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
