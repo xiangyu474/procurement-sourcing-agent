@@ -246,7 +246,11 @@ export function installFixture(page: Page, mode: Mode): Promise<unknown> {
 			return;
 		}
 		if (request.method() === "GET" && (path === `/api/projects/${state.id}/spec-assessments/status` || path === `/api/projects/${state.id}/decisions/status`)) {
-			await fulfill(200, { status: "IDLE", job_id: null, demand_revision: state.demandRevision, error: null });
+			await fulfill(200, { status: "IDLE", job_id: null, demand_revision: state.demandRevision, error: null, updated_at: null });
+			return;
+		}
+		if (request.method() === "GET" && (path === `/api/projects/${state.id}/spec-assessments` || path === `/api/projects/${state.id}/decisions`)) {
+			await fulfill(200, { project_id: state.id, assessments: [], decisions: [] });
 			return;
 		}
 		if (request.method() === "GET" && path === `/api/runs/${state.runId}/research`) {
@@ -501,7 +505,7 @@ export function installReview(page: Page, variant: "mixed" | "none" = "mixed"): 
 		if (request.method() === "GET" && path === `/api/projects/${REVIEW_PROJECT}/spec-assessments`) {
 			await fulfill(200, {
 				project_id: REVIEW_PROJECT,
-				assessments: [
+				assessments: variant === "none" ? [] : [
 					assessment("spc-pass", "c-pass", "PASS", "页面写明 500万像素，满足不低于 4MP。"),
 					assessment("spc-unknown", "c-unknown", "UNKNOWN", "没有读到像素。"),
 					assessment("spc-fail", "c-fail", "FAIL", "读到的像素低于要求。"),
@@ -514,7 +518,7 @@ export function installReview(page: Page, variant: "mixed" | "none" = "mixed"): 
 		if (request.method() === "GET" && path === `/api/projects/${REVIEW_PROJECT}/decisions`) {
 			await fulfill(200, {
 				project_id: REVIEW_PROJECT,
-				decisions: [
+				decisions: variant === "none" ? [] : [
 					decision("dec-pass", "c-pass", "SHORTLIST", "VERIFIED_PASS", "PASS", true),
 					decision("dec-unknown", "c-unknown", "SHORTLIST", "VERIFIED_PASS", "PASS", false),
 					decision("dec-fail", "c-fail", "EXCLUDE", "VERIFIED_FAIL", "FAIL", true),
@@ -550,6 +554,215 @@ export function installReview(page: Page, variant: "mixed" | "none" = "mixed"): 
 					snapshot_text: "页面正文：500万像素。",
 				},
 			});
+			return;
+		}
+		await fulfill(404, { error: "not_found" });
+	});
+}
+
+const KNOWN_PROJECT = "a54edd18-0000-4000-8000-000000000001";
+const KNOWN_RUN = "a54edd18-0000-4000-8000-000000000002";
+
+export function installKnownCase(page: Page): Promise<unknown> {
+	const longSupplier = "华北区域工业视觉设备联合体（含多园区超长供应商名称不应撑破表格）";
+	const nbn = (index: number) => ({
+		candidate_id: `c-nbn-${index}`,
+		requirement_id: "r1",
+		stage: "RFQ_SHORTLIST",
+		rationale: null,
+		open_questions: [],
+		first_seen_run_id: KNOWN_RUN,
+		last_seen_run_id: KNOWN_RUN,
+		updated_at: "2026-11-01T12:00:00.000Z",
+		supplier: { supplier_id: "s-nbn", display_name: "宁波某供应商", website_domain: null, identity_status: "OBSERVED", role: "DISTRIBUTOR" },
+		product: { product_id: "p-nbn", product_name: "网络摄像机", brand: null, model: "NBN-80052-BA", product_category: "摄像机" },
+		evidence: [{ evidence_id: "ev_nbn", source_url: "https://example.com/nbn", title: "NBN 规格页", retrieved_at: "2026-11-01T08:00:00.000Z", excerpt: "像素不低于 5MP。" }],
+	});
+	const candidates = [
+		nbn(1),
+		nbn(2),
+		nbn(3),
+		nbn(4),
+		{
+			candidate_id: "c-ips",
+			requirement_id: "r1",
+			stage: "EXCLUDED",
+			rationale: null,
+			open_questions: [],
+			first_seen_run_id: KNOWN_RUN,
+			last_seen_run_id: KNOWN_RUN,
+			updated_at: "2026-11-01T12:01:00.000Z",
+			supplier: { supplier_id: "s-ips", display_name: longSupplier, website_domain: null, identity_status: "OBSERVED", role: "MANUFACTURER" },
+			product: { product_id: "p-ips", product_name: "网络摄像机", brand: null, model: "IPS05-R10-OIA4-EXTRA-LONG-MODEL-TOKEN", product_category: "摄像机" },
+			evidence: [{ evidence_id: "ev_ips", source_url: "https://example.com/ips", title: "IPS 规格页", retrieved_at: "2026-11-01T08:05:00.000Z", excerpt: "分辨率约 4.9MP。" }],
+		},
+		{
+			candidate_id: "c-repeat",
+			requirement_id: "r1",
+			stage: "EXCLUDED",
+			rationale: null,
+			open_questions: [],
+			first_seen_run_id: KNOWN_RUN,
+			last_seen_run_id: KNOWN_RUN,
+			updated_at: "2026-11-01T12:02:00.000Z",
+			supplier: { supplier_id: "s-nbn", display_name: "宁波某供应商", website_domain: null, identity_status: "OBSERVED", role: "DISTRIBUTOR" },
+			product: { product_id: "p-nbn", product_name: "网络摄像机", brand: null, model: "NBN-80052-BA", product_category: "摄像机" },
+			evidence: [{ evidence_id: "ev_nbn", source_url: "https://example.com/nbn", title: "NBN 规格页", retrieved_at: "2026-11-01T08:00:00.000Z", excerpt: "像素不低于 5MP。" }],
+		},
+	];
+	const passCheck = {
+		constraint_id: "k-pixel",
+		requirement_id: "r1",
+		status: "PASS",
+		reason_code: "VERIFIED_COMPARISON",
+		operation: "5 MP GTE 5 MP",
+		normalized_actual: "5",
+		normalized_required: "5",
+		unit: "MP",
+		evidence_ids: ["ev_nbn"],
+		explanation: "output_resolution is 5 MP and the requirement asks GTE 5 MP: PASS",
+		importance: "HARD",
+	};
+	const failCheck = {
+		constraint_id: "k-pixel",
+		requirement_id: "r1",
+		status: "FAIL",
+		reason_code: "VERIFIED_COMPARISON",
+		operation: "4.9152 MP GTE 5 MP",
+		normalized_actual: "4.9152",
+		normalized_required: "5",
+		unit: "MP",
+		evidence_ids: ["ev_ips"],
+		explanation: "output_resolution is 4.9152 MP and the requirement asks GTE 5 MP: FAIL",
+		importance: "HARD",
+	};
+	const assessment = (id: string, candidateId: string, overall: string, check: unknown) => ({
+		assessment_id: id,
+		requirement_id: "r1",
+		product_candidate_id: candidateId,
+		demand_revision: 1,
+		hard_spec_overall: overall,
+		overall_reason_codes: ["VERIFIED_COMPARISON"],
+		hard_constraint_count: 1,
+		calculator_version: "0.1.0",
+		dsl_schema_version: "1.0",
+		assessment: { checks: [check], source_refs: ["workspaces/default/projects/secret/demand.pptx"] },
+		evidence_ids: overall === "FAIL" ? ["ev_ips"] : ["ev_nbn"],
+		evaluated_at: "2026-11-01T13:00:00.000Z",
+		created_at: "2026-11-01T13:00:00.000Z",
+	});
+	const decision = (id: string, candidateId: string, recommendation: string, verdict: string, overall: string, rationale: string) => ({
+		decision_id: id,
+		requirement_id: "r1",
+		product_candidate_id: candidateId,
+		recommendation,
+		technical_verdict: verdict,
+		hard_spec_overall: overall,
+		accepted: true,
+		rationale,
+		evidence_ids: ["ev_nbn"],
+		gaps: [],
+		next_actions: [],
+		violations: [],
+		decided_at: "2026-11-01T14:00:00.000Z",
+		created_at: "2026-11-01T14:00:00.000Z",
+	});
+	const project = {
+		id: KNOWN_PROJECT,
+		title: "M3 cloud acceptance",
+		history_availability: "NOT_PROVIDED",
+		demand_revision: 1,
+		analysis_version: 1,
+		created_at: "2026-11-01T09:00:00.000Z",
+		latest_run: { id: KNOWN_RUN, status: "COMPLETED", current_stage: "WEB_RESEARCH", updated_at: "2026-11-01T14:00:00.000Z" },
+	};
+	return page.route("**/api/**", async (route: Route) => {
+		const request = route.request();
+		const path = new URL(request.url()).pathname;
+		const fulfill = (status: number, body: unknown) =>
+			route.fulfill({ status, contentType: "application/json; charset=utf-8", body: JSON.stringify(body) });
+		if (request.method() === "GET" && path === "/api/projects") {
+			await fulfill(200, { projects: [project] });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${KNOWN_PROJECT}`) {
+			await fulfill(200, { ...project, sources: [] });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${KNOWN_PROJECT}/runs`) {
+			await fulfill(200, { runs: [{ id: KNOWN_RUN, status: "COMPLETED", current_stage: "WEB_RESEARCH", last_error: null, stop_reason_code: "SUPERVISOR_RESEARCHER_ERROR", artifact_key_present: false, created_at: "2026-11-01T10:00:00.000Z", updated_at: "2026-11-01T14:00:00.000Z" }] });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${KNOWN_PROJECT}/requirement-text`) {
+			await fulfill(404, { error: "not_found" });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${KNOWN_PROJECT}/requirements`) {
+			await fulfill(200, {
+				analysis_version: 1,
+				compilation: {
+					requirements: [{
+						requirement_id: "r1",
+						product_name: "工业摄像机",
+						constraints: [{ constraint_id: "k-pixel", attribute_definition: "像素", operator: "GTE", value: "5", unit: "MP" }],
+						planned_total_budget: null,
+						planned_unit_price: { kind: "PLANNED_PRICE", value: "100", currency: "CNY", unit: "元/套" },
+					}],
+					issues: [],
+				},
+			});
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${KNOWN_PROJECT}/candidates`) {
+			await fulfill(200, { candidates });
+			return;
+		}
+		if (request.method() === "GET" && (path.endsWith("/spec-assessments/status") || path.endsWith("/decisions/status"))) {
+			await fulfill(200, { status: "COMPLETED", job_id: "job-1", demand_revision: 1, error: null, updated_at: "2026-11-01T14:00:00.000Z" });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${KNOWN_PROJECT}/spec-assessments`) {
+			await fulfill(200, {
+				project_id: KNOWN_PROJECT,
+				assessments: [
+					assessment("spc-nbn-1", "c-nbn-1", "PASS", passCheck),
+					assessment("spc-nbn-2", "c-nbn-2", "PASS", passCheck),
+					assessment("spc-nbn-3", "c-nbn-3", "PASS", passCheck),
+					assessment("spc-nbn-4", "c-nbn-4", "PASS", passCheck),
+					assessment("spc-ips", "c-ips", "FAIL", failCheck),
+					assessment("spc-repeat", "c-repeat", "PASS", passCheck),
+				],
+			});
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${KNOWN_PROJECT}/decisions`) {
+			await fulfill(200, {
+				project_id: KNOWN_PROJECT,
+				decisions: [
+					decision("dec-nbn-1", "c-nbn-1", "SHORTLIST", "VERIFIED_PASS", "PASS", "可以先询价。引用 pptx_1:r1 与 ev_abc123。"),
+					decision("dec-nbn-2", "c-nbn-2", "SHORTLIST", "VERIFIED_PASS", "PASS", "可以先询价。"),
+					decision("dec-nbn-3", "c-nbn-3", "SHORTLIST", "VERIFIED_PASS", "PASS", "可以先询价。"),
+					decision("dec-nbn-4", "c-nbn-4", "SHORTLIST", "VERIFIED_PASS", "PASS", "可以先询价。"),
+					decision("dec-ips", "c-ips", "EXCLUDE", "VERIFIED_FAIL", "FAIL", "像素不够。依据 pptx_1:c1 与 clm_deadbeef。"),
+					decision("dec-repeat", "c-repeat", "EXCLUDE", "VERIFIED_PASS", "PASS", "与已列出的同型号重复，不再单独询价。"),
+				],
+			});
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/runs/${KNOWN_RUN}`) {
+			await fulfill(200, { id: KNOWN_RUN, project_id: KNOWN_PROJECT, status: "COMPLETED", current_stage: "WEB_RESEARCH", artifact_key: null, last_error: null, created_at: "2026-11-01T10:00:00.000Z", updated_at: "2026-11-01T14:00:00.000Z" });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/runs/${KNOWN_RUN}/events`) {
+			await fulfill(200, { events: [] });
+			return;
+		}
+		if (request.method() === "GET" && path === "/api/evidence/ev_ips") {
+			await fulfill(200, { evidence: { evidence_id: "ev_ips", title: "IPS 规格页", source_url: "https://example.com/ips", retrieved_at: "2026-11-01T08:05:00.000Z", excerpt: "分辨率约 4.9MP。", snapshot_text: "页面正文：4.9152 MP。", snapshot_r2_key: "workspaces/default/secret-snapshot", locator: "tavily-extract:ips" } });
+			return;
+		}
+		if (request.method() === "GET" && path === "/api/evidence/ev_nbn") {
+			await fulfill(200, { evidence: { evidence_id: "ev_nbn", title: "NBN 规格页", source_url: "https://example.com/nbn", retrieved_at: "2026-11-01T08:00:00.000Z", excerpt: "像素不低于 5MP。", snapshot_text: "页面正文：5 MP。", snapshot_r2_key: "workspaces/default/secret-snapshot", locator: "tavily-extract:nbn" } });
 			return;
 		}
 		await fulfill(404, { error: "not_found" });

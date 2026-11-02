@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { installCatalogue, installFixture, installReview, LONG_PPTX, LONG_TITLE } from "./fixture";
+import { installCatalogue, installFixture, installKnownCase, installReview, LONG_PPTX, LONG_TITLE } from "./fixture";
 
 const screenshots = "/opt/cursor/artifacts/screenshots";
 
@@ -213,11 +213,41 @@ test("a finished run with no candidates leaves the detail column out", async ({ 
 	await page.goto("/");
 	await page.getByRole("button", { name: /工业摄像机寻源/ }).click();
 	await expect(page.getByText("这次没有候选供应商。")).toBeVisible();
-	await expect(page.getByText("技术核对还没有开始。")).toBeVisible();
-	await expect(page.getByText("决策还没有开始。")).toBeVisible();
+	await expect(page.getByText("研究已结束")).toBeVisible();
+	await expect(page.getByText("还没有核验和决策，以下只是长名单。")).toHaveCount(0);
 	await expect(page.getByRole("complementary", { name: "所选型号" })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "下载这一版" })).toBeDisabled();
 	await page.screenshot({ path: `${screenshots}/f2-none.png` });
+});
+
+test("known case hides internal wording and groups identical models", async ({ page }) => {
+	await installKnownCase(page);
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto("/");
+	await page.getByRole("button", { name: /M3 cloud acceptance/ }).click();
+	await expect(page.getByText("研究 → 核验 → 决策 → 完成")).toBeVisible();
+	await expect(page.getByRole("button", { name: "同型号 4 条" })).toBeVisible();
+	await page.getByRole("row", { name: /IPS05-R10-OIA4/ }).click();
+	const fail = page.getByRole("complementary", { name: "所选型号" });
+	await expect(fail).toContainText("已排除");
+	await expect(fail).toContainText("不满足");
+	await expect(fail).toContainText("要求 ≥ 5 MP，读到 4.9152 MP");
+	await expect(fail).toContainText("计划单价");
+	await expect(fail).not.toContainText("output_resolution");
+	await expect(fail).not.toContainText("GTE");
+	await expect(fail).not.toContainText("ev_");
+	await page.getByRole("button", { name: "计算和依据" }).click();
+	await expect(fail).toContainText("4.9152 MP ≥ 5 MP");
+	await expect(fail).toContainText("IPS 规格页");
+	await page.screenshot({ path: `${screenshots}/f2-known-after-fail.png` });
+	await page.getByRole("row", { name: /NBN-80052-BA/ }).first().click();
+	const pass = page.getByRole("complementary", { name: "所选型号" });
+	await expect(pass).toContainText("建议先询价");
+	await expect(pass).toContainText("满足");
+	await expect(pass).not.toContainText("pptx_");
+	await page.screenshot({ path: `${screenshots}/f2-known-after-pass.png` });
+	await page.getByRole("row", { name: /同型号重复|已排除/ }).last().click();
+	await expect(page.getByRole("complementary", { name: "所选型号" })).toContainText("不再单独询价");
 });
 
 test("live gateway rejects a project create when no access credential is configured", async ({ page }) => {

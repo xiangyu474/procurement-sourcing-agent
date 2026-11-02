@@ -197,6 +197,7 @@ export type JobStatus = {
 	job_id: string | null;
 	demand_revision: number | null;
 	error: string | null;
+	updated_at: string | null;
 };
 
 export type EvidenceDetail = {

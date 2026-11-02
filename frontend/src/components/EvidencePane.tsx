@@ -1,35 +1,40 @@
 import { useState } from "react";
 import type { EvidenceDetail } from "../api/types";
-import type { CandidateRowView } from "../view/candidates";
+import type { CandidateRowView, CheckView } from "../view/candidates";
 
-export function EvidencePane(props: {
-	row: CandidateRowView | null;
+function toneClass(tone: string, kind: "stage" | "tech"): string {
+	if (kind === "tech") {
+		if (tone === "pass") return "tech pass";
+		if (tone === "fail") return "tech fail";
+		if (tone === "unknown") return "tech unknown";
+		return "tech none";
+	}
+	if (tone === "short") return "stage short";
+	if (tone === "verify") return "stage verify";
+	return "stage long";
+}
+
+function EvidenceBody(props: {
+	row: CandidateRowView;
 	evidence: EvidenceDetail | null;
 	evidenceError: string | null;
 	onOpenEvidence: (evidenceId: string) => void;
 }) {
 	const [showBasis, setShowBasis] = useState(false);
 	const row = props.row;
-	if (!row) {
-		return (
-			<aside className="detail" aria-label="所选型号">
-				<p className="quiet">选择一行查看来源。</p>
-			</aside>
-		);
-	}
 	const source = [row.sourceTitle, row.sourceDate].filter(Boolean).join(" · ");
+	const showRepeat = row.stage.label === "已排除" && row.technical.label === "满足" && row.rationale;
 	return (
 		<aside className="detail linked" aria-label="所选型号">
 			<h2>{row.model}</h2>
 			<p className="who">{row.supplier}</p>
 			<p>
-				<span className={row.stage.tone === "short" ? "stage short" : row.stage.tone === "verify" ? "stage verify" : "stage long"}>{row.stage.label}</span>
+				<span className={toneClass(row.stage.tone, "stage")}>{row.stage.label}</span>
 				{" · "}
-				<span className={row.technical.tone === "pass" ? "tech pass" : row.technical.tone === "fail" ? "tech fail" : row.technical.tone === "unknown" ? "tech unknown" : "tech none"}>
-					{row.technical.label}
-				</span>
+				<span className={toneClass(row.technical.tone, "tech")}>{row.technical.label}</span>
 			</p>
 			<p className="quiet">{row.stage.note}</p>
+			{showRepeat ? <p>{row.rationale}</p> : null}
 			{row.ambiguous ? <p className="quiet">同一候选有多条核对，这里显示最近一条。</p> : null}
 			{source ? (
 				<>
@@ -72,14 +77,14 @@ export function EvidencePane(props: {
 						<p>
 							{check.requirement}
 							{" · "}
-							<span className={check.result.tone === "pass" ? "tech pass" : check.result.tone === "fail" ? "tech fail" : "tech unknown"}>{check.result.label}</span>
+							<span className={toneClass(check.result.tone, "tech")}>{check.result.label}</span>
 						</p>
 						<p>{check.observed}</p>
 						{check.reason ? <p>{check.reason}</p> : null}
 					</li>
 				))}
 			</ul>
-			{row.checks.some((check) => check.formula || check.reasonCode || check.evidenceIds.length > 0) ? (
+			{row.checks.some((check) => check.formula || check.evidence.length > 0) ? (
 				<p>
 					<button className="text-button" type="button" onClick={() => setShowBasis((value) => !value)}>
 						{showBasis ? "收起计算和依据" : "计算和依据"}
@@ -91,13 +96,12 @@ export function EvidencePane(props: {
 					{row.checks.map((check, index) => (
 						<li key={`basis-${index}`}>
 							{check.formula ? <p>计算：{check.formula}</p> : null}
-							{check.reasonCode ? <p>原因码：{check.reasonCode}</p> : null}
-							{check.evidenceIds.length > 0 ? <p>证据编号：{check.evidenceIds.join("、")}</p> : null}
+							<EvidenceButtons check={check} onOpen={props.onOpenEvidence} />
 						</li>
 					))}
 				</ul>
 			) : null}
-			{row.rationale ? <p>{row.rationale}</p> : null}
+			{row.rationale && !showRepeat ? <p>{row.rationale}</p> : null}
 			<h3>价格</h3>
 			<dl className="prices">
 				{row.prices.map((price) => (
@@ -109,4 +113,33 @@ export function EvidencePane(props: {
 			</dl>
 		</aside>
 	);
+}
+
+function EvidenceButtons(props: { check: CheckView; onOpen: (id: string) => void }) {
+	if (props.check.evidence.length === 0) return null;
+	return (
+		<p>
+			{props.check.evidence.map((item) => (
+				<button key={item.id} className="text-button" type="button" onClick={() => props.onOpen(item.id)}>
+					{item.title}
+				</button>
+			))}
+		</p>
+	);
+}
+
+export function EvidencePane(props: {
+	row: CandidateRowView | null;
+	evidence: EvidenceDetail | null;
+	evidenceError: string | null;
+	onOpenEvidence: (evidenceId: string) => void;
+}) {
+	if (!props.row) {
+		return (
+			<aside className="detail" aria-label="所选型号">
+				<p className="quiet">选择一行查看来源。</p>
+			</aside>
+		);
+	}
+	return <EvidenceBody key={props.row.id} row={props.row} evidence={props.evidence} evidenceError={props.evidenceError} onOpenEvidence={props.onOpenEvidence} />;
 }

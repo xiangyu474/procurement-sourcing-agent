@@ -21,8 +21,8 @@ export function App() {
 		run &&
 			(run.status === "COMPLETED" || run.status === "PARTIAL") &&
 			!workspace.candidates.loading &&
-			candidateRows.length === 0 &&
-			workspace.candidates.statusLines.every((line) => line.startsWith("技术核对") || line.startsWith("决策")),
+			!workspace.candidates.loadError &&
+			candidateRows.length === 0,
 	);
 
 	return (
@@ -89,11 +89,8 @@ export function App() {
 						</div>
 					) : null}
 					<RunPanel run={run} events={workspace.events} stopReason={workspace.stopReason} candidateCount={workspace.candidateCount} />
-					{workspace.candidates.statusLines.map((line) => (
-						<p className="quiet" key={line}>
-							{line}
-						</p>
-					))}
+					{workspace.candidates.progressLine ? <p className="quiet">{workspace.candidates.progressLine}</p> : null}
+					{workspace.candidates.listNote ? <p>{workspace.candidates.listNote}</p> : null}
 					{workspace.candidates.loading ? <p className="quiet">正在读取候选。</p> : null}
 					{showEmptyCandidates ? <p>这次没有候选供应商。</p> : null}
 					{candidateRows.length > 0 ? (

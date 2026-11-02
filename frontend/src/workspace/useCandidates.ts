@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { isAbort, isTerminalRun, messageForApiError } from "../api/adapter";
 import type { ApiClient } from "../api/client";
-import type { EvidenceDetail, Run } from "../api/types";
-import { buildCandidateRows, jobStatusLine, type CandidateRowView } from "../view/candidates";
+import type { EvidenceDetail, JobStatus, Run, SourcingDecision, SpecAssessment } from "../api/types";
+import { buildCandidateRows, jobIsStalled, procurementLine, type CandidateRowView } from "../view/candidates";
 import { POLL_INTERVAL_MS, pollUntil } from "./poll";
-
-const JOB_TIMEOUT_MS = 20 * 60 * 1000;
 
 export type CandidateModel = {
 	rows: CandidateRowView[];
-	statusLines: string[];
+	progressLine: string | null;
+	listNote: string | null;
 	loading: boolean;
+	loadError: string | null;
 	selectedId: string | null;
 	select: (id: string) => void;
 	evidence: EvidenceDetail | null;
@@ -20,30 +20,42 @@ export type CandidateModel = {
 
 export function useCandidates(clientRef: MutableRefObject<ApiClient>, projectId: string | null, run: Run | null): CandidateModel {
 	const [rows, setRows] = useState<CandidateRowView[]>([]);
-	const [statusLines, setStatusLines] = useState<string[]>([]);
+	const [progressLine, setProgressLine] = useState<string | null>(null);
+	const [listNote, setListNote] = useState<string | null>(null);
 	const [loading, setLoading] = useState(false);
+	const [loadError, setLoadError] = useState<string | null>(null);
 	const [selectedId, setSelectedId] = useState<string | null>(null);
 	const [evidence, setEvidence] = useState<EvidenceDetail | null>(null);
 	const [evidenceError, setEvidenceError] = useState<string | null>(null);
 	const abortRef = useRef<AbortController | null>(null);
 	const evidenceAbortRef = useRef<AbortController | null>(null);
+	const runId = run?.project_id === projectId ? run.id : null;
+	const runStatus = run?.project_id === projectId ? run.status : null;
 
 	useEffect(() => {
 		abortRef.current?.abort();
 		setSelectedId(null);
 		setEvidence(null);
 		setEvidenceError(null);
-		if (!projectId || !run || run.project_id !== projectId || !isTerminalRun(run.status)) {
+		setLoadError(null);
+		if (!projectId || !runId || !runStatus) {
 			setRows([]);
-			setStatusLines([]);
+			setProgressLine(null);
+			setListNote(null);
 			setLoading(false);
+			return;
+		}
+		if (!isTerminalRun(runStatus)) {
+			setRows([]);
+			setListNote(null);
+			setLoading(false);
+			setProgressLine(procurementLine({ runStatus, spec: null, decision: null, hasAssessments: false, hasDecisions: false }).line);
 			return;
 		}
 		const controller = new AbortController();
 		abortRef.current = controller;
 		const signal = controller.signal;
 		const currentProject = projectId;
-		const runId = run.id;
 		setLoading(true);
 		void (async () => {
 			try {
@@ -53,57 +65,72 @@ export function useCandidates(clientRef: MutableRefObject<ApiClient>, projectId:
 				]);
 				if (signal.aborted) return;
 				const document = requirements.state === "ready" ? requirements.body : null;
-				setRows(buildCandidateRows({ candidates, assessments: [], decisions: [], requirements: document }));
-				setLoading(false);
-				const settle = async (kind: "spec" | "decision") => {
+				const watchJob = async (kind: "spec" | "decision"): Promise<JobStatus> => {
 					const current = await clientRef.current.getJobStatus(currentProject, kind, { signal });
 					if (current.status !== "QUEUED" && current.status !== "RUNNING") return current;
-					try {
-						return await pollUntil({
-							intervalMs: POLL_INTERVAL_MS,
-							timeoutMs: JOB_TIMEOUT_MS,
-							signal,
-							tick: async () => {
-								const job = await clientRef.current.getJobStatus(currentProject, kind, { signal });
-								if (job.status === "QUEUED" || job.status === "RUNNING") return null;
-								return job;
-							},
-						});
-					} catch (caught) {
-						if (isAbort(caught)) throw caught;
-						const waiting = kind === "spec" ? "技术核对超过 20 分钟仍未结束。" : "决策超过 20 分钟仍未结束。";
-						return { status: "FAILED", job_id: current.job_id, demand_revision: current.demand_revision, error: waiting };
-					}
+					if (!current.updated_at || jobIsStalled(current)) return current;
+					return pollUntil({
+						intervalMs: POLL_INTERVAL_MS,
+						timeoutMs: 30 * 60 * 1000,
+						signal,
+						tick: async () => {
+							const next = await clientRef.current.getJobStatus(currentProject, kind, { signal });
+							if (jobIsStalled(next) || (next.status !== "QUEUED" && next.status !== "RUNNING")) return next;
+							return null;
+						},
+					});
 				};
-				const [specNow, decisionNow] = await Promise.all([
-					clientRef.current.getJobStatus(currentProject, "spec", { signal }),
-					clientRef.current.getJobStatus(currentProject, "decision", { signal }),
-				]);
+				const loadList = async (job: JobStatus, load: () => Promise<SpecAssessment[] | SourcingDecision[]>) => {
+					if (job.status !== "COMPLETED" && job.status !== "IDLE" && !jobIsStalled(job)) return [];
+					return load();
+				};
+				const specTask = watchJob("spec").then(async (job) => ({
+					job,
+					rows: (await loadList(job, () => clientRef.current.listAssessments(currentProject, { signal }))) as SpecAssessment[],
+				}));
+				const decisionTask = watchJob("decision").then(async (job) => ({
+					job,
+					rows: (await loadList(job, () => clientRef.current.listDecisions(currentProject, { signal }))) as SourcingDecision[],
+				}));
+				const specResult = await specTask;
 				if (signal.aborted) return;
-				setStatusLines([jobStatusLine("spec", specNow), jobStatusLine("decision", decisionNow)].filter((line): line is string => Boolean(line)));
-				const [specJob, decisionJob] = await Promise.all([
-					specNow.status === "QUEUED" || specNow.status === "RUNNING" ? settle("spec") : Promise.resolve(specNow),
-					decisionNow.status === "QUEUED" || decisionNow.status === "RUNNING" ? settle("decision") : Promise.resolve(decisionNow),
-				]);
+				const paint = (assessments: SpecAssessment[], decisions: SourcingDecision[], spec: JobStatus, decision: JobStatus | null) => {
+					const built = buildCandidateRows({
+						candidates,
+						assessments,
+						decisions,
+						requirements: document,
+						decisionsReady: decisions.length > 0,
+					});
+					const progress = procurementLine({
+						runStatus,
+						spec,
+						decision,
+						hasAssessments: assessments.length > 0,
+						hasDecisions: decisions.length > 0,
+					});
+					setRows(built);
+					setProgressLine(progress.line);
+					setListNote(built.length > 0 ? progress.listNote : null);
+					setLoading(false);
+				};
+				paint(specResult.rows, [], specResult.job, null);
+				const decisionResult = await decisionTask;
 				if (signal.aborted) return;
-				const [assessments, decisions] = await Promise.all([
-					specJob.status === "COMPLETED" ? clientRef.current.listAssessments(currentProject, { signal }) : Promise.resolve([]),
-					decisionJob.status === "COMPLETED" ? clientRef.current.listDecisions(currentProject, { signal }) : Promise.resolve([]),
-				]);
-				if (signal.aborted) return;
-				setRows(buildCandidateRows({ candidates, assessments, decisions, requirements: document }));
-				setStatusLines([jobStatusLine("spec", specJob), jobStatusLine("decision", decisionJob)].filter((line): line is string => Boolean(line)));
+				paint(specResult.rows, decisionResult.rows, specResult.job, decisionResult.job);
 			} catch (caught) {
 				if (!isAbort(caught)) {
 					setRows([]);
-					setStatusLines([messageForApiError(caught).summary]);
+					setListNote(null);
+					setLoadError(messageForApiError(caught).summary);
+					setProgressLine(messageForApiError(caught).summary);
 				}
 			} finally {
 				if (!signal.aborted) setLoading(false);
 			}
 		})();
 		return () => controller.abort();
-	}, [clientRef, projectId, run]);
+	}, [clientRef, projectId, runId, runStatus]);
 
 	const select = (id: string) => {
 		setSelectedId(id);
@@ -126,5 +153,5 @@ export function useCandidates(clientRef: MutableRefObject<ApiClient>, projectId:
 		);
 	};
 
-	return { rows, statusLines, loading, selectedId, select, evidence, evidenceError, openEvidence };
+	return { rows, progressLine, listNote, loading, loadError, selectedId, select, evidence, evidenceError, openEvidence };
 }

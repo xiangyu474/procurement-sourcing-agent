@@ -515,6 +515,7 @@ export class ApiClient {
 				job_id: asOptionalString(row.job_id),
 				demand_revision: asOptionalNumber(row.demand_revision),
 				error: asOptionalString(row.error),
+				updated_at: asOptionalString(row.updated_at),
 			};
 		});
 	}
