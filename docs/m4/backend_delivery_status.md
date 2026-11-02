@@ -13,8 +13,8 @@ B1：**CLOUD_VERIFIED（一次受保护验收） / NOT_PUBLIC_READY**。Git `41a
 | Session | `cloudflare/gateway/src/guest_session.ts`, `index.ts`, migration `0012` | 本地实现显式会话、同源 Origin 检查和项目/运行/证据归属；默认关闭。需完成真实 Worker 路由、浏览器 A/B 隔离和运行时测试，以及严格限额后才可启用。旧无归属项目对访客不可见；管理路径须另行设计。 |
 | 总预算与滥用防护 | 现有 `runs`、`research_run_costs`、Workflow 入口 | 未实现全局原子预约、预算上限和并发控制，也未保护会话创建频率。仅按 session 计数或按地域限流均不足以保证全局预算；尚未启用公开访客任务。 |
 | Pipeline | `cloudflare/gateway/src/pipeline_workflow.ts`, `pipeline_store.ts`, `index.ts` | B1 受保护路径一次云端验收 PASS；B2 本地已接入快照和报告终结阶段，尚未验证。异常恢复和实际 Worker 路由测试仍需补充。 |
-| Analysis 与版本 | `pipeline_final.ts`, `pipeline_analysis.ts`, `index.ts` | CLOUD_VERIFIED 单次：按指定 Pipeline/Run 返回冻结快照、完整 SHA-256、assessment ID 和价格口径；旧运行无快照返回不可用。多运行切换尚未完成真实浏览器验收。 |
-| Report | `pipeline_report.ts`, `SourcingReportWorkflow`, `src/procurement_agent/reports/procurement_report.py` | CLOUD_VERIFIED 单次：自动生成并通过 API 下载、打开，Run/版本和字节 SHA 一致；重复触发复用同一报告。报告启动失败不影响分析、失败重试本地测试通过，云端故障注入/A/B 授权尚未验收。 |
+| Analysis 与版本 | `pipeline_final.ts`, `pipeline_analysis.ts`, `index.ts` | CLOUD_VERIFIED 单次：实际网关分别按 Pipeline/Run 查询得到完全相同响应；旧运行无快照返回 409、跨项目返回 404。多运行切换尚未完成真实浏览器验收。 |
+| Report | `pipeline_report.ts`, `SourcingReportWorkflow`, `src/procurement_agent/reports/procurement_report.py` | CLOUD_VERIFIED 单次：云端验收及本机实际网关均下载并打开 DOCX，Run/版本和字节 SHA 一致；重复触发复用同一报告。报告启动失败不影响分析、失败重试本地测试通过，云端故障注入/A/B 授权尚未验收。 |
 | 前端联调 | `docs/m4/backend_contract_response.md` | §5 仅为本地会话契约草案，未部署，不构成真实联调通知。每个接口部署后再记录固定版本、真实响应与测试结果。 |
 | 验收 | `cloudflare/gateway/test/guest_session.test.ts`, `scripts/run_cloud_acceptance.py` | 当前 Node/SQLite 测试不等于 Worker 实际路由或云端验收。正式验收需固定部署 SHA/镜像，A/B 越权、CSRF、限额、幂等、失败恢复、刷新及 DOCX 下载全链路。 |
 

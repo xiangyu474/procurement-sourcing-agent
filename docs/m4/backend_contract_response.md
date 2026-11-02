@@ -382,7 +382,7 @@ GET /api/projects/{project_id}/analysis?run_id={run_id}
 - 价格在 `price_contexts[]`，按 `requirement_id` 关联，使用后端的 `history_scope`、`statistics`、`overview_statistics`、`findings`；不要自行计算。全表概览不是单品基准。
 - `decision_version` 是完整冻结快照的 SHA-256（64 位），不是可变项目的最新判断。该版本已绑定需求、Run、候选、Claim/Evidence、评估、价格和门禁决策。
 
-一次真实云端验收及 D1 快照摘录（不是完整 HTTP 响应）：
+一次真实 `GET /analysis?pipeline_id=...` 的 HTTP 200 响应摘录（省略其他数组和字段）：
 
 ```json
 {
@@ -390,14 +390,38 @@ GET /api/projects/{project_id}/analysis?run_id={run_id}
   "pipeline_id":"122c314b-a45c-4016-9ec8-8988b5fbf4b8",
   "run_id":"c88cebb6-2161-4ae2-95d6-98b1470cd3ac",
   "demand_revision":1,
+  "research_status":"COMPLETED",
   "decision_version":"314ca44a85aecf6bdf09d09518c5cf4820fd7ab2d6440349967fa74846dc49f7",
-  "assessment_id":"pa_5d3c29ba64a09ebca06d4bf4c0084dd8b3dc95c0",
-  "product_candidate_id":"pc_1a73c689f943f3b04b32c188",
-  "history_scope":"NONE"
+  "assessments":[{
+    "assessment_id":"pa_5d3c29ba64a09ebca06d4bf4c0084dd8b3dc95c0",
+    "requirement_id":"pptx_1:r1",
+    "product_candidate_id":"pc_1a73c689f943f3b04b32c188",
+    "product_model_ref":"NBN-80052-BA",
+    "hard_spec_overall":"PASS",
+    "overall_reason_codes":["VERIFIED_COMPARISON"]
+  }],
+  "price_contexts":[{
+    "requirement_id":"pptx_1:r1",
+    "product_name":"5MP 工业网络摄像机",
+    "history_scope":"NONE",
+    "history_available":false,
+    "history_rows":0,
+    "statistics":null,
+    "overview_statistics":null,
+    "overview_is_not_a_baseline":false,
+    "findings":[]
+  }],
+  "report":{
+    "report_id":"pr_122c314b-a45c-4016-9ec8-8988b5fbf4b8",
+    "status":"COMPLETED",
+    "error_code":null,
+    "decision_version":"314ca44a85aecf6bdf09d09518c5cf4820fd7ab2d6440349967fa74846dc49f7",
+    "download_path":"/api/projects/acb2d28a-484c-4db5-a0cb-434ce80df353/reports/pr_122c314b-a45c-4016-9ec8-8988b5fbf4b8/download"
+  }
 }
 ```
 
-验收实际调用 `/analysis` 并检查其 Run、版本及 assessment ID；上述单条 assessment ID 与 scope 是 D1 快照字段摘录。该次 24 条决策中 23 条 `PASS/VERIFIED_PASS/SHORTLIST`、1 条 `UNKNOWN/UNVERIFIED/INVESTIGATE`，这是模型和程序门禁输出，**不是独立业务准确性验收**。
+同一测试项目以 `run_id` 选择返回完全相同的响应；B1 旧运行无快照返回 409；跨项目选择返回 404。该次 24 条决策中 23 条 `PASS/VERIFIED_PASS/SHORTLIST`、1 条 `UNKNOWN/UNVERIFIED/INVESTIGATE`，这是模型和程序门禁输出，**不是独立业务准确性验收**。
 
 ### 5.4 自动报告：受保护路径已部署，单次云端验收通过
 
