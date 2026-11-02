@@ -1,6 +1,7 @@
 import { Container, getContainer } from "@cloudflare/containers";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { authorizeGuest } from "./guest_session";
+import { retryContainerNotRunning } from "./container_startup";
 import { readPipelineDemand, reservePipeline, storePipelineSnapshot } from "./pipeline_store";
 import { ProcurementPipelineWorkflow, type PipelineRequest } from "./pipeline_workflow";
 export { ProcurementPipelineWorkflow };
@@ -700,8 +701,9 @@ export class SourcingCompileWorkflow extends WorkflowEntrypoint<Env, CompileRequ
 					const container = getContainer(this.env.SOURCING_CONTAINER, this.env.CONTAINER_INSTANCE_NAME);
 					// The instance sleeps when it is idle, so it has to be
 					// started before it can answer.
-					await container.start();
-					const response = await container.fetch(
+					const response = await retryContainerNotRunning(async () => {
+						await container.start();
+						return container.fetch(
 						new Request("http://container/internal/compile-demand", {
 							method: "POST",
 							headers: { "content-type": "application/json" },
@@ -719,7 +721,8 @@ export class SourcingCompileWorkflow extends WorkflowEntrypoint<Env, CompileRequ
 								pptx_sources: pptxSources,
 							}),
 						}),
-					);
+						);
+					}, () => new Promise(resolve => setTimeout(resolve, 3000)));
 					if (!response.ok) {
 						const body = await response.text().catch(() => "");
 						throw new Error(`compile failed with status ${response.status}: ${body.slice(0, 400)}`);
