@@ -74,6 +74,12 @@ export const projectsListSql = `
 	FROM projects p
 	ORDER BY p.created_at DESC LIMIT ?1`;
 
+/** The same list restricted to a visitor, excluding legacy unowned projects. */
+export const guestProjectsListSql = projectsListSql.replace(
+	"FROM projects p",
+	"FROM projects p WHERE p.session_id = ?2",
+);
+
 /** The runs of one project. */
 export const projectRunsSql = `
 	SELECT r.id, r.status, r.current_stage, r.last_error, r.artifact_key, r.created_at, r.updated_at,

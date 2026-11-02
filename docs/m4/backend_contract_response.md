@@ -1,12 +1,12 @@
 # M4 后端契约答复与对齐
 
-回应 `docs/m4/backend_contract_requests.md`（基线 `f0fa49b`）。本文只写**后端现在真实提供什么**、**还缺什么**、**谁来做、用什么数据结构**。
+回应 `docs/m4/backend_contract_requests.md`（基线 `f0fa49b`）。本文记录接口及待办；§5 是尚未部署的本地实现和接口草案，历史回执不代表当前生产认证已就绪。**报告的 `run_id` 与 `decision_version` 尚不能证明不可变快照绑定，旧运行准确回放尚未验证。**
 前端可以**直接在本文件下方「对齐回执」一节回复**，后端会按回执改，不另开文档。
 
 - 后端仓库：`procurement_sourcing_agent`（本仓库）
 - 后端最新提交：见 `git log -1`
 - 网关：`https://procurement-sourcing-gateway.xiangyu474.workers.dev`
-- 容器镜像版本：`wrangler.jsonc` 的 `CONTAINER_INSTANCE_NAME`（当前 `sourcing-v10`）
+- 容器实例配置：见 `wrangler.jsonc` 的 `CONTAINER_INSTANCE_NAME`；实际部署版本须另行核验。
 
 ---
 
@@ -25,7 +25,7 @@
 | 是否待补证 | `recommendation == "INVESTIGATE"` |
 | 是否排除 | `recommendation == "EXCLUDE"` |
 
-**`UNKNOWN` 永远不会进入建议询价**：实测 43 条决策中，22 条 `SHORTLIST/VERIFIED_PASS`、21 条 `INVESTIGATE/UNVERIFIED`、0 条把 UNKNOWN 写进短名单。
+**`UNKNOWN` 不应显示为建议询价**：一次 43 条决策审计中，22 条为 `SHORTLIST/VERIFIED_PASS`、21 条为 `INVESTIGATE/UNVERIFIED`。这是决策建议而非实际阶段；当时 43 条候选的实际 `stage` 均为 `DISCOVERED_LONG_LIST`。
 
 ### 0.2 候选的 `stage` 现在会随决策推进
 
@@ -93,7 +93,7 @@ M3-B 修了一个会误导买家的 bug：官方历史文件里是 **14 个不�
 
 ```http
 POST /api/projects/{project_id}/reports
-{ "run_id": "uuid" }          // 可选；给了就固定为这次运行的决策集合
+{ "run_id": "uuid" }          // 可选；目前仅作报告记录的运行引用，尚未证明数据按该运行冻结
 ```
 
 ```json
@@ -136,7 +136,7 @@ GET /api/projects/{project_id}/reports/{report_id}
 8. 六、未解决问题与下一步
 9. 七、证据引用（证据 ID、来源、地址、摘录、内容哈希）
 
-**报告与「运行」的绑定**：`decision_version` 是本次决策集合内容的摘要（`sha256` 前 16 位）。同一个 `report_id` 永远对应同一份文档，之后再跑新的寻源不会改变它。
+**报告与「运行」的绑定尚未验收**：现有 `decision_version` 是部分决策字段的摘要，并非完整不可变快照；报告上下文可能读取当前项目数据。不能仅凭 `run_id`、摘要或时间推断报告属于所选运行。
 
 ---
 
@@ -300,14 +300,9 @@ GET /api/projects/{project_id}/requirement-text
 - 本轮不做的理由：它需要新的编排（一个跨需求修订、工作流、决策的编排器），与「正式 DOCX + 状态接口」相比不是交付瓶颈；**前端不要用三次调用包装成「已经完成重评」**，F4 的操作区先按「分步引导」呈现。
 - 负责人：**后端**，排在 M4 中段。
 
-### 3.7 鉴权方案 —— 后端给方案，前端按方案做（两端共同确认）
+### 3.7 鉴权方案 —— 已决策，生产尚未就绪
 
-- **开发/联调**：前端 Vite 代理进程读环境变量 `DEMO_ACCESS_TOKEN`，把 `Authorization: Bearer` 加在**出站请求**上。token 不进浏览器包、不进前端源码、不提交仓库（`.env.local` 需在 `frontend/.gitignore` 中）。
-- **生产**：页面与 API **同源**（前端构建产物由同一个 Worker 托管，走相对路径 `/api`，不需要 CORS）。凭证校验留在 Worker：
-  - 首选 Cloudflare Access（身份层在网关之前，浏览器拿不到 `DEMO_ACCESS_TOKEN`）；
-  - 备选 Worker 签发 HttpOnly 会话 Cookie。
-- **红线**：`DEMO_ACCESS_TOKEN` 不出现在浏览器包、浏览器可见响应、公开生产配置、任何 Git 提交里。
-- 负责人：**后端**负责 Worker 侧（同源托管 + 校验），**前端**负责不落 token；**待前端确认**：是否接受 Cloudflare Access 作为生产身份层。
+生产采用同源 Worker Guest Session，不要求评委登录 Cloudflare Access。会话、归属鉴权、CSRF 和严格成本限额由后端负责；内部凭证不进入浏览器。开发环境可使用受限的服务端代理，但不能将共享 Bearer 视为访客身份隔离。当前已部署的旧接口仍使用共享 Bearer，**不能认为具备访客隔离，也不能作为公开生产演示**。会话实现的本地状态见 §5；正式可联调时另行通知。
 
 ---
 
@@ -321,7 +316,33 @@ GET /api/projects/{project_id}/requirement-text
 
 ---
 
-## 5. 对齐回执（请前端 agent 在这里回复）
+## 5. M4 新接口：实现状态与联调草案
+
+**以下均尚未部署或完成真实网关联调；不要打开生产 Session 开关，也不要将下面草案当作真实响应。** 前端 PR #3 的五项集成检查保持未勾选。代码映射和阻塞项见 `docs/m4/backend_delivery_status.md`。
+
+### 5.1 Session：本地实现，未发布
+
+- `POST /api/session`：同源 Origin 必填；创建返回 201 `{ "expires_at": "ISO-8601" }`，设置 `__Host-ps_session`；有效会话重复请求返回 200、同一过期时间；其他 API 不自动创建。前端现有 `openSession()` 仅要求 2xx，与本地形状兼容，尚未真实联调。
+- `GET /api/session`：200 `{ "expires_at": "ISO-8601" }`；无会话 401 `{ "error": "session_required" }`；无效或过期 Cookie 401 `{ "error": "session_expired" }`。过期后 POST 创建新身份，不能恢复旧项目。
+- Cookie 为 `HttpOnly; Secure; SameSite=Lax; Path=/`，固定 24 小时；签名密钥只存在服务端。修改请求缺失或不匹配 Origin 返回 403 `{ "error": "origin_mismatch" }`。
+- 本地启用模式按归属保护项目、运行、证据及报告，跨访客或无归属资源返回 404 `{ "error": "not_found" }`；共享 Bearer 不代替访客 Cookie。缺少会话密钥返回 503 `{ "error": "session_not_configured" }`。
+- 全局预算、并发、会话创建限流和真实 Worker/浏览器验收未完成；因此功能开关默认关闭，本地访客模式的昂贵写请求返回 503 `operation_unavailable`。限流和额度耗尽的最终错误码待实现，不是现有行为。远端 migration 0012 是否应用尚未确认。
+
+### 5.2 Pipeline：提议，未实现
+
+提议 `POST /api/projects/{id}/pipeline` 携带客户端生成的幂等键，并返回 `pipeline_id`；`GET /api/projects/{id}/pipeline/{pipeline_id}` 返回阶段、关联 `run_id` 和独立 `report_status`。同一项目、同一幂等键重试应返回同一任务；发起新调查须使用新键。字段名称、失败码及真实响应以实现和验收后发布的契约为准。
+
+目标状态可映射 `RESEARCHING` / `EVALUATING` / `DECIDING` / `REPORT_GENERATING` / `COMPLETED` / `PARTIAL` / `FAILED`；报告失败不能覆盖已完成的决策。现有 `POST .../runs` 只发起研究，不能充当此入口。
+
+### 5.3 Analysis：提议，未实现
+
+提议 `GET /api/projects/{id}/analysis` 显式选择 Pipeline 或 Run，返回对应的需求修订、候选、具体 assessment ID 和 Evidence ID、价格 `history_scope`、决策版本及报告引用。旧运行必须读取同一版本，不能按项目的最新判断或时间猜测；确无快照时应明确不可用，不回填最新值。具体选择参数、DTO 和公开错误码在版本存储方案确定后发布。
+
+### 5.4 自动报告：提议，未实现
+
+决策冻结后自动生成；状态由 Pipeline 暴露，成功时提供该版本的报告 ID 和下载引用，失败时提供公开错误码及短句并允许只重试报告。现有按需报告 API 可以生成文件，**但目前不能证明报告内容属于指定运行的不可变决策**；前端不得将时间匹配视为已验证版本绑定。
+
+## 6. 对齐回执（请前端 agent 在这里回复）
 
 > 后端会按这里的回复改代码并更新本节。请写清楚：同意/不同意、需要后端补的字段、期望的字段名、前端已实现的适配。
 

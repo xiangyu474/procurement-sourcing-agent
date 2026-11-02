@@ -1,9 +1,11 @@
 import { Container, getContainer } from "@cloudflare/containers";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
+import { authorizeGuest } from "./guest_session";
 import {
 	checkInternalAuth,
 	checkPublicAuth,
 	compileStatusSql,
+	guestProjectsListSql,
 	jobStatusSql,
 	projectRunsSql,
 	projectsListSql,
@@ -24,6 +26,9 @@ export interface Env {
 	SOURCING_CONTAINER: DurableObjectNamespace<Container<Env>>;
 	INTERNAL_GATEWAY_TOKEN: string;
 	DEMO_ACCESS_TOKEN: string;
+	GUEST_SESSION_ENABLED?: string;
+	GUEST_SESSION_SECRET?: string;
+	GUEST_PUBLIC_ORIGIN?: string;
 	CONTAINER_GATEWAY_URL: string;
 	CONTAINER_INSTANCE_NAME: string;
 	ACCEPTANCE_CONTAINER_NAME: string;
@@ -1392,17 +1397,23 @@ export class SourcingWorkflow extends WorkflowEntrypoint<Env, RunRequest> {
 	}
 }
 
-export default {
-	async fetch(request: Request, env: Env): Promise<Response> {
+async function handleFetch(request: Request, env: Env): Promise<Response> {
 		const url = new URL(request.url);
 
 		if (request.method === "GET" && url.pathname === "/api/health") {
 			return json({ status: "ok", service: "procurement-sourcing-gateway" });
 		}
 
+		let guestSessionId: string | null = null;
 		if (url.pathname.startsWith("/api/")) {
-			const unauthorized = await requireDemoAccess(request, env);
-			if (unauthorized) return unauthorized;
+			if (env.GUEST_SESSION_ENABLED === "true") {
+				const access = await authorizeGuest(request, env);
+				if ("response" in access) return access.response;
+				guestSessionId = access.sessionId;
+			} else {
+				const unauthorized = await requireDemoAccess(request, env);
+				if (unauthorized) return unauthorized;
+			}
 		}
 
 		if (url.pathname.startsWith("/internal/")) {
@@ -2278,8 +2289,9 @@ export default {
 		// still going on or that finished last.
 		if (request.method === "GET" && url.pathname === "/api/projects") {
 			const limit = Math.min(Number(url.searchParams.get("limit") ?? 50) || 50, 200);
-			const { results } = await env.DB.prepare(projectsListSql)
-				.bind(limit)
+			const listSql = guestSessionId ? guestProjectsListSql : projectsListSql;
+			const statement = env.DB.prepare(listSql);
+			const { results } = await (guestSessionId ? statement.bind(limit, guestSessionId) : statement.bind(limit))
 				.all<Record<string, unknown>>();
 			return json({ projects: results.map((row) => shapeProject(row)) });
 		}
@@ -2357,12 +2369,17 @@ export default {
 			const projectId = crypto.randomUUID();
 			const now = new Date().toISOString();
 			const analysisVersion = text ? 1 : 0;
-			await env.DB.prepare(
-				`INSERT INTO projects (id, title, created_at, analysis_version, demand_revision, history_availability)
-				 VALUES (?1, ?2, ?3, ?4, ?5, 'NOT_PROVIDED')`,
-			)
-				.bind(projectId, body.title ?? "未命名寻源项目", now, analysisVersion, text ? 1 : 0)
-				.run();
+			if (guestSessionId) {
+				await env.DB.prepare(
+					`INSERT INTO projects (id, title, created_at, analysis_version, demand_revision, history_availability, session_id)
+					 VALUES (?1, ?2, ?3, ?4, ?5, 'NOT_PROVIDED', ?6)`,
+				).bind(projectId, body.title ?? "未命名寻源项目", now, analysisVersion, text ? 1 : 0, guestSessionId).run();
+			} else {
+				await env.DB.prepare(
+					`INSERT INTO projects (id, title, created_at, analysis_version, demand_revision, history_availability)
+					 VALUES (?1, ?2, ?3, ?4, ?5, 'NOT_PROVIDED')`,
+				).bind(projectId, body.title ?? "未命名寻源项目", now, analysisVersion, text ? 1 : 0).run();
+			}
 			let sourceId: string | null = null;
 			if (text) {
 				sourceId = crypto.randomUUID();
@@ -2486,7 +2503,9 @@ export default {
 					.bind(projectId)
 					.run();
 			}
-			return json({ source_id: sourceId, purpose, revision, r2_key: key, sha256: digest }, 201);
+			return json(guestSessionId
+				? { source_id: sourceId, purpose, revision, sha256: digest }
+				: { source_id: sourceId, purpose, revision, r2_key: key, sha256: digest }, 201);
 		}
 
 		const compileMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/requirement-compile$/);
@@ -3213,9 +3232,10 @@ export default {
 			if (!evidence) return json({ error: "not_found" }, 404);
 			const snapshot = await env.BUCKET.get(String(evidence.snapshot_r2_key));
 			if (!snapshot) return json({ error: "evidence_snapshot_missing" }, 404);
+			const { snapshot_r2_key: _snapshotKey, ...publicEvidence } = evidence;
 			return json({
 				evidence: {
-					...evidence,
+					...(guestSessionId ? publicEvidence : evidence),
 					content_date_hints: JSON.parse(String(evidence.content_date_hints_json ?? "[]")),
 					snapshot_text: await snapshot.text(),
 				},
@@ -3250,5 +3270,21 @@ export default {
 		}
 
 		return json({ error: "not_found" }, 404);
+}
+
+export default {
+	async fetch(request: Request, env: Env): Promise<Response> {
+		if (env.GUEST_SESSION_ENABLED !== "true" || !new URL(request.url).pathname.startsWith("/api/")) {
+			return handleFetch(request, env);
+		}
+		try {
+			const response = await handleFetch(request, env);
+			const headers = new Headers(response.headers);
+			headers.set("cache-control", "private, no-store");
+			return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+		} catch (error) {
+			console.error("guest API request failed", error);
+			return Response.json({ error: "internal_error" }, { status: 500, headers: { "cache-control": "private, no-store" } });
+		}
 	},
 };
