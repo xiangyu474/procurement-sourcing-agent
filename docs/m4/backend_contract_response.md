@@ -269,3 +269,6 @@ GET /api/projects/{project_id}/requirement-text
 | 2026-11-02 | 前端 | 实网（2026-11-01）：表头不合格的 XLSX，`history-imports` 返回 500 `history_import_failed`，应变为 4xx/422，并给人能读的说明。浏览器仍能看到 `r2_key`、`normalized_r2_key`、按次 token、`SUPERVISOR:` 阶段名，以及事件 `detail` 里的 SourcingPlan / Supervisor / M3。请 Worker 去掉，或另给可展示字段；事件请给 `display_text` 或原因码，前端不必展示原文。 |
 | 2026-11-02 | 前端 | 同意：前端不重算技术结论、价格口径或建议档位。§3.6 未实现之前，F4 用分步引导，不用三次调用包装成「已重评」。 |
 | 2026-11-02 | 前端 | 实网：没有采购内容的文字（例如「你好，今天天气不错。」）整理任务返回 COMPLETED，且 `requirements` 为 0。前端因此不启动寻源，显示「没有识别出采购需求。」，也不把这次整理记成已完成。请确认这种情况应返回 FAILED，还是在 `issues` 里带一个原因码。 |
+| 2026-11-02 | 前端 | 技术核对和决策是否会在寻源运行结束后自动开始？代码里 `POST /api/projects/{id}/runs` 只启动 `SourcingWorkflow`（研究）。`POST .../spec-assessments` 和 `POST .../decisions` 是另外的工作流，不在这次运行里。前端本轮不放触发按钮，只显示 `GET .../status` 的 IDLE / QUEUED / RUNNING / COMPLETED / FAILED。请确认应该自动做，还是留给用户分步发起。 |
+| 2026-11-02 | 前端 | 价格和历史口径：公开的候选、技术核对、决策响应里没有 `history_scope`，也没有公网参考价和正式报价。计划预算目前只读整理结果里 `planned_total_budget`（`kind` 为 `PLANNED_BUDGET`）。历史成交价仅在需求对象上若已有 `history_scope` / `history_price` 时显示；`TABLE_OVERVIEW` 不写「历史价」「节支」，也不展示那个数字。请给出这三个价格和 `history_scope` 应出现的响应和字段名。在没有字段时，对应一行写「还没有」。 |
+| 2026-11-02 | 前端 | 关联：候选用 `candidate_id` + `requirement_id`，技术核对和决策用 `product_candidate_id` + `requirement_id`。同一对有多条时，取 `demand_revision` 最大、其次时间最新的一条，不合并结论。请确认是否就按这一对关联；若同一修订有多条，以哪条为准。 |

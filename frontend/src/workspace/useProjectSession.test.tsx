@@ -74,6 +74,11 @@ function client(methods: Partial<ApiClient>): ApiClient {
 		getRunEvents: async () => [],
 		getStopReason: async () => null,
 		getResearchSummary: async () => ({ stopReason: null, candidateCount: null }),
+		listCandidates: async () => [],
+		listAssessments: async () => [],
+		listDecisions: async () => [],
+		getJobStatus: async () => ({ status: "IDLE", job_id: null, demand_revision: 1, error: null }),
+		getEvidence: async () => ({ evidence_id: "e", title: null, source_url: null, retrieved_at: null, excerpt: null, snapshot_text: null }),
 		...methods,
 	} as ApiClient;
 }

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { installCatalogue, installFixture, LONG_PPTX, LONG_TITLE } from "./fixture";
+import { installCatalogue, installFixture, installReview, LONG_PPTX, LONG_TITLE } from "./fixture";
 
 const screenshots = "/opt/cursor/artifacts/screenshots";
 
@@ -88,7 +88,9 @@ test("fixture path shows a completed run without a download control", async ({ p
 	await page.getByLabel("需求文字").fill("采购 10 套工业摄像机。");
 	await page.getByRole("button", { name: "开始寻源" }).click();
 	await expect(page.getByTestId("run-status")).toHaveText("寻源已结束", { timeout: 30_000 });
-	await expect(page.getByRole("button", { name: "下载这一版" })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "下载这一版" })).toBeDisabled();
+	await expect(page.getByText("报告还没有生成")).toBeVisible();
+	await expect(page.getByText("这次没有候选供应商。")).toBeVisible();
 	await page.screenshot({ path: `${screenshots}/f1-completed.png`, fullPage: true });
 });
 
@@ -151,6 +153,71 @@ test("fifty projects scroll inside the nav and keep the work panel in view", asy
 	}));
 	expect(mobile.scrollWidth).toBeLessThanOrEqual(mobile.clientWidth + 1);
 	await page.screenshot({ path: `${screenshots}/f1-nav-50-mobile.png` });
+});
+
+test("candidate rows keep stage and verdict, and the inspector reads stored fields", async ({ page }) => {
+	await installReview(page, "mixed");
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto("/");
+	await page.getByRole("button", { name: /工业摄像机寻源/ }).click();
+	await expect(page.getByRole("row", { name: /海康威视/ })).toBeVisible();
+	await expect(page.getByText("建议先询价")).toBeVisible();
+	await expect(page.getByText("待补证")).toBeVisible();
+	await expect(page.getByText("已排除")).toBeVisible();
+	await expect(page.getByText("长名单").first()).toBeVisible();
+	await expect(page.getByText("推荐供应商")).toHaveCount(0);
+	await page.screenshot({ path: `${screenshots}/f2-mixed.png` });
+
+	await page.getByRole("row", { name: /海康威视/ }).click();
+	await expect(page.getByRole("complementary", { name: "所选型号" })).toContainText("像素 · 满足");
+	await expect(page.getByText("100 CNY 元/套")).toBeVisible();
+	await expect(page.getByText("这是网页标价，不是正式报价。")).toBeVisible();
+	await page.getByRole("button", { name: "查看这条来源" }).click();
+	await expect(page.getByText("页面正文：500万像素。")).toBeVisible();
+	const passBody = await page.locator("body").innerText();
+	expect(passBody).not.toMatch(/推荐供应商|snapshot_r2_key|workspaces\/default|Supervisor|token/i);
+	await page.screenshot({ path: `${screenshots}/f2-pass.png` });
+
+	await page.getByRole("row", { name: /DH-IPC-HFW5442/ }).click();
+	await expect(page.getByRole("complementary", { name: "所选型号" })).toContainText("还不能判断");
+	await expect(page.getByRole("complementary", { name: "所选型号" })).toContainText("长名单");
+	await expect(page.getByRole("complementary", { name: "所选型号" })).not.toContainText("建议先询价");
+	await page.screenshot({ path: `${screenshots}/f2-unknown.png` });
+
+	await page.getByRole("row", { name: /宇视科技/ }).click();
+	await expect(page.getByRole("complementary", { name: "所选型号" })).toContainText("不满足");
+	await expect(page.getByRole("complementary", { name: "所选型号" })).not.toContainText("合格");
+	await page.screenshot({ path: `${screenshots}/f2-fail.png` });
+
+	await page.getByRole("row", { name: /目录中的供应商/ }).click();
+	const overview = page.getByRole("complementary", { name: "所选型号" });
+	await expect(overview).toContainText("导入目录的整体情况");
+	await expect(overview).not.toContainText("历史价");
+	await expect(overview).not.toContainText("节支");
+	await expect(overview).not.toContainText("77");
+	await page.screenshot({ path: `${screenshots}/f2-overview.png` });
+
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.getByRole("row", { name: /海康威视/ }).scrollIntoViewIfNeeded();
+	const mobile = await page.evaluate(() => ({
+		scrollWidth: document.documentElement.scrollWidth,
+		clientWidth: document.documentElement.clientWidth,
+	}));
+	expect(mobile.scrollWidth).toBeLessThanOrEqual(mobile.clientWidth + 1);
+	await page.screenshot({ path: `${screenshots}/f2-mobile.png` });
+});
+
+test("a finished run with no candidates leaves the detail column out", async ({ page }) => {
+	await installReview(page, "none");
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto("/");
+	await page.getByRole("button", { name: /工业摄像机寻源/ }).click();
+	await expect(page.getByText("这次没有候选供应商。")).toBeVisible();
+	await expect(page.getByText("技术核对还没有开始。")).toBeVisible();
+	await expect(page.getByText("决策还没有开始。")).toBeVisible();
+	await expect(page.getByRole("complementary", { name: "所选型号" })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "下载这一版" })).toBeDisabled();
+	await page.screenshot({ path: `${screenshots}/f2-none.png` });
 });
 
 test("live gateway rejects a project create when no access credential is configured", async ({ page }) => {

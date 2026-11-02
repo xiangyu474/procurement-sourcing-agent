@@ -85,4 +85,44 @@ describe("ApiClient", () => {
 		);
 		await expect(client(fetchImpl).getStopReason("run-1")).resolves.toBe("BUDGET_EXHAUSTED");
 	});
+
+	it("loads candidates for one run and drops internal evidence fields", async () => {
+		const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+			const url = String(input);
+			if (url.includes("/candidates")) {
+				return jsonResponse({
+					candidates: [{
+						candidate_id: "c1",
+						requirement_id: "r1",
+						stage: "DISCOVERED_LONG_LIST",
+						last_seen_run_id: "run-1",
+						updated_at: "2026-11-01T00:00:00.000Z",
+						supplier: { display_name: "海康威视" },
+						product: { model: "DS-1" },
+						evidence: [{ evidence_id: "ev_1", source_url: "https://example.com/a", title: "页", retrieved_at: null, excerpt: "摘录" }],
+					}],
+				});
+			}
+			return jsonResponse({
+				evidence: {
+					evidence_id: "ev_1",
+					title: "页",
+					source_url: "https://example.com/a",
+					retrieved_at: null,
+					excerpt: "摘录",
+					snapshot_text: "正文",
+					snapshot_r2_key: "workspaces/default/secret",
+					content_sha256: "abc",
+				},
+			});
+		});
+		const api = client(fetchImpl);
+		const listed = await api.listCandidates("p1", "run 1");
+		expect(String(fetchImpl.mock.calls[0][0])).toBe("http://gateway.test/api/projects/p1/candidates?run_id=run+1");
+		expect(listed[0].supplier_name).toBe("海康威视");
+		const evidence = await api.getEvidence("ev_1");
+		expect(evidence.snapshot_text).toBe("正文");
+		expect(JSON.stringify(evidence)).not.toContain("secret");
+		expect(JSON.stringify(evidence)).not.toContain("content_sha256");
+	});
 });
