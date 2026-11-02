@@ -4,13 +4,13 @@
 
 Session 基础实现：**LOCAL_ONLY / NOT_PRODUCTION_READY**。基线为 main `11f2fae`；实现提交 `e70afe8bb3dd4d4335e1042c4a0b186432d91694`。`GUEST_SESSION_ENABLED` 默认关闭，访客昂贵写操作保持禁用。Node/SQLite 本地测试通过，不代表 Cloudflare Worker 或生产验收。
 
-B1 进行中（**LOCAL_IMPLEMENTED，尚无真实云端验收**）：新增受保护、配置开关控制的启动/状态路由和 Pipeline Workflow，绑定需求快照、run、候选、证据、评估和价格/决策上下文；带客户端幂等键，PARTIAL 可继续。新增云端验收模式，但尚未运行。没有完成 B2 的不可变决策版本、公开 Analysis 或自动 DOCX；不得当作完整产品交付。
+B1：**CLOUD_VERIFIED（一次受保护验收） / NOT_PUBLIC_READY**。Git `41a29c7`、容器配置 `sourcing-v15`、D1 migration `0012–0014`；验收 `cf_361ade387f38d46a62670ec3bddb436512812cf2fc9c5a641b5cb531989b283d`，1 需求、32 候选/核验/决策，同键复用同一 Pipeline/Run，三阶段完成；32 条决策均为 UNKNOWN/UNVERIFIED/INVESTIGATE。另以合成缺失历史对象验证阶段 FAILED 被记录。首次启动参数误编码的验收已终止；后续两次分别因容器启动代理错误、模型整理返回不符合 Schema 而失败。没有完成 B2 的完整不可变决策版本、公开 Analysis 或自动 DOCX；不得当作完整产品交付。
 
 | 顺序 | 代码位置 | 当前状态 / 后续工作 |
 | --- | --- | --- |
 | Session | `cloudflare/gateway/src/guest_session.ts`, `index.ts`, migration `0012` | 本地实现显式会话、同源 Origin 检查和项目/运行/证据归属；默认关闭。需完成真实 Worker 路由、浏览器 A/B 隔离和运行时测试，以及严格限额后才可启用。旧无归属项目对访客不可见；管理路径须另行设计。 |
 | 总预算与滥用防护 | 现有 `runs`、`research_run_costs`、Workflow 入口 | 未实现全局原子预约、预算上限和并发控制，也未保护会话创建频率。仅按 session 计数或按地域限流均不足以保证全局预算；尚未启用公开访客任务。 |
-| Pipeline | `cloudflare/gateway/src/pipeline_workflow.ts`, `pipeline_store.ts`, `index.ts` | 本地实现研究→核验→价格/决策串联及不可变阶段快照；尚待真实云端验证、异常恢复和 Worker 路由测试。报告仍未接入。 |
+| Pipeline | `cloudflare/gateway/src/pipeline_workflow.ts`, `pipeline_store.ts`, `index.ts` | 受保护路径一次云端验收 PASS，冻结需求、候选/证据与阶段结果；异常恢复和实际 Worker 路由测试仍需补充。报告仍未接入。 |
 | Analysis 与版本 | `spec-context`, `decision-context`, `spec_assessments`, `sourcing_decisions` | 尚无统一 `/analysis`。当前部分上下文读取项目最新数据；决策表按项目/需求/候选唯一且会更新，不能视为按运行冻结的历史快照。须增加不可变的运行关联和 assessment/decision 引用。 |
 | Report | `SourcingReportWorkflow`, `/internal/projects/{id}/report-context`, `src/procurement_agent/reports/procurement_report.py` | 当前报告上下文读取当前项目数据，`run_id` 不能证明内容属于该运行；摘要并非完整不可变决策快照。必须先修复再用于自动生成当前版本报告。 |
 | 前端联调 | `docs/m4/backend_contract_response.md` | §5 仅为本地会话契约草案，未部署，不构成真实联调通知。每个接口部署后再记录固定版本、真实响应与测试结果。 |

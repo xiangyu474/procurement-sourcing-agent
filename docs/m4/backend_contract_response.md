@@ -318,7 +318,7 @@ GET /api/projects/{project_id}/requirement-text
 
 ## 5. M4 新接口：实现状态与联调草案
 
-**以下均尚未部署或完成真实网关联调；不要打开生产 Session 开关，也不要将下面草案当作真实响应。** 前端 PR #3 的五项集成检查保持未勾选。代码映射和阻塞项见 `docs/m4/backend_delivery_status.md`。
+**Session、统一 Analysis 和自动报告尚未完成生产验收；不要打开生产 Session 开关。** 受保护 Pipeline 的云端测试见 §5.2，前端尚未完成真实联调；五项联合集成检查仍保持未勾选。代码映射和阻塞项见 `docs/m4/backend_delivery_status.md`。
 
 ### 5.1 Session：本地实现，未发布
 
@@ -328,11 +328,45 @@ GET /api/projects/{project_id}/requirement-text
 - 本地启用模式按归属保护项目、运行、证据及报告，跨访客或无归属资源返回 404 `{ "error": "not_found" }`；共享 Bearer 不代替访客 Cookie。缺少会话密钥返回 503 `{ "error": "session_not_configured" }`。
 - 全局预算、并发、会话创建限流和真实 Worker/浏览器验收未完成；因此功能开关默认关闭，本地访客模式的昂贵写请求返回 503 `operation_unavailable`。限流和额度耗尽的最终错误码待实现，不是现有行为。远端 migration 0012 是否应用尚未确认。
 
-### 5.2 Pipeline：提议，未实现
+### 5.2 Pipeline：受保护路径已部署，单次云端验收通过
 
-提议 `POST /api/projects/{id}/pipeline` 携带客户端生成的幂等键，并返回 `pipeline_id`；`GET /api/projects/{id}/pipeline/{pipeline_id}` 返回阶段、关联 `run_id` 和独立 `report_status`。同一项目、同一幂等键重试应返回同一任务；发起新调查须使用新键。字段名称、失败码及真实响应以实现和验收后发布的契约为准。
+**CLOUD_VERIFIED（B1 单次，非 PUBLIC_READY）**：Git `41a29c7`，配置容器 `sourcing-v15`，acceptance `cf_361ade387f38d46a62670ec3bddb436512812cf2fc9c5a641b5cb531989b283d`。只有受保护的服务端 Bearer 路径可用；Guest Session 仍未启用。前端不要把该凭证放到浏览器，生产接入仍需 B3。无分析 API 或自动报告，`COMPLETED` 仅代表 B1 分析完成。
 
-目标状态可映射 `RESEARCHING` / `EVALUATING` / `DECIDING` / `REPORT_GENERATING` / `COMPLETED` / `PARTIAL` / `FAILED`；报告失败不能覆盖已完成的决策。现有 `POST .../runs` 只发起研究，不能充当此入口。
+```http
+POST /api/projects/{project_id}/pipeline
+Idempotency-Key: <客户端每次新任务生成的键>
+Content-Type: application/json
+
+{"demand_revision": 1}
+```
+
+返回 202，字段为 `pipeline_id`、`run_id`、`demand_revision`、`status`、`reused`。同一项目与同一键重试复用任务；同键不同修订返回 409 `idempotency_conflict`，发起新调查使用新键。项目当前需求与所请求修订不同返回 409 `demand_revision_changed`；空需求 422 `no_recognizable_demand`；没有启用返回 503 `operation_unavailable`。当 Workflow 创建结果不可确认返回 503 `workflow_start_failed`，可用**原幂等键**重试。
+
+```http
+GET /api/projects/{project_id}/pipeline/{pipeline_id}
+```
+
+返回 `pipeline_id`、`project_id`、`run_id`、`demand_revision`、`status`、`stage`、`error`、`stages[]`、`created_at`、`updated_at`；阶段项含 `stage/status/started_at/finished_at/error_code`。本次云端验收真实观测：
+
+```json
+{
+  "project_id": "3ef68fec-d705-4b0d-b3aa-c91ee77ed1dd",
+  "pipeline_id": "76e6b5d0-f854-4b85-9b2f-62b0e8e593da",
+  "run_id": "943f57dd-a85f-46ef-8523-432d3dcc7b71",
+  "demand_revision": 1,
+  "pipeline_status": "COMPLETED",
+  "stage": "COMPLETED",
+  "stages": [
+    {"stage":"RESEARCH","status":"COMPLETED","started_at":"2026-11-02T15:06:58.664Z","finished_at":"2026-11-02T15:17:07.053Z","error_code":null},
+    {"stage":"EVALUATING","status":"COMPLETED","started_at":"2026-11-02T15:17:07.195Z","finished_at":"2026-11-02T15:21:59.486Z","error_code":null},
+    {"stage":"DECIDING","status":"COMPLETED","started_at":"2026-11-02T15:21:59.958Z","finished_at":"2026-11-02T15:22:27.075Z","error_code":null}
+  ]
+}
+```
+
+上例来自验收输出，其中 `pipeline_status` 是验收摘要字段；**实际状态 API 的字段名是 `status`**。重复启动同一键观测到相同 Pipeline/Run 且 `reused: true`。32 个候选、32 个核验、32 条决策均为 `UNKNOWN/UNVERIFIED/INVESTIGATE`，不构成建议询价；无历史文件。另用缺失历史对象的合成任务验证 `FAILED` 和阶段错误记录。第一次编译因容器未运行失败，另一次模型整理未产出有效需求；两次均未算通过。
+
+任务状态为 `QUEUED/RUNNING/COMPLETED/PARTIAL/FAILED`，运行阶段包括 `RESEARCHING/EVALUATING/DECIDING`。本版**不返回 `report_status`、决策版本或完整分析 DTO**。历史运行回放、公开鉴权、自动报告、浏览器联调仍待 B2–B4。现有 `POST .../runs` 只发起研究，不是此入口。
 
 ### 5.3 Analysis：提议，未实现
 
