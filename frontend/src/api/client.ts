@@ -22,6 +22,9 @@ import {
 	type SourcingDecision,
 	type SpecAssessment,
 	type SpecCheck,
+	type Pipeline,
+	type PipelineStage,
+	type StartedPipeline,
 	type StartedRun,
 	type TextRevision,
 	type UploadedSource,
@@ -446,6 +449,28 @@ export class ApiClient {
 		});
 	}
 
+	startPipeline(projectId: string, idempotencyKey: string, demandRevision: number, call?: CallOptions): Promise<StartedPipeline> {
+		return this.request(`/api/projects/${encodeURIComponent(projectId)}/pipeline`, {
+			method: "POST",
+			json: { demand_revision: demandRevision },
+			headers: { "Idempotency-Key": idempotencyKey },
+			call,
+		}).then((payload) => {
+			const row = asRecord(payload, "pipeline");
+			return {
+				pipeline_id: asString(row, "pipeline_id"),
+				run_id: asString(row, "run_id"),
+				demand_revision: asNumber(row, "demand_revision"),
+				status: asString(row, "status"),
+				reused: Boolean(row.reused),
+			};
+		});
+	}
+
+	getPipeline(projectId: string, pipelineId: string, call?: CallOptions): Promise<Pipeline> {
+		return this.request(`/api/projects/${encodeURIComponent(projectId)}/pipeline/${encodeURIComponent(pipelineId)}`, { call }).then(asPipeline);
+	}
+
 	startRun(projectId: string, idempotencyKey: string, call?: CallOptions): Promise<StartedRun> {
 		return this.request(`/api/projects/${encodeURIComponent(projectId)}/runs`, {
 			method: "POST",
@@ -535,13 +560,17 @@ export class ApiClient {
 		});
 	}
 
-	/** Explicit guest session. The body shape is unpublished, so a 2xx is enough and nothing is stored. */
+	/** 201 creates a session; 200 repeats the same expiry. Both bodies are `{ expires_at }`. Nothing is stored. */
 	openSession(call?: CallOptions): Promise<void> {
-		return this.request("/api/session", { method: "POST", json: {}, call }).then(() => undefined);
+		return this.request("/api/session", { method: "POST", json: {}, call, skipSessionRetry: true }).then((payload) => {
+			assertExpiresAt(payload);
+		});
 	}
 
 	readSession(call?: CallOptions): Promise<void> {
-		return this.request("/api/session", { call }).then(() => undefined);
+		return this.request("/api/session", { call, skipSessionRetry: true }).then((payload) => {
+			assertExpiresAt(payload);
+		});
 	}
 
 	listReports(projectId: string, call?: CallOptions): Promise<Report[]> {
@@ -610,25 +639,37 @@ export class ApiClient {
 
 	private async request(
 		path: string,
-		init: { method?: string; json?: unknown; body?: BodyInit; call?: CallOptions } = {},
+		init: { method?: string; json?: unknown; body?: BodyInit; headers?: Record<string, string>; call?: CallOptions; skipSessionRetry?: boolean } = {},
 	): Promise<unknown> {
 		const timeoutMs = init.call?.timeoutMs ?? this.timeoutMs;
 		const timeout = new AbortController();
 		const timer = setTimeout(() => timeout.abort(), timeoutMs);
 		const callerSignal = init.call?.signal;
 		const signal = callerSignal ? AbortSignal.any([callerSignal, timeout.signal]) : timeout.signal;
-		const headers = init.json !== undefined ? JSON_HEADERS : undefined;
+		const headers: Record<string, string> = { ...(init.headers ?? {}) };
+		if (init.json !== undefined) headers["content-type"] = headers["content-type"] ?? JSON_HEADERS["content-type"];
 		try {
 			const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
 				method: init.method ?? "GET",
 				body: init.json !== undefined ? JSON.stringify(init.json) : init.body,
-				headers,
+				headers: Object.keys(headers).length > 0 ? headers : undefined,
 				credentials: "same-origin",
 				signal,
 			});
 			const text = await response.text();
 			const body = text ? parseBody(text) : null;
-			if (!response.ok) throw new ApiError(response.status, errorCode(body, response.status), body);
+			if (!response.ok) {
+				const error = new ApiError(response.status, errorCode(body, response.status), body);
+				if (canRenewSession(error, init.skipSessionRetry)) {
+					try {
+						await this.openSession(init.call);
+					} catch {
+						throw new ApiError(401, "session_expired", null);
+					}
+					return await this.request(path, { ...init, skipSessionRetry: true });
+				}
+				throw error;
+			}
 			return body;
 		} catch (error) {
 			if (error instanceof ApiError) throw error;
@@ -639,6 +680,51 @@ export class ApiClient {
 			clearTimeout(timer);
 		}
 	}
+}
+
+function canRenewSession(error: ApiError, skip: boolean | undefined): boolean {
+	if (skip) return false;
+	return error.status === 401 && (error.code === "session_required" || error.code === "session_expired");
+}
+
+function assertExpiresAt(value: unknown): void {
+	const row = asRecord(value, "session");
+	if (typeof row.expires_at !== "string" || row.expires_at.length === 0) {
+		throw new ApiError(0, "invalid_response", { key: "expires_at" });
+	}
+}
+
+function asPipelineStage(value: unknown): PipelineStage | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	const row = value as Record<string, unknown>;
+	if (typeof row.stage !== "string" || row.stage.length === 0) return null;
+	return {
+		stage: row.stage,
+		status: typeof row.status === "string" ? row.status : "",
+		started_at: asOptionalString(row.started_at),
+		finished_at: asOptionalString(row.finished_at),
+		error_code: asOptionalString(row.error_code),
+	};
+}
+
+function asPipeline(value: unknown): Pipeline {
+	const row = asRecord(value, "pipeline");
+	const stages = Array.isArray(row.stages) ? row.stages.flatMap((item) => {
+		const stage = asPipelineStage(item);
+		return stage ? [stage] : [];
+	}) : [];
+	return {
+		pipeline_id: asString(row, "pipeline_id"),
+		project_id: asString(row, "project_id"),
+		run_id: asString(row, "run_id"),
+		demand_revision: asNumber(row, "demand_revision"),
+		status: asString(row, "status"),
+		stage: asOptionalString(row.stage),
+		error: asOptionalString(row.error),
+		stages,
+		created_at: asString(row, "created_at"),
+		updated_at: asString(row, "updated_at"),
+	};
 }
 
 export function createApiClient(options?: ApiClientOptions): ApiClient {

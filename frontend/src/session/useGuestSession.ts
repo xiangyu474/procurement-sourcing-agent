@@ -2,7 +2,7 @@ import { useEffect, useState, type MutableRefObject } from "react";
 import { messageForApiError } from "../api/adapter";
 import type { ApiClient } from "../api/client";
 
-/** Off until the backend publishes the session contract. The dev proxy is unchanged. */
+/** Off unless VITE_GUEST_SESSION=1. The backend says to leave that unset. The dev proxy is unchanged. */
 export function guestSessionEnabled(): boolean {
 	return import.meta.env.VITE_GUEST_SESSION === "1";
 }

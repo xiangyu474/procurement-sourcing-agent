@@ -1,16 +1,16 @@
 const PIPELINE_LABELS: Record<string, string> = {
+	RESEARCH: "正在寻找供应商",
 	RESEARCHING: "正在寻找供应商",
 	EVALUATING: "正在核对技术与价格",
 	DECIDING: "正在整理采购建议",
-	REPORT_GENERATING: "正在生成报告",
 	COMPLETED: "已完成",
 	PARTIAL: "需要处理",
 	FAILED: "需要处理",
 };
 
 /**
- * User-facing progress. Today this reads the live run and job states.
- * `pipelineStatus` is the seam for the unpublished pipeline contract; unknown values are ignored.
+ * User-facing progress. A followed pipeline wins.
+ * B1 `COMPLETED` means the analysis finished. It is not a report, and this map has no report stage.
  */
 export function userProgress(input: {
 	pipelineStatus?: string | null;

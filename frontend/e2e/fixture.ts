@@ -25,6 +25,8 @@ export function installFixture(page: Page, mode: Mode): Promise<unknown> {
 		text: "",
 		created: false,
 		runId: "22222222-2222-4222-8222-222222222222",
+		pipelineId: "33333333-3333-4333-8333-333333333333",
+		pipelineKey: "" as string,
 	};
 
 	const projectSummary = () => ({
@@ -37,8 +39,8 @@ export function installFixture(page: Page, mode: Mode): Promise<unknown> {
 		latest_run: state.runReads > 0
 			? {
 					id: state.runId,
-					status: state.runReads >= 2 ? (mode === "completed" ? "COMPLETED" : mode === "failed" ? "FAILED" : "PARTIAL") : "RUNNING",
-					current_stage: state.runReads >= 2 ? (mode === "completed" ? "WEB_RESEARCH" : mode === "failed" ? "FAILED" : "PARTIAL") : "WEB_RESEARCH",
+					status: state.runReads >= 3 ? (mode === "completed" ? "COMPLETED" : mode === "failed" ? "FAILED" : "PARTIAL") : "RUNNING",
+					current_stage: state.runReads >= 3 ? (mode === "completed" ? "WEB_RESEARCH" : mode === "failed" ? "FAILED" : "PARTIAL") : "WEB_RESEARCH",
 					updated_at: "2026-10-31T00:04:00.000Z",
 				}
 			: null,
@@ -61,7 +63,7 @@ export function installFixture(page: Page, mode: Mode): Promise<unknown> {
 		}
 		if (request.method() === "GET" && path === `/api/projects/${state.id}/runs`) {
 			const terminal = mode === "completed" ? "COMPLETED" : mode === "failed" ? "FAILED" : "PARTIAL";
-			const status = state.runReads >= 2 ? terminal : state.runReads > 0 ? "RUNNING" : null;
+			const status = state.runReads >= 3 ? terminal : state.runReads > 0 ? "RUNNING" : null;
 			await fulfill(200, {
 				runs: status
 					? [{
@@ -209,6 +211,45 @@ export function installFixture(page: Page, mode: Mode): Promise<unknown> {
 			});
 			return;
 		}
+		if (request.method() === "POST" && path === `/api/projects/${state.id}/pipeline`) {
+			const key = request.headers()["idempotency-key"] ?? "";
+			const body = await json();
+			const reused = state.pipelineKey !== "" && state.pipelineKey === key;
+			if (!reused) state.pipelineKey = key;
+			await fulfill(202, {
+				pipeline_id: state.pipelineId,
+				run_id: state.runId,
+				demand_revision: body.demand_revision,
+				status: "QUEUED",
+				reused,
+			});
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${state.id}/pipeline/${state.pipelineId}`) {
+			const terminal = mode === "completed" ? "COMPLETED" : mode === "failed" ? "FAILED" : "PARTIAL";
+			const done = state.runReads >= 3;
+			await fulfill(200, {
+				pipeline_id: state.pipelineId,
+				project_id: state.id,
+				run_id: state.runId,
+				demand_revision: state.demandRevision,
+				status: done ? terminal : "RUNNING",
+				stage: done ? terminal : "RESEARCH",
+				error: null,
+				stages: [
+					{
+						stage: "RESEARCH",
+						status: done ? "COMPLETED" : "RUNNING",
+						started_at: "2026-10-31T00:03:00.000Z",
+						finished_at: done ? "2026-10-31T00:04:00.000Z" : null,
+						error_code: null,
+					},
+				],
+				created_at: "2026-10-31T00:03:00.000Z",
+				updated_at: "2026-10-31T00:04:00.000Z",
+			});
+			return;
+		}
 		if (request.method() === "POST" && path === `/api/projects/${state.id}/runs`) {
 			await fulfill(202, { run_id: state.runId, status: "QUEUED", mode: "SOURCING" });
 			return;
@@ -216,7 +257,7 @@ export function installFixture(page: Page, mode: Mode): Promise<unknown> {
 		if (request.method() === "GET" && path === `/api/runs/${state.runId}`) {
 			state.runReads += 1;
 			const terminal = mode === "completed" ? "COMPLETED" : mode === "failed" ? "FAILED" : "PARTIAL";
-			const status = state.runReads >= 2 ? terminal : "RUNNING";
+			const status = state.runReads >= 3 ? terminal : "RUNNING";
 			await fulfill(200, {
 				id: state.runId,
 				project_id: state.id,
@@ -915,3 +956,225 @@ export function installReportFlow(page: Page, mode: "generate" | "completed" | "
 }
 
 export { LONG_PPTX, LONG_TITLE };
+
+export type PipelineScript = "stages" | "reload" | "conflict" | "revision" | "unrecognized" | "unavailable" | "retry" | "failed";
+
+const PIPE_PROJECT = "44444444-4444-4444-8444-444444444444";
+const PIPE_RUN = "55555555-5555-4555-8555-555555555555";
+const PIPE_ID = "88888888-8888-4888-8888-888888888888";
+
+/**
+ * Fixture modelled on the documented §5.2 pipeline shapes and error codes.
+ * It is not a live gateway response.
+ */
+export function installPipeline(page: Page, script: PipelineScript): Promise<Array<{ key: string; revision: unknown }>> {
+	const posts: Array<{ key: string; revision: unknown }> = [];
+	const state = { created: false, title: "流水线项目", revision: 0, text: "", compiled: false, pipelineReads: 0 };
+
+	const pipelineBody = () => {
+		const step = state.pipelineReads;
+		state.pipelineReads += 1;
+		const finished = script === "failed" || (script === "stages" && step >= 3) || (script !== "stages" && script !== "reload");
+		const stage = script === "reload" ? "RESEARCH" : step === 0 ? "RESEARCH" : step === 1 ? "EVALUATING" : step === 2 ? "DECIDING" : "COMPLETED";
+		const status = script === "failed" ? "FAILED" : script === "reload" ? "RUNNING" : finished ? "COMPLETED" : "RUNNING";
+		const at = "2026-11-02T15:06:58.664Z";
+		return {
+			pipeline_id: PIPE_ID,
+			project_id: PIPE_PROJECT,
+			run_id: PIPE_RUN,
+			demand_revision: state.revision,
+			status,
+			stage: script === "failed" ? "RESEARCH" : stage,
+			error: script === "failed" ? "container exploded and should stay hidden" : null,
+			stages: [
+				{
+					stage: "RESEARCH",
+					status: script === "failed" ? "FAILED" : status === "RUNNING" && stage === "RESEARCH" ? "RUNNING" : "COMPLETED",
+					started_at: at,
+					finished_at: status === "RUNNING" ? null : "2026-11-02T15:17:07.053Z",
+					error_code: script === "failed" ? "NO_FETCHED_EVIDENCE" : null,
+				},
+				{ stage: "EVALUATING", status: stage === "EVALUATING" && status === "RUNNING" ? "RUNNING" : finished ? "COMPLETED" : "QUEUED", started_at: null, finished_at: null, error_code: null },
+				{ stage: "DECIDING", status: stage === "DECIDING" && status === "RUNNING" ? "RUNNING" : finished ? "COMPLETED" : "QUEUED", started_at: null, finished_at: null, error_code: null },
+			],
+			created_at: at,
+			updated_at: "2026-11-02T15:22:27.075Z",
+		};
+	};
+
+	return page.route("**/api/**", async (route: Route) => {
+		const request = route.request();
+		const url = new URL(request.url());
+		const path = url.pathname;
+		const fulfill = (status: number, body: unknown) =>
+			route.fulfill({ status, contentType: "application/json; charset=utf-8", body: JSON.stringify(body) });
+		const posted = () => {
+			const raw = request.postData();
+			return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+		};
+		if (request.method() === "GET" && path === "/api/projects") {
+			await fulfill(200, {
+				projects: state.created
+					? [{
+							id: PIPE_PROJECT,
+							title: state.title,
+							history_availability: "NOT_PROVIDED",
+							demand_revision: state.revision,
+							analysis_version: state.revision,
+							created_at: "2026-11-02T15:00:00.000Z",
+							latest_run: null,
+						}]
+					: [],
+			});
+			return;
+		}
+		if (request.method() === "POST" && path === "/api/projects") {
+			state.created = true;
+			const body = posted();
+			state.title = typeof body.title === "string" && body.title.trim() ? body.title : state.title;
+			await fulfill(201, { project_id: PIPE_PROJECT, source_id: null, analysis_version: 0 });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${PIPE_PROJECT}`) {
+			await fulfill(200, {
+				id: PIPE_PROJECT,
+				title: state.title,
+				analysis_version: state.revision,
+				demand_revision: state.revision,
+				history_availability: "NOT_PROVIDED",
+				created_at: "2026-11-02T15:00:00.000Z",
+				sources: state.text
+					? [{
+							id: "text-1",
+							purpose: "REQUIREMENT",
+							source_type: "USER_TEXT",
+							revision: state.revision,
+							filename: null,
+							media_type: "text/plain",
+							sha256: "abc",
+							created_at: "2026-11-02T15:01:00.000Z",
+						}]
+					: [],
+			});
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${PIPE_PROJECT}/requirement-text`) {
+			if (!state.text) {
+				await fulfill(404, { error: "not_found" });
+				return;
+			}
+			await fulfill(200, { source_id: "text-1", revision: state.revision, text: state.text });
+			return;
+		}
+		if (request.method() === "POST" && path === `/api/projects/${PIPE_PROJECT}/requirement-text`) {
+			state.revision += 1;
+			const body = posted();
+			state.text = typeof body.text === "string" ? body.text : state.text;
+			await fulfill(201, { project_id: PIPE_PROJECT, source_id: "text-1", revision: state.revision });
+			return;
+		}
+		if (request.method() === "POST" && path === `/api/projects/${PIPE_PROJECT}/requirement-compile`) {
+			state.compiled = true;
+			await fulfill(202, { project_id: PIPE_PROJECT, status: "QUEUED", compile_id: "compile-1", analysis_version: state.revision });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${PIPE_PROJECT}/requirement-compile/compile-1`) {
+			await fulfill(200, {
+				compile_id: "compile-1",
+				project_id: PIPE_PROJECT,
+				status: "COMPLETED",
+				analysis_version: state.revision,
+				demand_revision: state.revision,
+				error: null,
+			});
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${PIPE_PROJECT}/requirements`) {
+			if (!state.compiled) {
+				await fulfill(404, { error: "not_compiled" });
+				return;
+			}
+			await fulfill(200, {
+				analysis_version: state.revision,
+				compilation: { requirements: [{ requirement_id: "r1", product_name: "工业摄像机" }], issues: [] },
+			});
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${PIPE_PROJECT}/runs`) {
+			await fulfill(200, { runs: [] });
+			return;
+		}
+		if (request.method() === "POST" && path === `/api/projects/${PIPE_PROJECT}/pipeline`) {
+			const key = request.headers()["idempotency-key"] ?? "";
+			const body = posted();
+			posts.push({ key, revision: body.demand_revision });
+			if (script === "conflict" && posts.length === 1) {
+				await fulfill(409, { error: "idempotency_conflict" });
+				return;
+			}
+			if (script === "revision") {
+				await fulfill(409, { error: "demand_revision_changed" });
+				return;
+			}
+			if (script === "unrecognized") {
+				await fulfill(422, { error: "no_recognizable_demand" });
+				return;
+			}
+			if (script === "unavailable") {
+				await fulfill(503, { error: "operation_unavailable" });
+				return;
+			}
+			if (script === "retry" && posts.length === 1) {
+				await fulfill(503, { error: "workflow_start_failed" });
+				return;
+			}
+			await fulfill(202, {
+				pipeline_id: PIPE_ID,
+				run_id: PIPE_RUN,
+				demand_revision: body.demand_revision,
+				status: "QUEUED",
+				reused: posts.filter((item) => item.key === key).length > 1,
+			});
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${PIPE_PROJECT}/pipeline/${PIPE_ID}`) {
+			await fulfill(200, pipelineBody());
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/runs/${PIPE_RUN}`) {
+			const finished = script === "stages" ? state.pipelineReads >= 4 : script !== "reload";
+			await fulfill(200, {
+				id: PIPE_RUN,
+				project_id: PIPE_PROJECT,
+				status: finished ? (script === "failed" ? "FAILED" : "COMPLETED") : "RUNNING",
+				current_stage: finished ? "COMPLETED" : "WEB_RESEARCH",
+				artifact_key: null,
+				last_error: null,
+				created_at: "2026-11-02T15:06:58.664Z",
+				updated_at: "2026-11-02T15:22:27.075Z",
+			});
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/runs/${PIPE_RUN}/events`) {
+			await fulfill(200, { events: [] });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/runs/${PIPE_RUN}/research`) {
+			await fulfill(200, { metrics: { stop_reason_code: null, candidate_count: 0 } });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${PIPE_PROJECT}/candidates`) {
+			await fulfill(200, { candidates: [] });
+			return;
+		}
+		if (request.method() === "GET" && (path.endsWith("/spec-assessments/status") || path.endsWith("/decisions/status"))) {
+			await fulfill(200, { status: "IDLE", job_id: null, demand_revision: state.revision, error: null, updated_at: null });
+			return;
+		}
+		if (request.method() === "GET" && (path.endsWith("/spec-assessments") || path.endsWith("/decisions") || path.endsWith("/reports"))) {
+			await fulfill(200, { assessments: [], decisions: [], reports: [] });
+			return;
+		}
+		await fulfill(404, { error: "not_found" });
+	}).then(() => posts);
+}

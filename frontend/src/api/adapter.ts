@@ -42,7 +42,14 @@ const REASONS: Record<string, string> = {
 	structured_requirement_required_for_m2: "没有整理出可以寻源的采购条目。",
 	no_recognizable_demand: "没有识别出采购需求。",
 	unauthorized: "访问被拒绝。",
-	session_expired: "这次访问已过期。请刷新页面后再试。",
+	session_required: "会话已失效，请刷新页面。",
+	session_expired: "会话已失效，请刷新页面。",
+	origin_mismatch: "页面来源不对，请从本站重新打开。",
+	session_not_configured: "会话还没有配置。",
+	operation_unavailable: "分析暂时不可用。",
+	workflow_start_failed: "分析没能启动。",
+	demand_revision_changed: "需求刚更新过，请确认后再开始。",
+	demand_revision_required: "需求还没有整理完成。",
 	rate_limited: "请求过于频繁，请稍后再试。",
 	budget_exhausted: "这次分析的额度已用完。",
 	demo_access_not_configured: "服务没有配置访问凭证。",
@@ -54,7 +61,7 @@ const REASONS: Record<string, string> = {
 	"at least one demand source (text or PPTX) is required": "请先填写需求或上传 PPTX。",
 	history_source_not_found: "没有找到已上传的历史文件。",
 	history_import_failed: "历史数据导入失败。",
-	not_found: "没有找到对应的记录。",
+	not_found: "找不到这个项目或已无权访问。",
 	not_compiled: "需求还没有整理完成。",
 };
 
@@ -218,6 +225,11 @@ export function isAbort(error: unknown): boolean {
 	return error instanceof ApiError && error.code === "aborted";
 }
 
+/** A published error code's Chinese line, or null when the code is not one we show. */
+export function publicReason(code: string): string | null {
+	return REASONS[code] ?? null;
+}
+
 export function messageForApiError(error: unknown): UiError {
 	if (!(error instanceof ApiError)) return { summary: "请求没有完成。" };
 	if (error.code === "timeout") return { summary: "请求超时。" };
@@ -226,7 +238,7 @@ export function messageForApiError(error: unknown): UiError {
 	const technical = publicDetail(error.body);
 	if (known) return technical ? { summary: known, technical } : { summary: known };
 	if (error.status === 401 || error.status === 403) return { summary: "访问被拒绝。" };
-	if (error.status === 404) return { summary: "没有找到对应的记录。" };
+	if (error.status === 404) return { summary: REASONS.not_found };
 	if (error.status === 429) return { summary: error.code === "budget_exhausted" ? REASONS.budget_exhausted : "请求过于频繁，请稍后再试。" };
 	if (error.status >= 500) return { summary: "服务暂时不可用。" };
 	return technical ? { summary: "请求没有被接受。", technical } : { summary: "请求没有被接受。" };
