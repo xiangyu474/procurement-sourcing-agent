@@ -123,8 +123,8 @@ export function installFixture(page: Page, mode: Mode): Promise<unknown> {
 				analysis_version: state.analysisVersion,
 				compilation: {
 					requirements: [{ requirement_id: "r1", product_name: "工业摄像机" }],
-					unstructured_requirements: [],
-					issues: [],
+					unstructured_requirements: [{ text: "付款方式待定" }, { text: "交货地点待定" }, { text: "样品说明" }],
+					issues: ["budget 200000 not confirmed", "delivery window unclear"],
 				},
 			});
 			return;
@@ -164,7 +164,8 @@ export function installFixture(page: Page, mode: Mode): Promise<unknown> {
 		if (request.method() === "GET" && path === `/api/runs/${state.runId}/research`) {
 			await fulfill(200, {
 				metrics: {
-					stop_reason_code: mode === "failed" ? "MODEL_TIMEOUT" : mode === "completed" ? null : "BUDGET_EXHAUSTED",
+					stop_reason_code: mode === "failed" ? "MODEL_TIMEOUT" : mode === "completed" ? null : "NO_SOURCE_BACKED_CANDIDATES",
+					candidate_count: mode === "partial" ? 0 : 1,
 					prompt_tokens: 12345,
 					completion_tokens: 67,
 					warnings: ["Supervisor token note"],

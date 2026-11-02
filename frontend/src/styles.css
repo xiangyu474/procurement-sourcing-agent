@@ -111,7 +111,7 @@ button[disabled]:not(.download) { opacity: 0.55; cursor: default; }
 .primary[disabled] { opacity: 0.4; }
 .received { list-style: none; margin: 0 0 var(--space-3); padding: 0; color: var(--muted); }
 .received li { padding: 2px 0; overflow-wrap: anywhere; }
-.arranged { margin: 0 0 var(--space-4); }
+.arranged, .notice { margin: 0 0 var(--space-3); }
 .actions { display: flex; gap: var(--space-2); align-items: center; margin: var(--space-3) 0 var(--space-4); }
 .summary { margin: 0 0 var(--space-4); }
 .summary summary { cursor: pointer; }

@@ -3,7 +3,7 @@ import { ApiError, type RequirementsDocument } from "./types";
 export type CompileView =
 	| { phase: "pending" }
 	| { phase: "failed"; issues: string[] }
-	| { phase: "ready"; requirementCount: number; unstructuredCount: number };
+	| { phase: "ready"; requirementCount: number; unstructuredCount: number; notices: string[] };
 
 export type UiError = {
 	summary: string;
@@ -35,6 +35,7 @@ const REASONS: Record<string, string> = {
 	INVALID_RESEARCH_INPUT: "当前需求无法开始寻源。",
 	RESEARCH_INPUT_REJECTED: "有一条资料地址被拒绝。",
 	NO_FETCHED_EVIDENCE: "没有读到可用的公开资料。",
+	NO_SOURCE_BACKED_CANDIDATES: "没有找到有公开资料支撑的候选供应商。",
 	SOURCE_FETCH_FAILED: "有的公开页面没有读出来。",
 	RESEARCHER_FINDINGS_INCOMPLETE: "有一部分公开资料没有形成可用记录。",
 	demand_not_compiled: "需求还没有整理完成。",
@@ -55,7 +56,8 @@ const REASONS: Record<string, string> = {
 };
 
 export function stageLabel(stage: string): string {
-	return STAGE_LABELS[stage] ?? "处理中";
+	const normalized = stage.replace(/^(?:SUPERVISOR|RESEARCHER):\s*/i, "");
+	return STAGE_LABELS[normalized] ?? STAGE_LABELS[stage] ?? "处理中";
 }
 
 export function runStatusLabel(status: string, stage: string): string {
@@ -99,13 +101,20 @@ function isMachineCode(value: string): boolean {
 	return /^[A-Za-z0-9_]+$/.test(value);
 }
 
-export function explainRun(input: { status: string; lastError: string | null; stopReason: string | null }): string | null {
+export function explainRun(input: {
+	status: string;
+	lastError: string | null;
+	stopReason: string | null;
+	candidateCount?: number | null;
+}): string | null {
 	if (input.status !== "PARTIAL" && input.status !== "FAILED") return null;
 	const mapped =
 		(input.stopReason ? REASONS[input.stopReason] : undefined) ??
 		(input.lastError ? REASONS[input.lastError] : undefined) ??
 		null;
+	const nothingKept = input.candidateCount === 0 || input.stopReason === "NO_SOURCE_BACKED_CANDIDATES";
 	if (input.status === "PARTIAL") {
+		if (nothingKept) return mapped ?? "没有找到有公开资料支撑的候选供应商。";
 		return mapped ? `已保留目前得到的结果。${mapped}` : "已保留目前得到的结果。";
 	}
 	if (mapped) return mapped;
@@ -128,11 +137,23 @@ export function interpretCompilation(body: RequirementsDocument | null, expected
 		return { phase: "pending" };
 	}
 	const unstructured = body.compilation.unstructured_requirements;
+	const unstructuredCount = Array.isArray(unstructured) ? unstructured.length : 0;
 	return {
 		phase: "ready",
 		requirementCount: requirements.length,
-		unstructuredCount: Array.isArray(unstructured) ? unstructured.length : 0,
+		unstructuredCount,
+		notices: compileNotices(issues, unstructuredCount),
 	};
+}
+
+export function compileNotices(issues: string[], unstructuredCount: number): string[] {
+	const notices: string[] = [];
+	if (unstructuredCount > 0) notices.push(`有 ${unstructuredCount} 条需求没能整理`);
+	const budget = issues.some((issue) => /预算|budget|planned_(?:total_budget|unit_price)/i.test(issue) && /未确认|不确认|待确认|not confirmed|unconfirmed|unclear/i.test(issue));
+	if (budget) notices.push("预算未确认");
+	const otherIssues = issues.filter((issue) => !(/预算|budget|planned_(?:total_budget|unit_price)/i.test(issue) && /未确认|不确认|待确认|not confirmed|unconfirmed|unclear/i.test(issue)));
+	if (otherIssues.length > 0) notices.push(otherIssues.length === 1 ? "另有 1 条内容需要确认" : `另有 ${otherIssues.length} 条内容需要确认`);
+	return notices;
 }
 
 export function hasDemandSource(sources: Array<{ purpose: string }>, draft: string): boolean {
@@ -178,10 +199,38 @@ export function messageForApiError(error: unknown): UiError {
 
 function technicalDetail(body: unknown): string | undefined {
 	if (!body || typeof body !== "object") return undefined;
-	const detail = (body as { detail?: unknown }).detail;
-	if (typeof detail !== "string" || !detail.trim()) return undefined;
-	const cleaned = sanitizePublicText(detail).slice(0, 500);
+	const text = humanDetail((body as { detail?: unknown }).detail);
+	if (!text) return undefined;
+	const cleaned = sanitizePublicText(text).slice(0, 500);
 	return cleaned || undefined;
+}
+
+function humanDetail(detail: unknown): string | undefined {
+	if (typeof detail === "string") {
+		const trimmed = detail.trim();
+		if (!trimmed) return undefined;
+		if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+			try {
+				return humanDetail(JSON.parse(trimmed) as unknown);
+			} catch {
+				return withoutExceptionName(trimmed);
+			}
+		}
+		return withoutExceptionName(trimmed);
+	}
+	if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+		const row = detail as Record<string, unknown>;
+		if ("detail" in row) {
+			const inner = humanDetail(row.detail);
+			if (inner) return inner;
+		}
+		if (typeof row.message === "string" && row.message.trim()) return withoutExceptionName(row.message.trim());
+	}
+	return undefined;
+}
+
+function withoutExceptionName(text: string): string {
+	return text.replace(/\b[A-Z][A-Za-z0-9_]*(?:Error|Exception)\b:?\s*/g, "").trim();
 }
 
 export function formatTimestamp(value: string): string {
@@ -196,6 +245,9 @@ export function formatTimestamp(value: string): string {
 		hourCycle: "h23",
 	}).format(date);
 }
+
+export const COMPILE_STILL_WAITING = "仍在整理需求。服务暂时不能告知进度。";
+export const COMPILE_WAIT_TIMEOUT = "需求整理超过 3 分钟，服务还不能告知是否完成。可以稍后刷新再看。";
 
 export function isTerminalRun(status: string): boolean {
 	return status === "COMPLETED" || status === "PARTIAL" || status === "FAILED";

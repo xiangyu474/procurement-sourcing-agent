@@ -76,9 +76,15 @@ GET /api/projects/{project_id}/requirement-text
 
 没有文字来源时 404 `not_found`。只返回最新一条 `USER_TEXT`。
 
+## 实网核对（2026-11-01，前端 `86fcbcf`）
+
+创建项目 201、文字需求 201、整理 202 之后，`GET /api/projects/{id}/requirements` 连续约 15 次 404 `not_compiled`（约 48 秒）才返回 200。那次结果是 1 条采购项、3 条没能整理的需求、2 条 issue，其中预算 200000 未确认。随后 `POST /runs` 202，运行从 `QUEUED` 到 `RUNNING` / `WEB_RESEARCH`，再停在 `PARTIAL`。`artifact_key` 为 null，`/research` 的 `stop_reason_code` 是 `NO_SOURCE_BACKED_CANDIDATES`，`candidate_count` 为 0。没有候选、决策或报告。`GET /api/projects` 和 `GET /api/projects/{id}/runs` 仍是 404。
+
+前端不能靠 20 分钟空等来表示「还在整理」。现在超过 3 分钟就停，并说明服务还不能告知是否完成。这仍是 `BLOCKED_BY_BACKEND`：没有整理状态接口时，404 既可能是还在跑，也可能是已经失败。
+
 ## 4. 需求整理状态
 
-进行中与失败目前靠 `GET /api/projects/{id}/requirements` 推断：404 表示还没有这一版；200 且 `compilation.requirements` 不是数组、同时 `issues` 非空，表示这一版失败。请改成可查询的状态，避免把失败文档和成功文档混在同一个读接口里。
+`BLOCKED_BY_BACKEND`。进行中与失败目前靠 `GET /api/projects/{id}/requirements` 推断：404 表示还没有这一版；200 且 `compilation.requirements` 不是数组、同时 `issues` 非空，表示这一版失败。实网一次成功整理也要几十秒，客户端只能反复看到 404。请改成可查询的状态，避免把失败文档和成功文档混在同一个读接口里。
 
 ```http
 GET /api/projects/{project_id}/requirement-compile/{compile_id}
@@ -187,6 +193,33 @@ GET /api/projects/{project_id}/actions/{action_id}
 ```
 
 `base_demand_revision` 与当前修订不一致时返回 409，避免盖掉中间的修改。`status`：`QUEUED` / `RUNNING` / `COMPLETED` / `PARTIAL` / `FAILED`。
+
+## 8. 历史文件导入不要用 500 表示文件不合格
+
+`BLOCKED_BY_BACKEND`。`POST /api/projects/{id}/history-imports` 在文件内容无法导入时会把容器异常包成 500 `history_import_failed`，`detail` 是一段 JSON 字符串，里面带 `error_type`（异常类名）和内部说明。不合格的工作表应返回 422，正文只给采购人员能读的原因，不要返回异常类名。
+
+```http
+POST /api/projects/{project_id}/history-imports
+{ "source_id": "uuid" }
+```
+
+```json
+{ "error": "history_file_rejected", "detail": "工作表没有可用的表头。" }
+```
+
+状态码 422。不要用 500，除非服务自己不可用。
+
+## 9. 响应里不要带内部字段
+
+`BLOCKED_BY_BACKEND`。浏览器能读到这些内部信息，Worker 应在公开响应里去掉：
+
+- 上传响应里的 `r2_key`
+- 历史导入响应里的 `normalized_r2_key`
+- `GET /api/runs/{id}/research` 里按次的 token 数量（`prompt_tokens`、`completion_tokens`、`model_call_details`）
+- 阶段名里的 `SUPERVISOR:`、`RESEARCHER:`
+- 事件 `detail` 里的 `SourcingPlan`、`Supervisor`、`M3` 等实现用语
+
+公开字段保留业务状态：`status`、`current_stage` 用现有阶段词、`stop_reason_code`、`candidate_count`、`artifact_key` 是否存在即可。前端已不展示 token 和角色名，但不能代替网关删除。
 
 ## 共享文件
 

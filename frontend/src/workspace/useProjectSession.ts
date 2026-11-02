@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import {
+	COMPILE_STILL_WAITING,
+	COMPILE_WAIT_TIMEOUT,
 	hasDemandSource,
 	interpretCompilation,
 	isAbort,
@@ -23,7 +25,7 @@ import {
 	type LocalProject,
 	type WorkspaceStore,
 } from "../storage";
-import { COMPILE_TIMEOUT_MS, POLL_INTERVAL_MS, pollUntil } from "./poll";
+import { COMPILE_TIMEOUT_MS, COMPILE_UNCERTAIN_AFTER_MS, POLL_INTERVAL_MS, pollUntil } from "./poll";
 import type { HistoryNote } from "./types";
 import type { RunPort } from "./useRunWatch";
 
@@ -218,17 +220,25 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 			setError({ summary: "请先上传 XLSX。" });
 			return;
 		}
+		const projectId = project.id;
 		setBusy(true);
 		setError(null);
 		setActivity("正在导入历史数据");
+		let failed = false;
 		try {
-			const imported = await clientRef.current.importHistory(project.id, source.id);
+			const imported = await clientRef.current.importHistory(projectId, source.id);
 			setHistoryNote({ synthetic: imported.is_synthetic, rowCount: imported.row_count });
-			updateEntry(project.id, { historySynthetic: imported.is_synthetic });
-			await refreshProject(project.id);
+			updateEntry(projectId, { historySynthetic: imported.is_synthetic });
 		} catch (caught) {
+			failed = true;
+			setHistoryNote(null);
 			if (!isAbort(caught)) setError(messageForApiError(caught));
 		} finally {
+			try {
+				await refreshProject(projectId);
+			} catch (caught) {
+				if (!failed && !isAbort(caught)) setError(messageForApiError(caught));
+			}
 			setActivity(null);
 			setBusy(false);
 		}
@@ -264,17 +274,28 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 				setActivity("正在整理需求");
 				updateEntry(current.id, { lastStatusLabel: "整理需求" });
 				const queued = await clientRef.current.compile(current.id, { signal });
-				const outcome = await pollUntil<CompileView>({
-					intervalMs: POLL_INTERVAL_MS,
-					timeoutMs: COMPILE_TIMEOUT_MS,
-					signal,
-					tick: async () => {
-						const requirements = await clientRef.current.getRequirements(current.id, { signal });
-						if (requirements.state === "missing") return null;
-						const view = interpretCompilation(requirements.body, queued.analysis_version);
-						return view.phase === "pending" ? null : view;
-					},
-				});
+				const compileStarted = Date.now();
+				let outcome: CompileView;
+				try {
+					outcome = await pollUntil<CompileView>({
+						intervalMs: POLL_INTERVAL_MS,
+						timeoutMs: COMPILE_TIMEOUT_MS,
+						signal,
+						tick: async () => {
+							if (Date.now() - compileStarted >= COMPILE_UNCERTAIN_AFTER_MS) setActivity(COMPILE_STILL_WAITING);
+							const requirements = await clientRef.current.getRequirements(current.id, { signal });
+							if (requirements.state === "missing") return null;
+							const view = interpretCompilation(requirements.body, queued.analysis_version);
+							return view.phase === "pending" ? null : view;
+						},
+					});
+				} catch (caught) {
+					if (caught instanceof ApiError && caught.code === "timeout") {
+						setError({ summary: COMPILE_WAIT_TIMEOUT });
+						return;
+					}
+					throw caught;
+				}
 				if (outcome.phase === "failed") {
 					setCompileView(outcome);
 					updateEntry(current.id, { lastStatusLabel: "未能完成" });
