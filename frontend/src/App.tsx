@@ -6,6 +6,7 @@ import { ProjectNav } from "./components/ProjectNav";
 import { RunPanel } from "./components/RunPanel";
 import { WorkspaceShell } from "./components/WorkspaceShell";
 import { useWorkspace } from "./workspace/useWorkspace";
+import { reportPhase } from "./view/report";
 
 export function App() {
 	const workspace = useWorkspace();
@@ -14,7 +15,12 @@ export function App() {
 	const runActive = Boolean(run && !isTerminalRun(run.status));
 	const collapsed = Boolean(run && isTerminalRun(run.status));
 	const startLabel = runActive ? "寻源进行中" : run ? "再次寻源" : "开始寻源";
-	const showDownload = run?.status === "COMPLETED" || run?.status === "PARTIAL";
+	const downloadPhase = reportPhase({
+		runStatus: run?.status ?? null,
+		decisionsReady: workspace.candidates.decisionsReady,
+		report: workspace.report.report,
+		pending: workspace.report.pending,
+	});
 	const candidateRows = workspace.candidates.rows;
 	const selected = candidateRows.find((row) => row.id === workspace.candidates.selectedId) ?? null;
 	const showEmptyCandidates = Boolean(
@@ -47,12 +53,21 @@ export function App() {
 				<>
 					<div className="head">
 						<h1>{project.title}</h1>
-						{showDownload ? (
+						{downloadPhase !== "hidden" ? (
 							<div className="report">
-								<button className="download" type="button" disabled>
+								<button
+									className="download"
+									type="button"
+									disabled={downloadPhase === "blocked" || downloadPhase === "generating"}
+									onClick={() => void workspace.report.download()}
+								>
 									下载这一版
 								</button>
-								<span className="quiet">报告还没有生成</span>
+								{downloadPhase === "blocked" ? <span className="quiet">报告还没有生成</span> : null}
+								{downloadPhase === "generating" ? <span className="quiet">正在生成报告</span> : null}
+								{workspace.report.note && downloadPhase !== "generating" && downloadPhase !== "blocked" ? (
+									<span className="quiet">{workspace.report.note}</span>
+								) : null}
 							</div>
 						) : null}
 					</div>
@@ -88,7 +103,20 @@ export function App() {
 							) : null}
 						</div>
 					) : null}
-					<RunPanel run={run} events={workspace.events} stopReason={workspace.stopReason} candidateCount={workspace.candidateCount} />
+					<RunPanel
+						run={run}
+						events={workspace.events}
+						stopReason={workspace.stopReason}
+						candidateCount={workspace.candidateCount}
+						reportNote={
+							workspace.report.report?.status === "COMPLETED"
+								? {
+										at: workspace.report.report.updated_at ?? workspace.report.report.created_at,
+										decisionVersion: workspace.report.report.decision_version,
+									}
+								: null
+						}
+					/>
 					{workspace.candidates.progressLine ? <p className="quiet">{workspace.candidates.progressLine}</p> : null}
 					{workspace.candidates.listNote ? <p>{workspace.candidates.listNote}</p> : null}
 					{workspace.candidates.loading ? <p className="quiet">正在读取候选。</p> : null}

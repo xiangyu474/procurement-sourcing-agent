@@ -478,6 +478,10 @@ export function installReview(page: Page, variant: "mixed" | "none" = "mixed"): 
 			await fulfill(200, { ...project, sources: [] });
 			return;
 		}
+		if (request.method() === "GET" && path === `/api/projects/${REVIEW_PROJECT}/reports`) {
+			await fulfill(200, { project_id: REVIEW_PROJECT, reports: [] });
+			return;
+		}
 		if (request.method() === "GET" && path === `/api/projects/${REVIEW_PROJECT}/runs`) {
 			await fulfill(200, { runs: [{ id: REVIEW_RUN, status: "COMPLETED", current_stage: "WEB_RESEARCH", last_error: null, stop_reason_code: null, artifact_key_present: false, created_at: "2026-10-31T01:00:00.000Z", updated_at: "2026-10-31T04:00:00.000Z" }] });
 			return;
@@ -689,6 +693,10 @@ export function installKnownCase(page: Page): Promise<unknown> {
 			await fulfill(200, { ...project, sources: [] });
 			return;
 		}
+		if (request.method() === "GET" && path === `/api/projects/${KNOWN_PROJECT}/reports`) {
+			await fulfill(200, { project_id: KNOWN_PROJECT, reports: [] });
+			return;
+		}
 		if (request.method() === "GET" && path === `/api/projects/${KNOWN_PROJECT}/runs`) {
 			await fulfill(200, { runs: [{ id: KNOWN_RUN, status: "COMPLETED", current_stage: "WEB_RESEARCH", last_error: null, stop_reason_code: "SUPERVISOR_RESEARCHER_ERROR", artifact_key_present: false, created_at: "2026-11-01T10:00:00.000Z", updated_at: "2026-11-01T14:00:00.000Z" }] });
 			return;
@@ -767,6 +775,125 @@ export function installKnownCase(page: Page): Promise<unknown> {
 		}
 		await fulfill(404, { error: "not_found" });
 	});
+}
+
+const REPORT_PROJECT = "55555555-5555-4555-8555-555555555555";
+const REPORT_RUN = "66666666-6666-4666-8666-666666666666";
+
+export function installReportFlow(page: Page, mode: "generate" | "completed" | "failed" | "blocked"): Promise<unknown> {
+	const posts: string[] = [];
+	let polls = 0;
+	const project = {
+		id: REPORT_PROJECT,
+		title: "正式报告项目",
+		history_availability: "NOT_PROVIDED",
+		demand_revision: 1,
+		analysis_version: 1,
+		created_at: "2026-10-31T00:00:00.000Z",
+		latest_run: { id: REPORT_RUN, status: "COMPLETED", current_stage: "WEB_RESEARCH", updated_at: "2026-10-31T02:00:00.000Z" },
+	};
+	const completed = {
+		report_id: "report-1",
+		run_id: REPORT_RUN,
+		status: "COMPLETED",
+		decision_version: "3f2a9c1b7d0e4a55",
+		byte_size: 12,
+		sha256: "abc",
+		error: null,
+		download_path: `/api/projects/${REPORT_PROJECT}/reports/report-1/download`,
+		created_at: "2026-10-31T02:10:00.000Z",
+		updated_at: "2026-10-31T02:12:00.000Z",
+	};
+	return page.route("**/api/**", async (route: Route) => {
+		const request = route.request();
+		const path = new URL(request.url()).pathname;
+		const fulfill = (status: number, body: unknown) =>
+			route.fulfill({ status, contentType: "application/json; charset=utf-8", body: JSON.stringify(body) });
+		if (request.method() === "GET" && path === "/api/projects") {
+			await fulfill(200, { projects: [project] });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${REPORT_PROJECT}`) {
+			await fulfill(200, { ...project, sources: [] });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${REPORT_PROJECT}/runs`) {
+			await fulfill(200, { runs: [{ id: REPORT_RUN, status: "COMPLETED", current_stage: "WEB_RESEARCH", last_error: null, stop_reason_code: null, artifact_key_present: false, created_at: "2026-10-31T01:00:00.000Z", updated_at: "2026-10-31T02:00:00.000Z" }] });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/runs/${REPORT_RUN}`) {
+			await fulfill(200, { id: REPORT_RUN, project_id: REPORT_PROJECT, status: "COMPLETED", current_stage: "WEB_RESEARCH", artifact_key: null, last_error: null, created_at: "2026-10-31T01:00:00.000Z", updated_at: "2026-10-31T02:00:00.000Z" });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/runs/${REPORT_RUN}/events`) {
+			await fulfill(200, { events: [] });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${REPORT_PROJECT}/requirement-text`) {
+			await fulfill(404, { error: "not_found" });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${REPORT_PROJECT}/requirements`) {
+			await fulfill(404, { error: "not_compiled" });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${REPORT_PROJECT}/candidates`) {
+			await fulfill(200, { candidates: mode === "blocked" ? [] : [{
+				candidate_id: "c1",
+				requirement_id: "r1",
+				stage: "RFQ_SHORTLIST",
+				last_seen_run_id: REPORT_RUN,
+				updated_at: "2026-10-31T02:00:00.000Z",
+				supplier: { display_name: "海康威视" },
+				product: { model: "DS-1" },
+				evidence: [],
+			}] });
+			return;
+		}
+		if (request.method() === "GET" && path.endsWith("/spec-assessments/status")) {
+			await fulfill(200, { status: mode === "blocked" ? "IDLE" : "COMPLETED", job_id: null, demand_revision: 1, error: null, updated_at: "2026-10-31T02:00:00.000Z" });
+			return;
+		}
+		if (request.method() === "GET" && path.endsWith("/decisions/status")) {
+			await fulfill(200, { status: mode === "blocked" ? "IDLE" : "COMPLETED", job_id: null, demand_revision: 1, error: null, updated_at: "2026-10-31T02:00:00.000Z" });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${REPORT_PROJECT}/spec-assessments`) {
+			await fulfill(200, { project_id: REPORT_PROJECT, assessments: mode === "blocked" ? [] : [{ assessment_id: "spc-1", requirement_id: "r1", product_candidate_id: "c1", demand_revision: 1, hard_spec_overall: "PASS", evidence_ids: [], evaluated_at: "2026-10-31T02:00:00.000Z", created_at: "2026-10-31T02:00:00.000Z", assessment: { checks: [] } }] });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${REPORT_PROJECT}/decisions`) {
+			await fulfill(200, { project_id: REPORT_PROJECT, decisions: mode === "blocked" ? [] : [{ decision_id: "dec-1", requirement_id: "r1", product_candidate_id: "c1", recommendation: "SHORTLIST", technical_verdict: "VERIFIED_PASS", hard_spec_overall: "PASS", accepted: true, rationale: "可以先询价。", evidence_ids: [], decided_at: "2026-10-31T02:00:00.000Z", created_at: "2026-10-31T02:00:00.000Z" }] });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${REPORT_PROJECT}/reports`) {
+			await fulfill(200, { project_id: REPORT_PROJECT, reports: mode === "completed" ? [completed] : [] });
+			return;
+		}
+		if (request.method() === "POST" && path === `/api/projects/${REPORT_PROJECT}/reports`) {
+			posts.push(request.postData() ?? "");
+			await fulfill(202, { report_id: "report-1", run_id: REPORT_RUN, status: "QUEUED", workflow_id: "cf-hidden" });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${REPORT_PROJECT}/reports/report-1`) {
+			polls += 1;
+			if (mode === "failed") {
+				await fulfill(200, { ...completed, status: "FAILED", error: "没有可写入的决策。", download_path: null, decision_version: null });
+				return;
+			}
+			await fulfill(200, polls < 2 ? { ...completed, status: "RUNNING", download_path: null, decision_version: null } : completed);
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${REPORT_PROJECT}/reports/report-1/download`) {
+			await route.fulfill({
+				status: 200,
+				contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+				body: Buffer.from("PK fixture-docx"),
+			});
+			return;
+		}
+		await fulfill(404, { error: "not_found" });
+	}).then(() => posts);
 }
 
 export { LONG_PPTX, LONG_TITLE };

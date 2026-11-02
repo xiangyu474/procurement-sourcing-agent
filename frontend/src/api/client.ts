@@ -9,6 +9,7 @@ import {
 	type CompileJob,
 	type ProjectRunSummary,
 	type ProjectSummary,
+	type Report,
 	type RequirementText,
 	type RequirementsDocument,
 	type RequirementsResult,
@@ -241,6 +242,20 @@ function asAssessment(value: unknown): SpecAssessment {
 		evaluated_at: asOptionalString(row.evaluated_at),
 		created_at: asOptionalString(row.created_at),
 		checks,
+	};
+}
+
+function asReport(value: unknown): Report {
+	const row = asRecord(value, "report");
+	return {
+		report_id: asString(row, "report_id"),
+		run_id: asOptionalString(row.run_id),
+		status: asString(row, "status"),
+		decision_version: asOptionalString(row.decision_version),
+		error: asOptionalString(row.error),
+		download_path: asOptionalString(row.download_path),
+		created_at: asOptionalString(row.created_at),
+		updated_at: asOptionalString(row.updated_at),
 	};
 }
 
@@ -520,6 +535,33 @@ export class ApiClient {
 		});
 	}
 
+	listReports(projectId: string, call?: CallOptions): Promise<Report[]> {
+		return this.request(`/api/projects/${encodeURIComponent(projectId)}/reports`, { call }).then((payload) => {
+			const row = asRecord(payload, "reports");
+			if (!Array.isArray(row.reports)) throw new ApiError(0, "invalid_response", { key: "reports" });
+			return row.reports.map(asReport);
+		});
+	}
+
+	createReport(projectId: string, runId: string, call?: CallOptions): Promise<Report> {
+		return this.request(`/api/projects/${encodeURIComponent(projectId)}/reports`, {
+			method: "POST",
+			json: { run_id: runId },
+			call,
+		}).then((payload) => asReport(payload));
+	}
+
+	getReport(projectId: string, reportId: string, call?: CallOptions): Promise<Report> {
+		return this.request(`/api/projects/${encodeURIComponent(projectId)}/reports/${encodeURIComponent(reportId)}`, { call }).then(asReport);
+	}
+
+	downloadReport(downloadPath: string, call?: CallOptions): Promise<Blob> {
+		if (!downloadPath.startsWith("/api/projects/") || !downloadPath.endsWith("/download")) {
+			return Promise.reject(new ApiError(0, "invalid_response", { key: "download_path" }));
+		}
+		return this.fetchBlob(downloadPath, call);
+	}
+
 	getEvidence(evidenceId: string, call?: CallOptions): Promise<EvidenceDetail> {
 		return this.request(`/api/evidence/${encodeURIComponent(evidenceId)}`, { call }).then((payload) => {
 			const row = asRecord(payload, "evidence");
@@ -533,6 +575,28 @@ export class ApiClient {
 				snapshot_text: asOptionalString(evidence.snapshot_text),
 			};
 		});
+	}
+
+	private async fetchBlob(path: string, call?: CallOptions): Promise<Blob> {
+		const timeout = new AbortController();
+		const timer = setTimeout(() => timeout.abort(), call?.timeoutMs ?? this.timeoutMs);
+		const signal = call?.signal ? AbortSignal.any([call.signal, timeout.signal]) : timeout.signal;
+		try {
+			const response = await this.fetchImpl(`${this.baseUrl}${path}`, { credentials: "same-origin", signal });
+			if (!response.ok) {
+				const text = await response.text();
+				const body = text ? parseBody(text) : null;
+				throw new ApiError(response.status, errorCode(body, response.status), body);
+			}
+			return await response.blob();
+		} catch (error) {
+			if (error instanceof ApiError) throw error;
+			if (call?.signal?.aborted) throw new ApiError(0, "aborted", null);
+			if (timeout.signal.aborted) throw new ApiError(0, "timeout", null);
+			throw new ApiError(0, "network", null);
+		} finally {
+			clearTimeout(timer);
+		}
 	}
 
 	private async request(

@@ -21,7 +21,13 @@ function statusTone(status: string): string {
 	return "";
 }
 
-export function RunPanel(props: { run: Run | null; events: RunEvent[]; stopReason: string | null; candidateCount?: number | null }) {
+export function RunPanel(props: {
+	run: Run | null;
+	events: RunEvent[];
+	stopReason: string | null;
+	candidateCount?: number | null;
+	reportNote?: { at: string | null; decisionVersion: string | null } | null;
+}) {
 	const { run, events, stopReason, candidateCount = null } = props;
 	if (!run) return null;
 	const abnormal = explainRun({ status: run.status, lastError: run.last_error, stopReason, candidateCount });
@@ -56,6 +62,8 @@ export function RunPanel(props: { run: Run | null; events: RunEvent[]; stopReaso
 				<p className="run-id" data-testid="run-id">
 					编号 {run.id}
 				</p>
+				{props.reportNote?.at ? <p className="quiet">报告生成于 {formatRunStamp(props.reportNote.at)}</p> : null}
+				{props.reportNote?.decisionVersion ? <p className="quiet">决策版本 {props.reportNote.decisionVersion}</p> : null}
 			</details>
 		</section>
 	);

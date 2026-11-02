@@ -11,6 +11,7 @@ export type CandidateModel = {
 	listNote: string | null;
 	loading: boolean;
 	loadError: string | null;
+	decisionsReady: boolean;
 	selectedId: string | null;
 	select: (id: string) => void;
 	evidence: EvidenceDetail | null;
@@ -24,6 +25,7 @@ export function useCandidates(clientRef: MutableRefObject<ApiClient>, projectId:
 	const [listNote, setListNote] = useState<string | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [loadError, setLoadError] = useState<string | null>(null);
+	const [decisionsReady, setDecisionsReady] = useState(false);
 	const [selectedId, setSelectedId] = useState<string | null>(null);
 	const [evidence, setEvidence] = useState<EvidenceDetail | null>(null);
 	const [evidenceError, setEvidenceError] = useState<string | null>(null);
@@ -38,6 +40,7 @@ export function useCandidates(clientRef: MutableRefObject<ApiClient>, projectId:
 		setEvidence(null);
 		setEvidenceError(null);
 		setLoadError(null);
+		setDecisionsReady(false);
 		if (!projectId || !runId || !runStatus) {
 			setRows([]);
 			setProgressLine(null);
@@ -112,6 +115,7 @@ export function useCandidates(clientRef: MutableRefObject<ApiClient>, projectId:
 					setRows(built);
 					setProgressLine(progress.line);
 					setListNote(built.length > 0 ? progress.listNote : null);
+					setDecisionsReady(decisions.length > 0);
 					setLoading(false);
 				};
 				paint(specResult.rows, [], specResult.job, null);
@@ -153,5 +157,5 @@ export function useCandidates(clientRef: MutableRefObject<ApiClient>, projectId:
 		);
 	};
 
-	return { rows, progressLine, listNote, loading, loadError, selectedId, select, evidence, evidenceError, openEvidence };
+	return { rows, progressLine, listNote, loading, loadError, decisionsReady, selectedId, select, evidence, evidenceError, openEvidence };
 }

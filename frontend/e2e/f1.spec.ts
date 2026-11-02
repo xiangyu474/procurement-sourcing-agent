@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { installCatalogue, installFixture, installKnownCase, installReview, LONG_PPTX, LONG_TITLE } from "./fixture";
+import { installCatalogue, installFixture, installKnownCase, installReportFlow, installReview, LONG_PPTX, LONG_TITLE } from "./fixture";
 
 const screenshots = "/opt/cursor/artifacts/screenshots";
 
@@ -248,6 +248,71 @@ test("known case hides internal wording and groups identical models", async ({ p
 	await page.screenshot({ path: `${screenshots}/f2-known-after-pass.png` });
 	await page.getByRole("row", { name: /同型号重复|已排除/ }).last().click();
 	await expect(page.getByRole("complementary", { name: "所选型号" })).toContainText("不再单独询价");
+});
+
+test("a finished run without decisions keeps the report button disabled", async ({ page }) => {
+	await installReportFlow(page, "blocked");
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto("/");
+	await page.getByRole("button", { name: /正式报告项目/ }).click();
+	await expect(page.getByRole("button", { name: "下载这一版" })).toBeDisabled();
+	await expect(page.getByText("报告还没有生成")).toBeVisible();
+	await page.screenshot({ path: `${screenshots}/f3-blocked.png` });
+});
+
+test("generating a report stays honest until the file is ready", async ({ page }) => {
+	const posts = (await installReportFlow(page, "generate")) as string[];
+	const m0: string[] = [];
+	page.on("request", (request) => {
+		if (request.url().includes("/runs/") && request.url().includes("report")) m0.push(request.url());
+	});
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto("/");
+	await page.getByRole("button", { name: /正式报告项目/ }).click();
+	const button = page.getByRole("button", { name: "下载这一版" });
+	await expect(button).toBeEnabled();
+	await expect(page.getByText("报告还没有生成")).toHaveCount(0);
+	await page.screenshot({ path: `${screenshots}/f3-no-report.png` });
+	const downloadPromise = page.waitForEvent("download");
+	await button.click();
+	await expect(page.getByText("正在生成报告")).toBeVisible();
+	await page.screenshot({ path: `${screenshots}/f3-generating.png` });
+	const download = await downloadPromise;
+	expect(download.suggestedFilename()).toMatch(/正式报告项目-.+\.docx/);
+	expect(posts).toHaveLength(1);
+	expect(posts[0]).toContain("66666666-6666-4666-8666-666666666666");
+	expect(posts[0]).not.toContain("workflow");
+	expect(m0).toEqual([]);
+	await page.getByText("过程记录").click();
+	await expect(page.getByText("决策版本 3f2a9c1b7d0e4a55")).toBeVisible();
+	await expect(page.getByText(/报告生成于/)).toBeVisible();
+});
+
+test("an existing report downloads without generating another", async ({ page }) => {
+	const posts = (await installReportFlow(page, "completed")) as string[];
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto("/");
+	await page.getByRole("button", { name: /正式报告项目/ }).click();
+	const download = await Promise.all([
+		page.waitForEvent("download"),
+		page.getByRole("button", { name: "下载这一版" }).click(),
+	]).then((items) => items[0]);
+	expect(download.suggestedFilename()).toMatch(/正式报告项目-.+\.docx/);
+	expect(posts).toEqual([]);
+	await page.getByText("过程记录").click();
+	await expect(page.getByText("决策版本 3f2a9c1b7d0e4a55")).toBeVisible();
+	await page.screenshot({ path: `${screenshots}/f3-completed.png` });
+});
+
+test("a failed report shows the backend error and does not pretend success", async ({ page }) => {
+	await installReportFlow(page, "failed");
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto("/");
+	await page.getByRole("button", { name: /正式报告项目/ }).click();
+	await page.getByRole("button", { name: "下载这一版" }).click();
+	await expect(page.getByText("生成失败。没有可写入的决策。")).toBeVisible();
+	await expect(page.getByText("正在生成报告")).toHaveCount(0);
+	await page.screenshot({ path: `${screenshots}/f3-failed.png` });
 });
 
 test("live gateway rejects a project create when no access credential is configured", async ({ page }) => {

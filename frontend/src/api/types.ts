@@ -200,6 +200,17 @@ export type JobStatus = {
 	updated_at: string | null;
 };
 
+export type Report = {
+	report_id: string;
+	run_id: string | null;
+	status: string;
+	decision_version: string | null;
+	error: string | null;
+	download_path: string | null;
+	created_at: string | null;
+	updated_at: string | null;
+};
+
 export type EvidenceDetail = {
 	evidence_id: string;
 	title: string | null;
