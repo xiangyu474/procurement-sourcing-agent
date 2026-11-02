@@ -2,7 +2,9 @@
 
 依据 `docs/TODO.md`。本文件区分本地实现和云端验收，不将接口草案视为已交付。
 
-Session 基础实现：**LOCAL_ONLY / NOT_PRODUCTION_READY**。基线为 main `11f2fae`；实现提交以本文件所在的 Git 提交记录为准。`GUEST_SESSION_ENABLED` 默认关闭，访客昂贵写操作保持禁用。Node/SQLite 本地测试通过，不代表 Cloudflare Worker 或生产验收。
+Session 基础实现：**LOCAL_ONLY / NOT_PRODUCTION_READY**。基线为 main `11f2fae`；实现提交 `e70afe8bb3dd4d4335e1042c4a0b186432d91694`。`GUEST_SESSION_ENABLED` 默认关闭，访客昂贵写操作保持禁用。Node/SQLite 本地测试通过，不代表 Cloudflare Worker 或生产验收。
+
+B1 进行中（LOCAL_ONLY，未提供 API）：migration `0013` 和 `pipeline_store.ts` 加入需求 JSON 快照、摘要、项目级幂等键预约、不可变快照存储及阶段状态记录；SQLite 测试覆盖重复键、输入变更、快照冲突和阶段终态。这不是完整 Pipeline：尚未启动 Workflow，也未冻结真实候选、证据或决策。
 
 | 顺序 | 代码位置 | 当前状态 / 后续工作 |
 | --- | --- | --- |
