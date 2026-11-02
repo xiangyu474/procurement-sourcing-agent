@@ -131,7 +131,12 @@ describe("adapter", () => {
 		expect(messageForApiError(new ApiError(401, "session_expired", null)).summary).toBe("这次访问已过期。请刷新页面后再试。");
 		const imported = messageForApiError(new ApiError(500, "history_import_failed", { detail: "Supervisor timeout token sk-abcdef" }));
 		expect(imported.summary).toBe("历史数据导入失败。");
-		expect(imported.technical).not.toMatch(/Supervisor|token|sk-abcdef/i);
+		expect(imported.technical).toBeUndefined();
+		const raw = messageForApiError(new ApiError(500, "http_500", { detail: "Error proxying request to container: The container is not running" }));
+		expect(raw.summary).toBe("服务暂时不可用。");
+		expect(raw.technical).toBeUndefined();
+		expect(messageForApiError(new ApiError(429, "rate_limited", null)).summary).toBe("请求过于频繁，请稍后再试。");
+		expect(messageForApiError(new ApiError(403, "forbidden", null)).summary).toBe("访问被拒绝。");
 		const parsed = messageForApiError(
 			new ApiError(500, "history_import_failed", {
 				detail: JSON.stringify({ error_type: "ValueError", detail: "ValueError: 工作表没有表头" }),

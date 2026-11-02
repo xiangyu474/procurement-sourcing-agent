@@ -76,6 +76,7 @@ M3-B 修了一个会误导买家的 bug：官方历史文件里是 **14 个不�
 | GET | `/api/runs/{id}` | `{id, project_id, status, current_stage, artifact_key, last_error, created_at, updated_at}` | 运行状态 | `status`：`QUEUED/RUNNING/COMPLETED/PARTIAL/FAILED` |
 | GET | `/api/runs/{id}/events` | `{events[]}` | 过程记录 | `detail` 含内部角色名，前端不要原样展示 |
 | GET | `/api/runs/{id}/research` | `{run, plan, tasks, actions, metrics}` | 研究详情 | `metrics` 含 token 与搜索次数，前端不要展示 |
+| GET | `/api/projects/{id}/price-context` | `{project_id, price_contexts[]}` | **F2 价格与口径** | 每个价格都带 `history_scope`；见 §0.3 与 §2.3 |
 | GET | `/api/evidence/{id}` | `{evidence}`（含快照正文） | 证据详情 | 快照缺失 404 |
 | GET | `/api/workspaces/default/suppliers` | `{suppliers}` | 供应商情报 | 工作区情报，不是本项目结论 |
 | GET | `/api/workspaces/default/suppliers/{id}` | `{supplier, products, evidence}` | 供应商详情 | 同上 |
@@ -138,6 +139,50 @@ GET /api/projects/{project_id}/reports/{report_id}
 **报告与「运行」的绑定**：`decision_version` 是本次决策集合内容的摘要（`sha256` 前 16 位）。同一个 `report_id` 永远对应同一份文档，之后再跑新的寻源不会改变它。
 
 ---
+
+## 2.3 价格与口径（F2 用）
+
+```http
+GET /api/projects/{id}/price-context
+```
+
+```json
+{
+  "project_id": "uuid",
+  "price_contexts": [
+    {
+      "requirement_id": "r1",
+      "product_name": "5MP 工业网络摄像机",
+      "budget": "500",
+      "budget_currency": "CNY",
+      "budget_unit": "元/套",
+      "history_scope": "TABLE_OVERVIEW",
+      "history_scope_note": "The imported history holds 14 other items and no row of them is confirmed to be this requirement's item. …",
+      "history_available": false,
+      "history_rows": 0,
+      "statistics": null,
+      "overview_statistics": { "count": 1000, "minimum": "77", "median": "113", "mean": "171.51", "maximum": "1255", "currency": "CNY", "unit": "元/台" },
+      "overview_is_not_a_baseline": true,
+      "findings": [],
+      "notes": ["…"]
+    }
+  ]
+}
+```
+
+字段含义（**前端必须按这个渲染**）：
+
+| 字段 | 含义 |
+| --- | --- |
+| `history_scope` | `ITEM`（本品项，可比价）/ `TABLE_OVERVIEW`（全表概览，**不可**用于比价、排名、节支）/ `NONE`（没有历史） |
+| `history_available` | 本需求是否有**可用的品项级**历史基准 |
+| `statistics` | 品项级统计（`history_scope=ITEM` 时才有值） |
+| `overview_statistics` | 全表概览统计（仅供参考） |
+| `overview_is_not_a_baseline` | 布尔值；为 `true` 时界面**不要出现**「历史价」「节支」字样 |
+| `findings[]` | 每种口径一条：`{basis, lowest_value, saving, saving_percent, comparability, explanation, lowest_observation_id}`；`basis` 取 `PLANNED_BUDGET/HISTORICAL_TRANSACTION/PUBLIC_REFERENCE/FORMAL_QUOTATION` |
+| `notes[]` | 口径说明（英文原文，可直接展示） |
+
+**同一份价格口径只有一个来源**：该接口与正式 DOCX 报告里的「四、价格与口径」章节由**同一段代码**产出（容器内的 `build_price_context`），不会出现两套数字。前端**不要**自己算历史价或节支。
 
 ## 3. 还需要补的接口（前端提出的缺口）
 
@@ -228,6 +273,26 @@ GET /api/projects/{project_id}/requirement-text
 
 只返回最新一条 `USER_TEXT`；没有则 404 `not_found`。
 
+### 3.5.1 前端的问题：到底用 `assessment_id`/`decision_id` 还是 `job_id`？
+
+**答案：两个都是真的，但它们是两种不同的东西，各有各的用途。**
+
+| 接口 | 返回的字段 | 它是什么 | 前端怎么用 |
+| --- | --- | --- | --- |
+| `POST .../requirement-compile` | `compile_id` | **作业 id**（`project_jobs` 表的一行） | **用这个**去查 `GET .../requirement-compile/{compile_id}` |
+| 同上 | `workflow_id` | Cloudflare Workflow 实例 id | 只用于日志排查，前端不用显示 |
+| `POST .../spec-assessments` | `assessment_id` | Workflow 实例 id（**旧字段，保留兼容**） | 不用管它 |
+| 同上 | `job_id` | 作业 id | 想关联作业时用它 |
+| `POST .../decisions` | `decision_id` | Workflow 实例 id（**旧字段，保留兼容**） | 不用管它 |
+| 同上 | `job_id` | 作业 id | 想关联作业时用它 |
+
+**结论**：
+- **查询任务状态一律用状态接口**：`GET .../requirement-compile/{compile_id}`、`GET .../spec-assessments/status`、`GET .../decisions/status`。
+  状态接口自己返回 `job_id`、`status`、`error`，**前端不需要用 POST 返回的任何 id 去拼状态请求**（除了整理状态必须带 `compile_id`，因为它要指明是哪一次整理）。
+- `assessment_id` / `decision_id` 是历史字段，**语义保持不变**（它们是 workflow 实例 id），后端不会改它们，前端现有代码不必改。
+
+文档里表格写的是 `assessment_id`/`decision_id`、回执里写的是 `job_id`，两处描述的是不同字段，不是同一字段的两个名字；这里写清楚以免误解。
+
 ### 3.6 项目级修订（`POST /api/projects/{project_id}/actions`）—— **后端，本轮未做**
 
 - 前端要求一个原子接口：`{text, base_demand_revision, base_run_id}` → 新修订 + 重新整理 + 重跑受影响候选，`base_demand_revision` 不一致返回 409。
@@ -279,3 +344,17 @@ GET /api/projects/{project_id}/requirement-text
 | 2026-11-02 | 前端 | `GET /api/projects?limit=50` 只有最近 50 条，更早的项目会被截掉。请加游标翻页（`cursor` / `next_cursor`）。前端不放假的「更多」。 |
 | 2026-11-02 | 前端 | 正式报告按 §2 接上：有决策之后，「下载这一版」才可点。已有 `COMPLETED` 且属于这次 `run_id` 的报告就直接下载；否则 `POST /api/projects/{id}/reports` 带 `run_id`，轮询到 `COMPLETED` 再下，失败显示返回的短句。不用 M0 的 `/api/runs/{id}/report/download`。请确认报告要不要接在自动链的决策之后（研究 → 核验 → 决策 → 报告）。前端没有自己把报告生成塞进寻源请求。 |
 | 2026-11-02 | 前端 | 决策和核对记录是项目级的，没有 `run_id`。一次新的运行如果自己还没有决策，不能靠「项目里曾经有过决策」打开发报告。请把决策、核对连到 `run_id`，或在决策作业上返回 `run_id`。在这之前，前端只在决策作业为 `COMPLETED`、`demand_revision` 与项目一致、且 `updated_at` 晚于这次运行结束时才允许生成；对不上就保持禁用，并写「还不能确认这次运行已经有决策。」。另外：`artifact_key_present` 请按正式报告填写，或不再返回；失败的报告 `download_path` 应为 null；`error` 请分成错误码和一句可展示的说明，不要把容器代理日志放进响应。 |
+| 2026-11-01 | 后端 | **答复前端来信**：① `assessment_id`/`decision_id` 是 workflow 实例 id（保留兼容，不改语义），`job_id`/`compile_id` 是作业 id；**查状态一律用状态接口**，详见 §3.5.1。② F2 需要 `history_scope`，此前没有公开接口能拿到——已新增 `GET /api/projects/{id}/price-context`（§2.3），与正式报告的价格章节同源。③ F1/F2/F3/F4 的工作拆分与后端现状一致：F1 用新接口、F2 用候选+核对+决策+价格口径、F3 接报告生成/状态/下载并显示决策版本、F4 做成分步引导。④ 生产鉴权仍待确认：推荐同源托管 + Cloudflare Access（§3.7）。 |
+| 2026-11-02 | 后端 | **价格接口已在云上验证**：验收流程现在会读 `GET /api/projects/{id}/price-context` 并把它纳入判据（最近一轮 `price_context_status=200`，`price_scopes=["NONE"]`——该验收项目未导入历史，scope 为 `NONE` ✓）。前端可直接按 §2.3 渲染：全表概览时 `overview_is_not_a_baseline=true`，界面不要出现「历史价」「节支」字样。 |
+| 2026-11-02 | 前端 | 同意方案 A 和五步顺序：访客会话 → 一次点击的完整分析 → 按运行读取分析结果 → 决策完成后自动生成 DOCX → 公开全流程。报告生成失败不撤销决策。F4 多轮修订先不做。前端不另做一套页面。正常情况下按钮在报告完成后直接是「下载这一版」；自动生成失败或旧版本还没有报告时，仍保留现在的按需生成作为后备。 |
+| 2026-11-02 | 前端 | 契约还没发布，前端不会自己编响应形状。各批需要这些材料才能联调。A 会话：`POST /api/session`、`GET /api/session` 的真实响应样例；会话过期、限流、额度用尽、以及他人资源 404 的 HTTP 状态和公开 `code`。B 流水线：`POST /api/projects/{id}/pipeline` 与 `GET .../pipeline/{pipeline_id}` 的真实样例；状态值（可映射 `RESEARCHING` / `EVALUATING` / `DECIDING` / `REPORT_GENERATING` / `COMPLETED` / `PARTIAL` / `FAILED`）和单独的 `report_status`；与 `run_id` 的关联。C 分析：`GET /api/projects/{id}/analysis` 的真实样例，以及它如何给出这次运行的 `run_id`、`decision_version`、assessment id、`history_scope` 和报告引用。D 报告：自动生成后的状态与下载引用样例，失败时的公开错误码和短句。价格口径已有 §2.3，接入 C 时按该接口读，不在前端重算。 |
+| 2026-11-02 | 前端 | 已知缺口：当前核对仍按项目关联，不按运行。切到更早的一次运行时，可能看到后来的判定，直到 `/analysis` 按运行返回。这不是前端再猜版本能补上的。 |
+| 2026-11-02 | 前端 | 集成检查表（未验收；勾选只在真实测试之后）： |
+
+| 项 | 状态 | 负责人 | 前端对接 | 验收 |
+| --- | --- | --- | --- | --- |
+| 访客 Session 与隔离 | ☐ | 后端 | 真实 Session 联调 | A/B 访客互不可见 |
+| 一次点击 Pipeline | ☐ | 后端 | 启动及状态展示 | 一次启动自动完成 M2–M3 |
+| 统一 Analysis API | ☐ | 后端 | F2 候选与判定 | 当前运行版本关联正确 |
+| DOCX 自动生成 | ☐ | 后端 | F3 下载状态 | 当前决策版本可下载 |
+| 公开完整流程 | ☐ | 双方 | 真实浏览器测试 | 公开链接全流程通过 |

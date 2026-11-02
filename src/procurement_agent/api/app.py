@@ -11,7 +11,7 @@ import json
 import os
 import time
 from dataclasses import replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -35,6 +35,10 @@ from procurement_agent.services.sourcing_research import (
     run_sourcing_research,
     serialize_bundle_for_gateway,
 )
+
+if TYPE_CHECKING:  # pragma: no cover
+    from procurement_agent.domain.requirements import HistoricalTransaction, Requirement
+    from procurement_agent.services.product_equivalence import ProductEquivalence
 
 app = FastAPI(title="Procurement Sourcing Agent Container", version="0.1.0")
 settings = load_settings()
@@ -921,6 +925,13 @@ async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = 
                     "state": json.dumps({"project_id": project_id, "report_id": report_id}),
                     "done": False,
                 }
+            # The price context has to be readable by the browser, with the
+            # scope of every figure, because that is what the interface shows.
+            prices = await client.get(f"/api/projects/{project_id}/price-context")
+            price_scopes: list[str] = []
+            if prices.status_code == 200:
+                contexts = prices.json().get("price_contexts") or []
+                price_scopes = [str(item.get("history_scope")) for item in contexts]
             download = await client.get(f"/api/projects/{project_id}/reports/{report_id}/download")
             if download.status_code != 200:
                 return {
@@ -931,6 +942,8 @@ async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = 
                 }
             body = await download.aread()
             failures: list[str] = []
+            if prices.status_code != 200:
+                failures.append(f"the price context could not be read: {prices.status_code}")
             if not body.startswith(b"PK"):
                 failures.append("the downloaded report is not a word document")
             if len(body) < 10_000:
@@ -946,6 +959,8 @@ async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = 
                         "report_bytes": len(body),
                         "report_sha256": report.get("sha256"),
                         "decision_version": report.get("decision_version"),
+                        "price_context_status": prices.status_code,
+                        "price_scopes": price_scopes,
                     }
                 ),
                 "done": True,
@@ -998,6 +1013,113 @@ async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = 
         return {"status": "FAIL" if failures else "OK", "failures": failures, "state": json.dumps(state), "done": True}
 
 
+def _price_contexts(
+    *,
+    requirements: list[Requirement],
+    transactions: list[HistoricalTransaction],
+    equivalences: list[ProductEquivalence],
+    history_price_unit: str | None,
+) -> list[dict[str, Any]]:
+    """The price of every requirement, with the scope it was computed in.
+
+    The scope matters as much as the number: a figure that was computed over
+    a catalogue of fourteen items is an overview, not the price of this
+    requirement, and the reader has to be told which one it is.
+    """
+    from procurement_agent.services.price_context import build_price_context
+
+    contexts: list[dict[str, Any]] = []
+    for requirement in requirements:
+        price_context = build_price_context(
+            requirement=requirement,
+            transactions=transactions,
+            equivalences=equivalences,
+            history_price_unit=history_price_unit,
+        )
+        contexts.append(
+            {
+                "requirement_id": requirement.requirement_id,
+                "product_name": requirement.product_name,
+                "budget": price_context.budget_value,
+                "budget_currency": price_context.budget_currency,
+                "budget_unit": price_context.budget_unit,
+                "history_scope": price_context.history_scope.value,
+                "history_scope_note": price_context.history.scope_note,
+                "history_available": price_context.history.available,
+                "history_rows": price_context.history.transaction_count,
+                "statistics": (
+                    price_context.history.statistics.model_dump(mode="json")
+                    if price_context.history.statistics
+                    else None
+                ),
+                "overview_statistics": (
+                    price_context.history_overview.statistics.model_dump(mode="json")
+                    if price_context.history_overview and price_context.history_overview.statistics
+                    else None
+                ),
+                "overview_is_not_a_baseline": price_context.history_scope.value == "TABLE_OVERVIEW",
+                "findings": [finding.model_dump(mode="json") for finding in price_context.findings],
+                "notes": price_context.notes,
+            }
+        )
+    return contexts
+
+
+class PriceContextRequest(BaseModel):
+    """Internal request for the price context of a project."""
+
+    project_id: str
+    gateway_url: str
+    token: str
+
+
+@app.post("/internal/projects/price-context")
+async def price_context(
+    payload: PriceContextRequest,
+    x_internal_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """The price of every requirement of a project, with its scope.
+
+    The gateway asks the container for this, because the price rules live
+    here. The reader gets the scope with every figure, so a catalogue-wide
+    number is never presented as the price of one item.
+    """
+    _require_internal(payload.token or x_internal_token)
+
+    import httpx
+
+    from procurement_agent.domain.requirements import HistoricalTransaction, Requirement
+    from procurement_agent.services.product_equivalence import ProductEquivalence
+
+    gateway_url = payload.gateway_url.rstrip("/")
+    project_id = payload.project_id
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        response = await client.get(
+            f"{gateway_url}/internal/projects/{project_id}/report-context",
+            headers={"x-internal-token": payload.token},
+        )
+        if response.status_code == 404:
+            raise HTTPException(status_code=404, detail="project or compiled demand not found")
+        response.raise_for_status()
+        source = response.json()
+
+    requirements = [Requirement.model_validate(item) for item in source.get("requirements") or []]
+    transactions = [
+        HistoricalTransaction.model_validate(item) for item in source.get("history_transactions") or []
+    ]
+    equivalences = [
+        ProductEquivalence.model_validate(item) for item in source.get("equivalences") or []
+    ]
+    contexts = _price_contexts(
+        requirements=requirements,
+        transactions=transactions,
+        equivalences=equivalences,
+        history_price_unit=source.get("history_price_unit"),
+    )
+    return {"project_id": project_id, "price_contexts": contexts}
+
+
 @app.post("/internal/projects/{project_id}/report")
 async def build_report(payload: BuildReportRequest, x_internal_token: str | None = Header(default=None)) -> dict[str, Any]:
     """Build the formal procurement report of a project.
@@ -1016,7 +1138,6 @@ async def build_report(payload: BuildReportRequest, x_internal_token: str | None
 
     from procurement_agent.domain.requirements import HistoricalTransaction, Requirement
     from procurement_agent.reports.procurement_report import ReportInput, build_procurement_docx
-    from procurement_agent.services.price_context import build_price_context
     from procurement_agent.services.product_equivalence import ProductEquivalence
 
     async with httpx.AsyncClient(timeout=120) as client:
@@ -1037,33 +1158,12 @@ async def build_report(payload: BuildReportRequest, x_internal_token: str | None
     equivalences = [
         ProductEquivalence.model_validate(item) for item in context.get("equivalences") or []
     ]
-    price_contexts: list[dict[str, Any]] = []
-    for requirement in requirements:
-        price_context = build_price_context(
-            requirement=requirement,
-            transactions=transactions,
-            equivalences=equivalences,
-            history_price_unit=context.get("history_price_unit"),
-        )
-        price_contexts.append(
-            {
-                "requirement_id": requirement.requirement_id,
-                "scope": price_context.history_scope.value,
-                "scope_note": price_context.history.scope_note,
-                "statistics": (
-                    price_context.history.statistics.model_dump(mode="json")
-                    if price_context.history.statistics
-                    else None
-                ),
-                "overview_statistics": (
-                    price_context.history_overview.statistics.model_dump(mode="json")
-                    if price_context.history_overview and price_context.history_overview.statistics
-                    else None
-                ),
-                "findings": [finding.model_dump(mode="json") for finding in price_context.findings],
-                "notes": price_context.notes,
-            }
-        )
+    price_contexts = _price_contexts(
+        requirements=requirements,
+        transactions=transactions,
+        equivalences=equivalences,
+        history_price_unit=context.get("history_price_unit"),
+    )
 
     decisions = list(context.get("decisions") or [])
     decision_version = hashlib.sha256(

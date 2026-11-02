@@ -6,7 +6,7 @@ import { ProjectNav } from "./components/ProjectNav";
 import { RunPanel } from "./components/RunPanel";
 import { WorkspaceShell } from "./components/WorkspaceShell";
 import { useWorkspace } from "./workspace/useWorkspace";
-import { reportPhase } from "./view/report";
+import { reportButtonLabel, reportPhase } from "./view/report";
 
 export function App() {
 	const workspace = useWorkspace();
@@ -14,7 +14,7 @@ export function App() {
 	const run = workspace.run && workspace.run.project_id === project?.id ? workspace.run : null;
 	const runActive = Boolean(run && !isTerminalRun(run.status));
 	const collapsed = Boolean(run && isTerminalRun(run.status));
-	const startLabel = runActive ? "寻源进行中" : run ? "再次寻源" : "开始寻源";
+	const startLabel = runActive ? "分析进行中" : run ? "再次分析" : "开始分析";
 	const downloadPhase = reportPhase({
 		runStatus: run?.status ?? null,
 		decisionsReady: workspace.candidates.decisionsReady,
@@ -44,6 +44,11 @@ export function App() {
 				/>
 			}
 		>
+			{workspace.sessionError ? (
+				<div role="alert" className="abnormal failed">
+					<p>{workspace.sessionError}</p>
+				</div>
+			) : null}
 			{!project && workspace.error ? (
 				<div role="alert" className="abnormal failed">
 					<p>{workspace.error.summary}</p>
@@ -61,15 +66,12 @@ export function App() {
 									disabled={downloadPhase === "blocked" || downloadPhase === "generating"}
 									onClick={() => void workspace.report.download()}
 								>
-									下载这一版
+									{reportButtonLabel(downloadPhase, Boolean(workspace.report.report?.status === "COMPLETED" && workspace.report.report.download_path))}
 								</button>
 								{downloadPhase === "blocked" ? (
 									<span className="quiet">{workspace.candidates.reportBlockReason ?? "报告还没有生成"}</span>
 								) : null}
-								{downloadPhase === "generating" ? <span className="quiet">正在生成报告</span> : null}
-								{workspace.report.note && downloadPhase !== "generating" && downloadPhase !== "blocked" ? (
-									<span className="quiet">{workspace.report.note}</span>
-								) : null}
+								{workspace.report.note && downloadPhase !== "blocked" ? <span className="quiet">{workspace.report.note}</span> : null}
 							</div>
 						) : null}
 					</div>

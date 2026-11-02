@@ -535,6 +535,15 @@ export class ApiClient {
 		});
 	}
 
+	/** Explicit guest session. The body shape is unpublished, so a 2xx is enough and nothing is stored. */
+	openSession(call?: CallOptions): Promise<void> {
+		return this.request("/api/session", { method: "POST", json: {}, call }).then(() => undefined);
+	}
+
+	readSession(call?: CallOptions): Promise<void> {
+		return this.request("/api/session", { call }).then(() => undefined);
+	}
+
 	listReports(projectId: string, call?: CallOptions): Promise<Report[]> {
 		return this.request(`/api/projects/${encodeURIComponent(projectId)}/reports`, { call }).then((payload) => {
 			const row = asRecord(payload, "reports");

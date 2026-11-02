@@ -25,7 +25,7 @@ test("fixture path creates a project, accepts files, and restores a partial run"
 	});
 	await expect(page.getByText("历史采购.xlsx 已接收")).toBeVisible();
 	await page.screenshot({ path: `${screenshots}/f1-input.png`, fullPage: true });
-	await page.getByRole("button", { name: "开始寻源" }).click();
+	await page.getByRole("button", { name: "开始分析" }).click();
 	await expect(page.getByTestId("run-status")).toHaveText("正在查阅公开资料", { timeout: 20_000 });
 	await page.screenshot({ path: `${screenshots}/f1-running.png`, fullPage: true });
 	await expect(page.getByTestId("run-status")).toHaveText("部分完成", { timeout: 30_000 });
@@ -34,7 +34,7 @@ test("fixture path creates a project, accepts files, and restores a partial run"
 	await expect(page.getByText("有 3 条需求没能整理")).toBeVisible();
 	await expect(page.getByText("计划预算未确认")).toBeVisible();
 	const noticeBox = await page.getByText("计划预算未确认").boundingBox();
-	const startBox = await page.getByRole("button", { name: "再次寻源" }).boundingBox();
+	const startBox = await page.getByRole("button", { name: "再次分析" }).boundingBox();
 	expect(noticeBox).toBeTruthy();
 	expect(startBox).toBeTruthy();
 	expect(noticeBox!.y).toBeLessThan(startBox!.y);
@@ -73,7 +73,7 @@ test("fixture path shows a failed demand compilation", async ({ page }) => {
 	await page.getByLabel("新项目名称").fill("整理失败项目");
 	await page.getByRole("button", { name: "创建" }).click();
 	await page.getByLabel("需求文字").fill("只写了一句无法整理的需求。");
-	await page.getByRole("button", { name: "开始寻源" }).click();
+	await page.getByRole("button", { name: "开始分析" }).click();
 	await expect(page.getByRole("alert")).toContainText("需求整理失败。");
 	await expect(page.getByTestId("run-status")).toHaveCount(0);
 	await page.screenshot({ path: `${screenshots}/f1-compile-failed.png`, fullPage: true });
@@ -86,7 +86,7 @@ test("fixture path shows a completed run without a download control", async ({ p
 	await page.getByLabel("新项目名称").fill("已结束项目");
 	await page.getByRole("button", { name: "创建" }).click();
 	await page.getByLabel("需求文字").fill("采购 10 套工业摄像机。");
-	await page.getByRole("button", { name: "开始寻源" }).click();
+	await page.getByRole("button", { name: "开始分析" }).click();
 	await expect(page.getByTestId("run-status")).toHaveText("寻源已结束", { timeout: 30_000 });
 	await expect(page.getByRole("button", { name: "下载这一版" })).toBeDisabled();
 	await expect(page.getByText("报告还没有生成")).toBeVisible();
@@ -101,7 +101,7 @@ test("fixture path shows a failed run", async ({ page }) => {
 	await page.getByLabel("新项目名称").fill("未能完成项目");
 	await page.getByRole("button", { name: "创建" }).click();
 	await page.getByLabel("需求文字").fill("采购 10 套工业摄像机。");
-	await page.getByRole("button", { name: "开始寻源" }).click();
+	await page.getByRole("button", { name: "开始分析" }).click();
 	await expect(page.getByTestId("run-status")).toHaveText("未能完成", { timeout: 30_000 });
 	await expect(page.getByRole("alert")).toContainText("分析超时");
 	await page.screenshot({ path: `${screenshots}/f1-failed.png`, fullPage: true });
@@ -213,7 +213,7 @@ test("a finished run with no candidates leaves the detail column out", async ({ 
 	await page.goto("/");
 	await page.getByRole("button", { name: /工业摄像机寻源/ }).click();
 	await expect(page.getByText("这次没有候选供应商。")).toBeVisible();
-	await expect(page.getByText("研究已结束")).toBeVisible();
+	await expect(page.getByTestId("run-status")).toHaveText("寻源已结束");
 	await expect(page.getByText("还没有核验和决策，以下只是长名单。")).toHaveCount(0);
 	await expect(page.getByRole("complementary", { name: "所选型号" })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "下载这一版" })).toBeDisabled();
@@ -225,7 +225,7 @@ test("known case hides internal wording and groups identical models", async ({ p
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await page.goto("/");
 	await page.getByRole("button", { name: /M3 cloud acceptance/ }).click();
-	await expect(page.getByText("研究 → 核验 → 决策 → 完成")).toBeVisible();
+	await expect(page.getByText("已完成")).toBeVisible();
 	await expect(page.getByRole("button", { name: "同型号 4 条" })).toBeVisible();
 	await page.getByRole("row", { name: /IPS05-R10-OIA4/ }).click();
 	const fail = page.getByRole("complementary", { name: "所选型号" });
@@ -322,7 +322,7 @@ test("a previous failed report does not show the container error", async ({ page
 	await page.getByRole("button", { name: /正式报告项目/ }).click();
 	await expect(page.getByText("上次生成失败，可以重新生成。")).toBeVisible();
 	await expect(page.locator("body")).not.toContainText("container");
-	await expect(page.getByRole("button", { name: "下载这一版" })).toBeEnabled();
+	await expect(page.getByRole("button", { name: "重新生成" })).toBeEnabled();
 });
 
 test("an older run can be opened from the process log", async ({ page }) => {

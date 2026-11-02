@@ -25,7 +25,7 @@ function renderForm(collapsed: boolean) {
 			compileNotices={["计划预算未确认"]}
 			historyNote={null}
 			synthetic={null}
-			startLabel={collapsed ? "再次寻源" : "开始寻源"}
+			startLabel={collapsed ? "再次分析" : "开始分析"}
 			onText={() => {}}
 			onUpload={async () => {}}
 			onImport={async () => {}}
@@ -38,14 +38,14 @@ describe("DemandForm", () => {
 	it("places compile notes above the start button", () => {
 		renderForm(false);
 		const notice = screen.getByText("计划预算未确认");
-		const button = screen.getByRole("button", { name: "开始寻源" });
+		const button = screen.getByRole("button", { name: "开始分析" });
 		expect(notice.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
 
 	it("keeps compile notes above the button after the demand is collapsed", () => {
 		renderForm(true);
 		const notice = screen.getByText("计划预算未确认");
-		const button = screen.getByRole("button", { name: "再次寻源" });
+		const button = screen.getByRole("button", { name: "再次分析" });
 		expect(notice.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
 });

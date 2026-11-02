@@ -242,11 +242,11 @@ describe("candidate view", () => {
 	it("reads one procurement line from job status without inventing a later stage", () => {
 		const idle = { status: "IDLE", job_id: null, demand_revision: 1, error: null, updated_at: null };
 		expect(procurementLine({ runStatus: "COMPLETED", spec: idle, decision: idle, hasAssessments: false, hasDecisions: false })).toMatchObject({
-			line: "研究已结束",
+			line: "",
 			decisionsReady: false,
 			listNote: "还没有核验和决策，以下只是长名单。",
 		});
-		expect(procurementLine({ runStatus: "RUNNING", spec: idle, decision: idle, hasAssessments: false, hasDecisions: false }).line).toBe("研究");
+		expect(procurementLine({ runStatus: "RUNNING", spec: idle, decision: idle, hasAssessments: false, hasDecisions: false }).line).toBe("正在寻找供应商");
 		expect(
 			procurementLine({
 				runStatus: "COMPLETED",
@@ -255,9 +255,9 @@ describe("candidate view", () => {
 				hasAssessments: true,
 				hasDecisions: true,
 			}).line,
-		).toBe("研究 → 核验 → 决策 → 完成");
+		).toBe("已完成");
 		const stuck = { ...idle, status: "QUEUED", updated_at: "2026-11-01T16:55:00.000Z" };
 		expect(jobIsStalled(stuck, Date.parse("2026-11-02T07:00:00.000Z"))).toBe(true);
-		expect(procurementLine({ runStatus: "COMPLETED", spec: idle, decision: stuck, hasAssessments: true, hasDecisions: false }).line).toContain("30 分钟");
+		expect(procurementLine({ runStatus: "COMPLETED", spec: idle, decision: stuck, hasAssessments: true, hasDecisions: false }).line).toBe("需要处理");
 	});
 });

@@ -56,6 +56,13 @@ export function decisionCoversRun(input: {
 	return { ready: true, reason: "报告还没有生成" };
 }
 
+export function reportButtonLabel(phase: ReportPhase, hasFile: boolean): string {
+	if (phase === "generating") return "正在生成报告";
+	if (phase === "failed") return "重新生成";
+	if (phase === "ready" && hasFile) return "下载这一版";
+	return "下载这一版";
+}
+
 /** The download control. A long list cannot start a report. */
 export function reportPhase(input: { runStatus: string | null; decisionsReady: boolean; report: Report | null; pending: boolean }): ReportPhase {
 	const finished = input.runStatus === "COMPLETED" || input.runStatus === "PARTIAL";

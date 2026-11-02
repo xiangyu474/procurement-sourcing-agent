@@ -1,4 +1,5 @@
 import { formatProjectDate, sanitizePublicText } from "../api/adapter";
+import { userProgress } from "./progress";
 import type { Candidate, CandidateEvidence, JobStatus, RequirementsDocument, SourcingDecision, SpecAssessment, SpecCheck } from "../api/types";
 
 export type Tone = "long" | "short" | "verify" | "pass" | "fail" | "unknown" | "none";
@@ -112,40 +113,22 @@ export function procurementLine(input: {
 	const decisionStalled = jobIsStalled(input.decision, now);
 	const decisionsReady = input.hasDecisions;
 	const listNote = decisionsReady ? null : input.hasAssessments ? DECISION_NOTE : LONG_LIST_NOTE;
-
-	if (input.runStatus === "QUEUED" || input.runStatus === "RUNNING") {
-		return { line: "研究", decisionsReady: false, listNote: null };
-	}
-	if (input.runStatus === "FAILED" && specStatus === "IDLE" && !input.hasAssessments) {
-		return { line: "研究没有完成", decisionsReady: false, listNote: null };
-	}
-	if (specStalled && !input.hasAssessments) {
-		return { line: "研究 → 核验已超过 30 分钟仍未结束。", decisionsReady: false, listNote: null };
-	}
-	if (specStatus === "FAILED" && !input.hasAssessments) {
-		return { line: "研究 → 核验没有完成", decisionsReady: false, listNote: null };
-	}
-	if ((specStatus === "QUEUED" || specStatus === "RUNNING") && !input.hasAssessments) {
-		return { line: "研究 → 核验", decisionsReady: false, listNote: null };
-	}
-	if (specStatus === "IDLE" && !input.hasAssessments) {
-		const line = input.runStatus === "PARTIAL" ? "研究部分完成" : "研究已结束";
-		return { line, decisionsReady: false, listNote };
-	}
-	if (decisionStalled && !input.hasDecisions) {
-		return { line: "研究 → 核验 → 决策已超过 30 分钟仍未结束。", decisionsReady: false, listNote };
-	}
-	if (decisionStatus === "FAILED" && !input.hasDecisions) {
-		return { line: "研究 → 核验 → 决策没有完成", decisionsReady: false, listNote };
-	}
-	if ((decisionStatus === "QUEUED" || decisionStatus === "RUNNING") && !input.hasDecisions) {
-		return { line: "研究 → 核验 → 决策", decisionsReady: false, listNote };
-	}
-	if (decisionsReady) {
-		const prefix = input.runStatus === "PARTIAL" ? "研究部分完成 → 核验 → 决策 → 完成" : "研究 → 核验 → 决策 → 完成";
-		return { line: prefix, decisionsReady: true, listNote: null };
-	}
-	return { line: input.runStatus === "PARTIAL" ? "研究部分完成 → 核验" : "研究 → 核验", decisionsReady: false, listNote };
+	const attention =
+		input.runStatus === "FAILED" ||
+		input.runStatus === "PARTIAL" ||
+		specStatus === "FAILED" ||
+		decisionStatus === "FAILED" ||
+		specStalled ||
+		decisionStalled;
+	const line = userProgress({
+		runStatus: input.runStatus,
+		specActive: (specStatus === "QUEUED" || specStatus === "RUNNING") && !input.hasAssessments,
+		decisionActive: (decisionStatus === "QUEUED" || decisionStatus === "RUNNING") && !input.hasDecisions,
+		reportActive: false,
+		attention,
+		done: decisionsReady && !attention,
+	});
+	return { line: line ?? "", decisionsReady, listNote };
 }
 
 type Amount = { value: string; currency: string | null; unit: string | null };

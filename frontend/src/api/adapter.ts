@@ -223,14 +223,21 @@ export function messageForApiError(error: unknown): UiError {
 	if (error.code === "timeout") return { summary: "请求超时。" };
 	if (error.code === "network") return { summary: "网络中断。" };
 	const known = REASONS[error.code];
-	const technical = technicalDetail(error.body);
+	const technical = publicDetail(error.body);
 	if (known) return technical ? { summary: known, technical } : { summary: known };
-	if (error.status === 401) return { summary: "访问被拒绝。" };
+	if (error.status === 401 || error.status === 403) return { summary: "访问被拒绝。" };
 	if (error.status === 404) return { summary: "没有找到对应的记录。" };
-	if (error.status >= 500) {
-		return technical ? { summary: "服务暂时不可用。", technical } : { summary: "服务暂时不可用。" };
-	}
+	if (error.status === 429) return { summary: error.code === "budget_exhausted" ? REASONS.budget_exhausted : "请求过于频繁，请稍后再试。" };
+	if (error.status >= 500) return { summary: "服务暂时不可用。" };
 	return technical ? { summary: "请求没有被接受。", technical } : { summary: "请求没有被接受。" };
+}
+
+function publicDetail(body: unknown): string | undefined {
+	const text = technicalDetail(body);
+	if (!text || text.length > 80) return undefined;
+	if (/container|proxy|exception|stack|https?:|error/i.test(text)) return undefined;
+	if (!/^[\u4e00-\u9fff0-9，。、；：！？\s]+$/.test(text)) return undefined;
+	return text;
 }
 
 function technicalDetail(body: unknown): string | undefined {
