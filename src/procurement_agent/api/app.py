@@ -925,6 +925,13 @@ async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = 
                     "state": json.dumps({"project_id": project_id, "report_id": report_id}),
                     "done": False,
                 }
+            # The price context has to be readable by the browser, with the
+            # scope of every figure, because that is what the interface shows.
+            prices = await client.get(f"/api/projects/{project_id}/price-context")
+            price_scopes: list[str] = []
+            if prices.status_code == 200:
+                contexts = prices.json().get("price_contexts") or []
+                price_scopes = [str(item.get("history_scope")) for item in contexts]
             download = await client.get(f"/api/projects/{project_id}/reports/{report_id}/download")
             if download.status_code != 200:
                 return {
@@ -935,6 +942,8 @@ async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = 
                 }
             body = await download.aread()
             failures: list[str] = []
+            if prices.status_code != 200:
+                failures.append(f"the price context could not be read: {prices.status_code}")
             if not body.startswith(b"PK"):
                 failures.append("the downloaded report is not a word document")
             if len(body) < 10_000:
@@ -950,6 +959,8 @@ async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = 
                         "report_bytes": len(body),
                         "report_sha256": report.get("sha256"),
                         "decision_version": report.get("decision_version"),
+                        "price_context_status": prices.status_code,
+                        "price_scopes": price_scopes,
                     }
                 ),
                 "done": True,
