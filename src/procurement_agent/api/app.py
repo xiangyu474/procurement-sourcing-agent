@@ -904,6 +904,8 @@ async def acceptance(payload: AcceptanceRequest, x_internal_token: str | None = 
                 return {"status": "FAIL", "failures": [f"pipeline failed at {pipeline.get('stage')}: {pipeline.get('error')}"], "state": json.dumps(state), "done": True}
             if status not in {"COMPLETED", "PARTIAL"}:
                 return {"status": "OK", "failures": [], "state": json.dumps(state), "done": False}
+            if not pipeline.get("decision_version"):
+                return {"status": "FAIL", "failures": ["pipeline completed without a frozen decision version"], "state": json.dumps(state), "done": True}
             report_status = pipeline.get("report_status")
             if report_status == "FAILED":
                 return {"status": "FAIL", "failures": [f"report failed independently: {pipeline.get('report_error_code')}"], "state": json.dumps(state), "done": True}

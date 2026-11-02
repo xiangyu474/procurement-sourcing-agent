@@ -5,7 +5,7 @@ import { recordPipelineStage, sha256, storePipelineSnapshot } from "./pipeline_s
 import { buildFinalContext } from "./pipeline_final";
 import { startPipelineReport } from "./pipeline_report";
 
-export interface PipelineRequest { pipelineId: string; projectId: string; runId: string }
+export interface PipelineRequest { pipelineId: string; projectId: string; runId: string; probeOnly?: boolean }
 interface PipelineRow { id: string; run_id: string; demand_revision: number; history_dataset_id: string | null; history_r2_key: string | null }
 interface SpecContext { project_id: string; run_id: string; demand_revision: number; requirements: unknown[]; candidates: { evidence_ids: string[] }[] }
 interface SpecResults { assessments: { assessment: unknown }[] }
@@ -48,6 +48,11 @@ function runtime(env: Env) {
 export class ProcurementPipelineWorkflow extends WorkflowEntrypoint<Env, PipelineRequest> {
 	async run(event: WorkflowEvent<PipelineRequest>, step: WorkflowStep) {
 		const { pipelineId, projectId, runId } = event.payload;
+		// A cost-free operator probe distinguishes the code executing in a
+		// Workflow instance from the latest uploaded Worker/version metadata.
+		if (event.payload.probeOnly) {
+			return await step.do("pipeline-code-version-b2", async () => ({ status: "PROBE", code_revision: "pipeline-b2-snapshot-report" }));
+		}
 		let activeStage = "RESEARCH";
 		let researchStatus = "";
 		let analysisFrozen = false;
