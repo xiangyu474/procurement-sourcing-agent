@@ -201,7 +201,10 @@ export function installFixture(page: Page, mode: Mode): Promise<unknown> {
 				compilation: {
 					requirements: [{ requirement_id: "r1", product_name: "工业摄像机" }],
 					unstructured_requirements: [{ text: "付款方式待定" }, { text: "交货地点待定" }, { text: "样品说明" }],
-					issues: ["budget 200000 not confirmed", "delivery window unclear"],
+					issues: [
+						"The planned_total_budget of r1 could not be confirmed: the cited fragments do not state 200000.",
+						"delivery window unclear",
+					],
 				},
 			});
 			return;
@@ -248,6 +251,51 @@ export function installFixture(page: Page, mode: Mode): Promise<unknown> {
 					warnings: ["Supervisor token note"],
 				},
 			});
+			return;
+		}
+		await fulfill(404, { error: "not_found" });
+	});
+}
+
+export function installCatalogue(page: Page, count = 50): Promise<unknown> {
+	const projects = Array.from({ length: count }, (_, index) => ({
+		id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+		title: "M3 cloud acceptance",
+		history_availability: "NOT_PROVIDED",
+		demand_revision: 0,
+		analysis_version: 0,
+		created_at: new Date(Date.UTC(2026, 9, 1, 1, index)).toISOString(),
+		latest_run: null,
+	}));
+	return page.route("**/api/**", async (route: Route) => {
+		const request = route.request();
+		const path = new URL(request.url()).pathname;
+		const fulfill = (status: number, body: unknown) =>
+			route.fulfill({ status, contentType: "application/json; charset=utf-8", body: JSON.stringify(body) });
+		if (request.method() === "GET" && path === "/api/projects") {
+			await fulfill(200, { projects });
+			return;
+		}
+		const projectMatch = path.match(/^\/api\/projects\/([^/]+)$/);
+		if (request.method() === "GET" && projectMatch) {
+			const found = projects.find((item) => item.id === decodeURIComponent(projectMatch[1]));
+			if (!found) {
+				await fulfill(404, { error: "not_found" });
+				return;
+			}
+			await fulfill(200, { ...found, sources: [] });
+			return;
+		}
+		if (request.method() === "GET" && /\/runs$/.test(path)) {
+			await fulfill(200, { runs: [] });
+			return;
+		}
+		if (request.method() === "GET" && path.endsWith("/requirement-text")) {
+			await fulfill(404, { error: "not_found" });
+			return;
+		}
+		if (request.method() === "GET" && path.endsWith("/requirements")) {
+			await fulfill(404, { error: "not_compiled" });
 			return;
 		}
 		await fulfill(404, { error: "not_found" });

@@ -39,6 +39,14 @@ POST /api/projects/{project_id}/actions
 { "error": "history_file_rejected", "detail": "工作表没有可用的表头。" }
 ```
 
+## 仍缺：无采购内容的整理结果
+
+`BLOCKED_BY_BACKEND`。实网里非需求文字「你好，今天天气不错。」会得到整理状态 `COMPLETED`，且 `requirements` 为空。前端不会据此启动寻源。请确认应返回 `FAILED`，或在 `issues` 里给出原因码（例如 `no_recognizable_demand`）。
+
+## 仍缺：项目列表翻页
+
+`BLOCKED_BY_BACKEND`。`GET /api/projects?limit=50` 只返回最近 50 条，没有下一页。请加游标翻页，例如查询参数 `cursor`，响应带 `next_cursor`。前端不放一个假的「更多」。
+
 ## 仍缺：公开响应去掉内部字段
 
 `BLOCKED_BY_BACKEND`。浏览器仍能看到 `r2_key`、`normalized_r2_key`、按次 token、`SUPERVISOR:` 阶段名，以及事件 `detail` 里的 `SourcingPlan` / `Supervisor` / `M3`。请 Worker 去掉，或另给可展示字段。事件请给 `display_text` 或原因码，前端不必展示原文。

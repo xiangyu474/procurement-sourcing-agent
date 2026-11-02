@@ -43,14 +43,18 @@ describe("adapter", () => {
 		).toEqual({ phase: "ready", requirementCount: 0, unstructuredCount: 1, notices: ["有 1 条需求没能整理"] });
 	});
 
-	it("notices an unconfirmed budget without dumping the raw issue", () => {
+	it("notices an unconfirmed planned budget from the issue field", () => {
 		const view = interpretCompilation(
 			{
 				analysis_version: 4,
 				compilation: {
 					requirements: [{ product_name: "摄像机" }],
 					unstructured_requirements: [{ text: "a" }, { text: "b" }, { text: "c" }],
-					issues: ["budget 200000 not confirmed", "delivery note unclear"],
+					issues: [
+						"The planned_total_budget of r1 could not be confirmed: the cited fragments do not state 200000.",
+						{ field: "planned_unit_price", detail: "could not be confirmed" },
+						"delivery note unclear",
+					],
 				},
 			},
 			4,
@@ -59,8 +63,39 @@ describe("adapter", () => {
 			phase: "ready",
 			requirementCount: 1,
 			unstructuredCount: 3,
-			notices: ["有 3 条需求没能整理", "预算未确认", "另有 1 条内容需要确认"],
+			notices: ["有 3 条需求没能整理", "计划预算未确认", "另有 2 条内容需要确认"],
 		});
+	});
+
+	it("does not treat a free-text budget sentence as the planned-budget field", () => {
+		const view = interpretCompilation(
+			{
+				analysis_version: 4,
+				compilation: {
+					requirements: [{ product_name: "摄像机" }],
+					issues: ["budget 200000 not confirmed", { code: "AMBIGUOUS", detail: "budget looks unclear" }],
+				},
+			},
+			4,
+		);
+		expect(view).toMatchObject({
+			phase: "ready",
+			notices: ["另有 2 条内容需要确认"],
+		});
+	});
+
+	it("reads a structured planned_total_budget issue", () => {
+		const view = interpretCompilation(
+			{
+				analysis_version: 5,
+				compilation: {
+					requirements: [{ product_name: "摄像机" }],
+					issues: [{ field: "planned_total_budget", code: "UNCONFIRMED", detail: "cited text does not state the amount" }],
+				},
+			},
+			5,
+		);
+		expect(view).toMatchObject({ phase: "ready", notices: ["计划预算未确认"] });
 	});
 
 	it("describes partial and failed runs without internal terms", () => {

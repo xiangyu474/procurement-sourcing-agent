@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import {
 	COMPILE_WAIT_TIMEOUT,
+	NO_RECOGNIZABLE_DEMAND,
 	hasDemandSource,
 	interpretCompilation,
 	isAbort,
@@ -182,8 +183,10 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 				setText(savedDraft || serverText);
 				const requirements = await clientRef.current.getRequirements(projectId, { signal });
 				if (!signal.aborted && requirements.state === "ready" && requirements.body.analysis_version === loaded.analysis_version) {
-					setCompileView(interpretCompilation(requirements.body, requirements.body.analysis_version));
-					writeStamp(projectId, loaded.demand_revision);
+					const view = interpretCompilation(requirements.body, requirements.body.analysis_version);
+					setCompileView(view);
+					if (view.phase === "ready" && view.requirementCount > 0) writeStamp(projectId, loaded.demand_revision);
+					else sessionStorage.removeItem(stampKey(projectId));
 				} else if (!signal.aborted) {
 					setCompileView(null);
 				}
@@ -192,7 +195,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 				const latest = listed[0];
 				if (!latest) return;
 				setActivity(null);
-				await runsRef.current.watch(latest.id, signal, noteRun);
+				await runsRef.current.watch(latest.id, signal, noteRun, listed);
 			} catch (caught) {
 				if (!isAbort(caught)) setError(messageForApiError(caught));
 			}
@@ -368,7 +371,13 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 					setError({ summary: "需求整理没有读到结果。" });
 					return;
 				}
-				setCompileView(interpretCompilation(requirements.body, requirements.body.analysis_version));
+				const view = interpretCompilation(requirements.body, requirements.body.analysis_version);
+				setCompileView(view);
+				if (view.phase !== "ready" || view.requirementCount === 0) {
+					sessionStorage.removeItem(stampKey(current.id));
+					setError({ summary: view.phase === "failed" ? "需求整理失败。" : NO_RECOGNIZABLE_DEMAND });
+					return;
+				}
 				writeStamp(current.id, current.demand_revision);
 			}
 			setActivity("正在启动寻源");

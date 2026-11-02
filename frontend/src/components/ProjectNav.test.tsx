@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { formatProjectDate } from "../api/adapter";
 import type { ProjectSummary } from "../api/types";
 import { ProjectNav } from "./ProjectNav";
 
@@ -34,5 +35,23 @@ describe("ProjectNav", () => {
 		const item = screen.getByRole("button", { name: new RegExp(longName) });
 		expect(item.querySelector(".project-name")?.className).toContain("project-name");
 		expect(screen.getByText("未开始")).toBeTruthy();
+		expect(screen.getByText(formatProjectDate(project.created_at))).toBeTruthy();
+	});
+
+	it("shows a short created date when titles are the same", () => {
+		const projects: ProjectSummary[] = [1, 2].map((day) => ({
+			id: `p${day}`,
+			title: "M3 cloud acceptance",
+			history_availability: "NOT_PROVIDED",
+			demand_revision: 0,
+			analysis_version: 0,
+			created_at: `2026-10-${String(day).padStart(2, "0")}T08:30:00.000Z`,
+			latest_run: null,
+		}));
+		render(<ProjectNav projects={projects} activeProjectId="p1" busy={false} onCreate={async () => true} onOpen={async () => true} onSelect={() => {}} />);
+		expect(screen.getAllByText("M3 cloud acceptance")).toHaveLength(2);
+		expect(screen.getByText(formatProjectDate(projects[0].created_at))).toBeTruthy();
+		expect(screen.getByText(formatProjectDate(projects[1].created_at))).toBeTruthy();
+		expect(screen.queryByRole("button", { name: "更多" })).toBeNull();
 	});
 });

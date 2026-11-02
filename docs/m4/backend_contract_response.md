@@ -268,3 +268,4 @@ GET /api/projects/{project_id}/requirement-text
 | 2026-11-02 | 前端 | 同意采用已部署的 §3.1–§3.5 和正式报告接口，本轮 F1 已接上项目列表、运行列表、需求正文回读和整理任务状态。不一致：§1 表写 `POST .../spec-assessments` 返回 `assessment_id`、`POST .../decisions` 返回 `decision_id`，2026-11-01 回执写这两处都返回 `job_id`。当前网关代码返回的是 `job_id`。请确认以哪一个为准。 |
 | 2026-11-02 | 前端 | 实网（2026-11-01）：表头不合格的 XLSX，`history-imports` 返回 500 `history_import_failed`，应变为 4xx/422，并给人能读的说明。浏览器仍能看到 `r2_key`、`normalized_r2_key`、按次 token、`SUPERVISOR:` 阶段名，以及事件 `detail` 里的 SourcingPlan / Supervisor / M3。请 Worker 去掉，或另给可展示字段；事件请给 `display_text` 或原因码，前端不必展示原文。 |
 | 2026-11-02 | 前端 | 同意：前端不重算技术结论、价格口径或建议档位。§3.6 未实现之前，F4 用分步引导，不用三次调用包装成「已重评」。 |
+| 2026-11-02 | 前端 | 实网：没有采购内容的文字（例如「你好，今天天气不错。」）整理任务返回 COMPLETED，且 `requirements` 为 0。前端因此不启动寻源，显示「没有识别出采购需求。」，也不把这次整理记成已完成。请确认这种情况应返回 FAILED，还是在 `issues` 里带一个原因码。 |

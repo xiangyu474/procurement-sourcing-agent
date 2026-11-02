@@ -135,11 +135,10 @@ export function interpretCompilation(body: RequirementsDocument | null, expected
 	if (expectedAnalysisVersion != null && body.analysis_version !== expectedAnalysisVersion) return { phase: "pending" };
 	const requirements = body.compilation.requirements;
 	const issuesRaw = body.compilation.issues;
-	const issues = Array.isArray(issuesRaw)
-		? issuesRaw.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-		: [];
+	const issues = Array.isArray(issuesRaw) ? issuesRaw.filter((item) => item != null && item !== "") : [];
 	if (!Array.isArray(requirements)) {
-		if (issues.length > 0) return { phase: "failed", issues };
+		const texts = issues.map(issueText).filter((item) => item.length > 0);
+		if (texts.length > 0) return { phase: "failed", issues: texts };
 		return { phase: "pending" };
 	}
 	const unstructured = body.compilation.unstructured_requirements;
@@ -152,12 +151,43 @@ export function interpretCompilation(body: RequirementsDocument | null, expected
 	};
 }
 
-export function compileNotices(issues: string[], unstructuredCount: number): string[] {
+function fieldToken(text: string): string | null {
+	const match = text.match(/\b(planned_total_budget|planned_unit_price|planned_sales_unit_price)\b/i);
+	return match ? match[1].toLowerCase() : null;
+}
+
+/** The amount field named by an issue. A code or field wins over the sentence. */
+export function issueField(issue: unknown): string | null {
+	if (typeof issue === "string") return fieldToken(issue);
+	if (!issue || typeof issue !== "object" || Array.isArray(issue)) return null;
+	const row = issue as Record<string, unknown>;
+	const named = [row.field, row.code, row.kind].filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+	if (named.length > 0) {
+		for (const value of named) {
+			if (/^planned_total_budget$/i.test(value.trim()) || /^PLANNED_BUDGET$/i.test(value.trim())) return "planned_total_budget";
+			const token = fieldToken(value);
+			if (token) return token;
+		}
+		return null;
+	}
+	const text = [row.detail, row.message, row.text].filter((item): item is string => typeof item === "string").join(" ");
+	return fieldToken(text);
+}
+
+function issueText(issue: unknown): string {
+	if (typeof issue === "string") return issue.trim();
+	if (!issue || typeof issue !== "object" || Array.isArray(issue)) return "";
+	const row = issue as Record<string, unknown>;
+	const text = [row.detail, row.message, row.text].find((item): item is string => typeof item === "string" && item.trim().length > 0);
+	return text?.trim() ?? "";
+}
+
+export function compileNotices(issues: unknown[], unstructuredCount: number): string[] {
 	const notices: string[] = [];
 	if (unstructuredCount > 0) notices.push(`有 ${unstructuredCount} 条需求没能整理`);
-	const budget = issues.some((issue) => /预算|budget|planned_(?:total_budget|unit_price)/i.test(issue) && /未确认|不确认|待确认|not confirmed|unconfirmed|unclear/i.test(issue));
-	if (budget) notices.push("预算未确认");
-	const otherIssues = issues.filter((issue) => !(/预算|budget|planned_(?:total_budget|unit_price)/i.test(issue) && /未确认|不确认|待确认|not confirmed|unconfirmed|unclear/i.test(issue)));
+	const fields = issues.map(issueField);
+	if (fields.some((field) => field === "planned_total_budget")) notices.push("计划预算未确认");
+	const otherIssues = issues.filter((_, index) => fields[index] !== "planned_total_budget");
 	if (otherIssues.length > 0) notices.push(otherIssues.length === 1 ? "另有 1 条内容需要确认" : `另有 ${otherIssues.length} 条内容需要确认`);
 	return notices;
 }
@@ -239,6 +269,20 @@ function withoutExceptionName(text: string): string {
 	return text.replace(/\b[A-Z][A-Za-z0-9_]*(?:Error|Exception)\b:?\s*/g, "").trim();
 }
 
+export function formatProjectDate(value: string): string {
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return "";
+	const now = new Date();
+	return new Intl.DateTimeFormat("zh-CN", {
+		year: date.getFullYear() === now.getFullYear() ? undefined : "numeric",
+		month: "numeric",
+		day: "numeric",
+		hour: "2-digit",
+		minute: "2-digit",
+		hourCycle: "h23",
+	}).format(date);
+}
+
 export function formatTimestamp(value: string): string {
 	const date = new Date(value);
 	if (Number.isNaN(date.getTime())) return value;
@@ -253,6 +297,7 @@ export function formatTimestamp(value: string): string {
 }
 
 export const COMPILE_WAIT_TIMEOUT = "需求整理超过 20 分钟仍未结束。可以稍后刷新再看。";
+export const NO_RECOGNIZABLE_DEMAND = "没有识别出采购需求。";
 
 export function isTerminalRun(status: string): boolean {
 	return status === "COMPLETED" || status === "PARTIAL" || status === "FAILED";

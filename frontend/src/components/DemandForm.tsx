@@ -94,6 +94,12 @@ export function DemandForm(props: {
 		</>
 	);
 
+	const notes = props.compileNotices.map((notice) => (
+		<p className="notice" key={notice}>
+			{notice}
+		</p>
+	));
+
 	const actions = (
 		<div className="actions">
 			{canImportHistory(props.project, props.historyNote) ? (
@@ -111,12 +117,8 @@ export function DemandForm(props: {
 		return (
 			<form onSubmit={start}>
 				{fields}
+				{notes}
 				{actions}
-				{props.compileNotices.map((notice) => (
-					<p className="notice" key={notice}>
-						{notice}
-					</p>
-				))}
 			</form>
 		);
 	}
@@ -127,12 +129,8 @@ export function DemandForm(props: {
 				<summary>{summary}</summary>
 				{fields}
 			</details>
+			{notes}
 			{actions}
-			{props.compileNotices.map((notice) => (
-				<p className="notice" key={notice}>
-					{notice}
-				</p>
-			))}
 		</form>
 	);
 }

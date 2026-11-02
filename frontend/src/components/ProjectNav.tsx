@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { listStatus } from "../api/adapter";
+import { formatProjectDate, listStatus } from "../api/adapter";
 import type { ProjectSummary } from "../api/types";
 
 function statusText(label: string): string {
@@ -57,6 +57,7 @@ export function ProjectNav(props: {
 					const raw = listStatus(project.latest_run?.status ?? null, null);
 					const label = statusText(raw);
 					const tone = statusTone(raw);
+					const created = formatProjectDate(project.created_at);
 					return (
 						<button
 							key={project.id}
@@ -65,7 +66,10 @@ export function ProjectNav(props: {
 							aria-current={project.id === props.activeProjectId ? "true" : undefined}
 							onClick={() => props.onSelect(project.id)}
 						>
-							<span className="project-name">{project.title}</span>
+							<span className="project-main">
+								<span className="project-name">{project.title}</span>
+								{created ? <span className="project-created">{created}</span> : null}
+							</span>
 							<span className={tone ? `project-status ${tone}` : "project-status"}>{label}</span>
 						</button>
 					);

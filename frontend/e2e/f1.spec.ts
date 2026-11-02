@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { installFixture, LONG_PPTX, LONG_TITLE } from "./fixture";
+import { installCatalogue, installFixture, LONG_PPTX, LONG_TITLE } from "./fixture";
 
 const screenshots = "/opt/cursor/artifacts/screenshots";
 
@@ -32,7 +32,12 @@ test("fixture path creates a project, accepts files, and restores a partial run"
 	await expect(page.getByRole("alert")).toContainText("没有找到有公开资料支撑的候选供应商。");
 	await expect(page.getByRole("alert")).not.toContainText("已保留目前得到的结果");
 	await expect(page.getByText("有 3 条需求没能整理")).toBeVisible();
-	await expect(page.getByText("预算未确认")).toBeVisible();
+	await expect(page.getByText("计划预算未确认")).toBeVisible();
+	const noticeBox = await page.getByText("计划预算未确认").boundingBox();
+	const startBox = await page.getByRole("button", { name: "再次寻源" }).boundingBox();
+	expect(noticeBox).toBeTruthy();
+	expect(startBox).toBeTruthy();
+	expect(noticeBox!.y).toBeLessThan(startBox!.y);
 	await expect(page.locator("summary", { hasText: "已整理 1 条采购项" })).toBeVisible();
 	const body = await page.locator("body").innerText();
 	expect(body).not.toMatch(/Supervisor|Researcher|DSL|token|12345|workspaces\/default/i);
@@ -98,6 +103,54 @@ test("fixture path shows a failed run", async ({ page }) => {
 	await expect(page.getByTestId("run-status")).toHaveText("未能完成", { timeout: 30_000 });
 	await expect(page.getByRole("alert")).toContainText("分析超时");
 	await page.screenshot({ path: `${screenshots}/f1-failed.png`, fullPage: true });
+});
+
+test("fifty projects scroll inside the nav and keep the work panel in view", async ({ page }) => {
+	await installCatalogue(page, 50);
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto("/");
+	const list = page.locator(".project-list");
+	await expect(list.getByRole("button")).toHaveCount(50);
+	const navStyle = await page.locator(".nav").evaluate((element) => {
+		const style = getComputedStyle(element);
+		return { position: style.position, top: style.top, height: Number.parseFloat(style.height) };
+	});
+	expect(navStyle.position).toBe("sticky");
+	expect(navStyle.top).toBe("0px");
+	expect(navStyle.height).toBeGreaterThan(800);
+	const overflow = await list.evaluate((element) => ({
+		overflowY: getComputedStyle(element).overflowY,
+		scrolls: element.scrollHeight > element.clientHeight,
+	}));
+	expect(overflow.overflowY).toBe("auto");
+	expect(overflow.scrolls).toBe(true);
+	const last = list.getByRole("button").last();
+	await last.scrollIntoViewIfNeeded();
+	await last.click();
+	const heading = page.getByRole("heading", { name: "M3 cloud acceptance" });
+	await expect(heading).toBeVisible();
+	const headingBox = await heading.boundingBox();
+	expect(headingBox).toBeTruthy();
+	expect(headingBox!.y).toBeGreaterThanOrEqual(0);
+	expect(headingBox!.y).toBeLessThan(900);
+	expect(await page.getByRole("button", { name: "更多" }).count()).toBe(0);
+	await page.screenshot({ path: `${screenshots}/f1-nav-50.png` });
+
+	await page.setViewportSize({ width: 390, height: 844 });
+	const mobileNav = await page.locator(".nav").evaluate((element) => {
+		const style = getComputedStyle(element);
+		return { position: style.position, height: Number.parseFloat(style.height) };
+	});
+	expect(mobileNav.position).toBe("static");
+	expect(mobileNav.height).toBeLessThanOrEqual(844 * 0.5 + 1);
+	await heading.scrollIntoViewIfNeeded();
+	await expect(heading).toBeVisible();
+	const mobile = await page.evaluate(() => ({
+		scrollWidth: document.documentElement.scrollWidth,
+		clientWidth: document.documentElement.clientWidth,
+	}));
+	expect(mobile.scrollWidth).toBeLessThanOrEqual(mobile.clientWidth + 1);
+	await page.screenshot({ path: `${screenshots}/f1-nav-50-mobile.png` });
 });
 
 test("live gateway rejects a project create when no access credential is configured", async ({ page }) => {
