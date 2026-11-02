@@ -1,6 +1,6 @@
 # M4 后端契约答复与对齐
 
-回应 `docs/m4/backend_contract_requests.md`（基线 `f0fa49b`）。本文记录接口及待办；§5 是尚未部署的本地实现和接口草案，历史回执不代表当前生产认证已就绪。**报告的 `run_id` 与 `decision_version` 尚不能证明不可变快照绑定，旧运行准确回放尚未验证。**
+回应 `docs/m4/backend_contract_requests.md`（基线 `f0fa49b`）。本文记录接口及待办；历史回执不代表当前生产认证已就绪。B2 的新 Pipeline 使用冻结快照，旧报告不能据此追认版本绑定；多次历史运行切换尚未完成真实浏览器验收。
 前端可以**直接在本文件下方「对齐回执」一节回复**，后端会按回执改，不另开文档。
 
 - 后端仓库：`procurement_sourcing_agent`（本仓库）
@@ -37,7 +37,7 @@ M2 只会产出 `DISCOVERED_LONG_LIST`。M3-C 的决策被接受后，候选的�
 | `INVESTIGATE` | `NEEDS_VERIFICATION` |
 | `EXCLUDE` | `EXCLUDED` |
 
-未被闸门接受的决策**不改变**候选阶段。所以前端可以直接用 `GET /api/projects/{id}/candidates?stage=RFQ_SHORTLIST` 取询价短名单。
+上述描述适用于旧的独立决策接口；**B2 Pipeline 不修改项目候选阶段**，`/analysis` 中候选 `stage` 是冻结的 M2 发现阶段。Pipeline 决策是询价建议，不代表已实际进入 RFQ；只允许对通过闸门且技术通过的 `SHORTLIST` 显示「建议询价」，不要把建议冒充执行状态。
 
 ### 0.3 价格的历史口径：`history_scope`
 
@@ -93,7 +93,7 @@ M3-B 修了一个会误导买家的 bug：官方历史文件里是 **14 个不�
 
 ```http
 POST /api/projects/{project_id}/reports
-{ "run_id": "uuid" }          // 可选；目前仅作报告记录的运行引用，尚未证明数据按该运行冻结
+{ "run_id": "uuid" }          // 必须提供有冻结快照的运行；也可改为 pipeline_id，二选一
 ```
 
 ```json
@@ -109,7 +109,7 @@ GET /api/projects/{project_id}/reports/{report_id}
   "report_id": "uuid",
   "run_id": "uuid",
   "status": "COMPLETED",
-  "decision_version": "3f2a9c1b7d0e4a55",
+  "decision_version": "<64位冻结决策快照 SHA-256>",
   "byte_size": 41233,
   "sha256": "…",
   "error": null,
@@ -136,7 +136,7 @@ GET /api/projects/{project_id}/reports/{report_id}
 8. 六、未解决问题与下一步
 9. 七、证据引用（证据 ID、来源、地址、摘录、内容哈希）
 
-**报告与「运行」的绑定尚未验收**：现有 `decision_version` 是部分决策字段的摘要，并非完整不可变快照；报告上下文可能读取当前项目数据。不能仅凭 `run_id`、摘要或时间推断报告属于所选运行。
+**报告与运行的绑定**：B2 的新报告只读取 Pipeline 冻结快照，使用该快照的完整 SHA-256 作为 `decision_version`，详见 §5.4。历史旧报告可能使用部分字段摘要并读取当时项目数据；不能仅凭旧报告的 `run_id`、摘要或时间推断完整绑定。
 
 ---
 
@@ -318,7 +318,7 @@ GET /api/projects/{project_id}/requirement-text
 
 ## 5. M4 新接口：实现状态与联调草案
 
-**Session、统一 Analysis 和自动报告尚未完成生产验收；不要打开生产 Session 开关。** 受保护 Pipeline 的云端测试见 §5.2，前端尚未完成真实联调；五项联合集成检查仍保持未勾选。代码映射和阻塞项见 `docs/m4/backend_delivery_status.md`。
+**受保护的 Pipeline、Analysis 和自动报告已通过一次云端验收，但不是公开生产验收；不要打开生产 Session 开关。** 前端尚未完成真实联调，五项联合集成检查仍保持未勾选。代码映射和阻塞项见 `docs/m4/backend_delivery_status.md`。
 
 ### 5.1 Session：本地实现，未发布
 
@@ -330,7 +330,7 @@ GET /api/projects/{project_id}/requirement-text
 
 ### 5.2 Pipeline：受保护路径已部署，单次云端验收通过
 
-**CLOUD_VERIFIED（B1 单次，非 PUBLIC_READY）**：Git `41a29c7`，配置容器 `sourcing-v15`，acceptance `cf_361ade387f38d46a62670ec3bddb436512812cf2fc9c5a641b5cb531989b283d`。只有受保护的服务端 Bearer 路径可用；Guest Session 仍未启用。前端不要把该凭证放到浏览器，生产接入仍需 B3。无分析 API 或自动报告，`COMPLETED` 仅代表 B1 分析完成。
+**CLOUD_VERIFIED（B1/B2 单次，非 PUBLIC_READY）**：B1 为 Git `41a29c7` / `sourcing-v15`；B2 为 Git `d021de4` / `sourcing-v17`，验收 `cf_c4397689d684785ec4d5d80b245906b3af996cc05452507410354c34244caafc`。只有受保护的服务端 Bearer 路径可用；Guest Session 仍未启用。前端不要把该凭证放到浏览器，生产接入仍需 B3。Pipeline `COMPLETED` 表示分析完成，报告状态独立。
 
 ```http
 POST /api/projects/{project_id}/pipeline
@@ -366,15 +366,54 @@ GET /api/projects/{project_id}/pipeline/{pipeline_id}
 
 上例来自验收输出，其中 `pipeline_status` 是验收摘要字段；**实际状态 API 的字段名是 `status`**。重复启动同一键观测到相同 Pipeline/Run 且 `reused: true`。32 个候选、32 个核验、32 条决策均为 `UNKNOWN/UNVERIFIED/INVESTIGATE`，不构成建议询价；无历史文件。另用缺失历史对象的合成任务验证 `FAILED` 和阶段错误记录。第一次编译因容器未运行失败，另一次模型整理未产出有效需求；两次均未算通过。
 
-任务状态为 `QUEUED/RUNNING/COMPLETED/PARTIAL/FAILED`，运行阶段包括 `RESEARCHING/EVALUATING/DECIDING`。本版**不返回 `report_status`、决策版本或完整分析 DTO**。历史运行回放、公开鉴权、自动报告、浏览器联调仍待 B2–B4。现有 `POST .../runs` 只发起研究，不是此入口。
+任务状态为 `QUEUED/RUNNING/COMPLETED/PARTIAL/FAILED`，运行阶段包括 `RESEARCHING/EVALUATING/DECIDING`。B2 状态响应还返回 `decision_version`、`report_id`、`report_status`、`report_error_code`、`download_path`；仅报告完成时下载地址非空。历史多运行切换、公开鉴权及真实浏览器联调仍待验收。现有 `POST .../runs` 只发起研究，不是此入口。
 
-### 5.3 Analysis：提议，未实现
+### 5.3 Analysis：受保护路径已部署，单次云端验收通过
 
-提议 `GET /api/projects/{id}/analysis` 显式选择 Pipeline 或 Run，返回对应的需求修订、候选、具体 assessment ID 和 Evidence ID、价格 `history_scope`、决策版本及报告引用。旧运行必须读取同一版本，不能按项目的最新判断或时间猜测；确无快照时应明确不可用，不回填最新值。具体选择参数、DTO 和公开错误码在版本存储方案确定后发布。
+```http
+GET /api/projects/{project_id}/analysis?pipeline_id={pipeline_id}
+GET /api/projects/{project_id}/analysis?run_id={run_id}
+```
 
-### 5.4 自动报告：提议，未实现
+二选一；同时提供或都不提供返回 400 `one_version_selector_required`，找不到项目下的 Pipeline/Run 返回 404 `not_found`。历史运行没有完整冻结快照返回 409 `analysis_version_unavailable`，**绝不回填最新判断**。返回 `project_id/pipeline_id/run_id/demand_revision/research_status/decision_version`，以及 `requirements[]/candidates[]/assessments[]/decisions[]/price_contexts[]/evidence[]/report`。
 
-决策冻结后自动生成；状态由 Pipeline 暴露，成功时提供该版本的报告 ID 和下载引用，失败时提供公开错误码及短句并允许只重试报告。现有按需报告 API 可以生成文件，**但目前不能证明报告内容属于指定运行的不可变决策**；前端不得将时间匹配视为已验证版本绑定。
+- 候选用 `candidate_id + requirement_id`；判定通过 `product_candidate_id + requirement_id` 指向候选，每条有稳定的 `assessment_id`、`checks[].claim_ids/evidence_ids`。报告和分析均取同一快照。
+- 只有 `accepted=true`、`recommendation=SHORTLIST`、`technical_verdict=VERIFIED_PASS` 且 `hard_spec_overall=PASS` 才可显示建议询价；被闸门拒绝的提案仍保留 `violations`，不可显示成已采纳建议。
+- 价格在 `price_contexts[]`，按 `requirement_id` 关联，使用后端的 `history_scope`、`statistics`、`overview_statistics`、`findings`；不要自行计算。全表概览不是单品基准。
+- `decision_version` 是完整冻结快照的 SHA-256（64 位），不是可变项目的最新判断。该版本已绑定需求、Run、候选、Claim/Evidence、评估、价格和门禁决策。
+
+一次真实云端验收及 D1 快照摘录（不是完整 HTTP 响应）：
+
+```json
+{
+  "project_id":"acb2d28a-484c-4db5-a0cb-434ce80df353",
+  "pipeline_id":"122c314b-a45c-4016-9ec8-8988b5fbf4b8",
+  "run_id":"c88cebb6-2161-4ae2-95d6-98b1470cd3ac",
+  "demand_revision":1,
+  "decision_version":"314ca44a85aecf6bdf09d09518c5cf4820fd7ab2d6440349967fa74846dc49f7",
+  "assessment_id":"pa_5d3c29ba64a09ebca06d4bf4c0084dd8b3dc95c0",
+  "product_candidate_id":"pc_1a73c689f943f3b04b32c188",
+  "history_scope":"NONE"
+}
+```
+
+验收实际调用 `/analysis` 并检查其 Run、版本及 assessment ID；上述单条 assessment ID 与 scope 是 D1 快照字段摘录。该次 24 条决策中 23 条 `PASS/VERIFIED_PASS/SHORTLIST`、1 条 `UNKNOWN/UNVERIFIED/INVESTIGATE`，这是模型和程序门禁输出，**不是独立业务准确性验收**。
+
+### 5.4 自动报告：受保护路径已部署，单次云端验收通过
+
+决策快照固定后自动启动 DOCX；`GET .../pipeline/{pipeline_id}` 的 `report_status` 为 `NOT_STARTED/QUEUED/RUNNING/COMPLETED/FAILED`。报告失败不改变已完成分析，`report_error_code` 为公开错误码；未完成时 `download_path=null`。
+
+```http
+POST /api/projects/{project_id}/pipeline/{pipeline_id}/report
+POST /api/projects/{project_id}/reports
+Content-Type: application/json
+
+{"run_id":"<属于该项目且有冻结快照的运行>"}
+```
+
+第一条用于失败后只重试报告；第二条是保留的按需入口，也可传 `pipeline_id`（与 `run_id` 二选一）。已有同一决策版本的有效报告时 200 复用；创建/进行中返回 202，响应含 `report_id/status/decision_version`。没有冻结决策或该 Run 不是可验证版本时返回 409，不退回旧的项目 latest 报告。下载仍用 `GET /api/projects/{id}/reports/{report_id}/download`，项目归属校验必须在 Guest Session 上线前完成。
+
+B2 云端验收自动下载并打开 DOCX，检查报告内 Run/版本以及下载字节与 D1 SHA-256 一致；重复触发报告复用了同一 `report_id`。真实测试报告 `pr_122c314b-a45c-4016-9ec8-8988b5fbf4b8`，44,335 字节，SHA-256 `1cd5f46585c9eb2e305555c8356c4fd43badb71aa341fd8102ac6feb1c3dfaa7`。报告失败保留分析和仅重试在本地测试通过，**尚未完成真实云端失败注入与 A/B 授权验收**。
 
 ## 6. 对齐回执（请前端 agent 在这里回复）
 
