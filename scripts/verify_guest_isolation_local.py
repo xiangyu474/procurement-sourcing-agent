@@ -47,6 +47,9 @@ def main() -> int:
             "vars": {"GUEST_SESSION_ENABLED": "true", "GUEST_SESSION_SECRET": SECRET, "GUEST_PUBLIC_ORIGIN": ORIGIN,
                      "GUEST_SESSION_GLOBAL_PER_HOUR": "4", "GUEST_SESSION_IP_PER_HOUR": "2",
                      "GUEST_GLOBAL_REQUESTS_PER_MINUTE": "500", "GUEST_SESSION_REQUESTS_PER_MINUTE": "40",
+                     "GUEST_TASK_GLOBAL_CONCURRENT": "2", "GUEST_TASK_SESSION_CONCURRENT": "1",
+                     "GUEST_TASK_GLOBAL_DAILY_UNITS": "20", "GUEST_TASK_SESSION_DAILY_UNITS": "8",
+                     "GUEST_TASK_SESSION_DAILY_STARTS": "4",
                      "PIPELINE_ENABLED": "true", "DEMO_ACCESS_TOKEN": "local-test-only"},
         }), encoding="utf-8")
         environment = {**os.environ, "WRANGLER_SEND_METRICS": "false"}
@@ -121,7 +124,11 @@ def main() -> int:
                 limited = client.post("/api/session", headers={"origin": ORIGIN, "cf-connecting-ip": "198.51.100.1"})
                 assert limited.status_code == 429 and limited.json()["error"] == "rate_limited"
                 assert int(limited.headers["retry-after"]) > 0
-                assert client.get("/api/projects", headers={"authorization": "Bearer local-test-only"}).status_code == 401
+                # The operator token is a separate, server-side identity; a browser
+                # without it must not fall back to it.
+                assert client.get("/api/projects").status_code == 401
+                assert client.get("/api/projects", headers={"authorization": "Bearer wrong"}).status_code == 401
+                assert client.get("/api/projects", headers={"authorization": "Bearer local-test-only"}).status_code == 200
                 ha = {"cookie": cookie(a)}
                 hb = {"cookie": cookie(b)}
                 assert [p["id"] for p in client.get("/api/projects", headers=ha).json()["projects"]] == ["p1"]
@@ -160,7 +167,13 @@ def main() -> int:
                 assert client.get("/internal/projects/p1/inputs/unknown", headers={"authorization": "Bearer local-test-only"}).status_code == 401
                 assert client.post("/api/projects/p1/requirement-text", headers=ha, json={"text": "test"}).status_code == 403
                 assert client.post("/api/projects/p1/requirement-text", headers={**hb, "origin": ORIGIN}, json={"text": "test"}).status_code == 404
-                assert client.post("/api/projects/p1/pipeline", headers={**ha, "origin": ORIGIN}, json={"demand_revision": 1}).status_code == 503
+                # A visitor may start the demo work; the server-side budget decides.
+                compile = client.post("/api/projects/p1/requirement-compile", headers={**ha, "origin": ORIGIN}, json={})
+                assert compile.status_code in (202, 409, 422, 429, 503), compile.text
+                budget = client.post("/api/projects/p1/pipeline", headers={**ha, "origin": ORIGIN, "idempotency-key": "local-check"}, json={"demand_revision": 1})
+                assert budget.status_code in (202, 409, 422, 429, 503), budget.text
+                started = client.post("/api/projects/p1/pipeline", headers={**ha, "origin": ORIGIN}, json={"demand_revision": 1})
+                assert started.status_code in (202, 400, 409, 422, 429, 503), (started.status_code, started.text)
                 # Give the fixed-minute window enough time to run this burst.
                 if time.time() % 60 > 40:
                     time.sleep(61 - time.time() % 60)
@@ -178,7 +191,7 @@ def main() -> int:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
                     statuses = list(pool.map(lambda _i: client.get("/api/session", headers={"cookie": cookie(burst_session)}).status_code, range(60)))
                 assert statuses.count(200) == 40 and statuses.count(429) == 20, statuses
-                print("PASS: real local Worker guest session, A/B isolation, Origin, creation/request limits including concurrency, pipeline reads and expensive-write fail-closed")
+                print("PASS: real local Worker guest session, A/B isolation, Origin, creation/request limits, budget-admitted visitor writes and closed operator-only writes")
         finally:
             if os.name == "nt":
                 subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, check=False)

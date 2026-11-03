@@ -9,6 +9,7 @@ import { shapePipelineAnalysis } from "./pipeline_analysis";
 import { listProjectPipelines } from "./pipeline_discovery";
 import { evidenceDisplayExcerpt } from "./evidence_excerpt";
 import { guestEvent, guestRun, guestRunSummary, guestStage, guestStopReason } from "./guest_public";
+import { guestAdmissionPolicy, releaseGuestAdmission, reserveGuestTask } from "./guest_admission";
 export { ProcurementPipelineWorkflow };
 import {
 	checkInternalAuth,
@@ -42,6 +43,11 @@ export interface Env {
 	GUEST_SESSION_IP_PER_HOUR?: string;
 	GUEST_GLOBAL_REQUESTS_PER_MINUTE?: string;
 	GUEST_SESSION_REQUESTS_PER_MINUTE?: string;
+	GUEST_TASK_GLOBAL_CONCURRENT?: string;
+	GUEST_TASK_SESSION_CONCURRENT?: string;
+	GUEST_TASK_GLOBAL_DAILY_UNITS?: string;
+	GUEST_TASK_SESSION_DAILY_UNITS?: string;
+	GUEST_TASK_SESSION_DAILY_STARTS?: string;
 	PIPELINE_ENABLED?: string;
 	CONTAINER_GATEWAY_URL: string;
 	CONTAINER_INSTANCE_NAME: string;
@@ -170,6 +176,11 @@ interface M2BundlePayload {
 }
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
+
+// Budget units are a coarse proxy for provider cost, not money: one unit is a
+// demand compilation, four units are a full sourcing and decision pipeline.
+const COMPILE_UNITS = 1;
+const PIPELINE_UNITS = 4;
 
 async function sha256Hex(bytes: ArrayBuffer | Uint8Array): Promise<string> {
 	const input = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
@@ -772,6 +783,7 @@ export class SourcingCompileWorkflow extends WorkflowEntrypoint<Env, CompileRequ
 			)
 				.bind(jobId, new Date().toISOString())
 				.run();
+			await releaseGuestAdmission(this.env.DB, jobId, "COMPILE");
 			return { status: "COMPLETED", ...result };
 		} catch (error) {
 			const detail = error instanceof Error ? error.message : String(error);
@@ -799,6 +811,7 @@ export class SourcingCompileWorkflow extends WorkflowEntrypoint<Env, CompileRequ
 					new Date().toISOString(),
 				)
 				.run();
+			await releaseGuestAdmission(this.env.DB, jobId, "COMPILE");
 			return { status: "FAILED", error: detail.slice(0, 500) };
 		}
 	}
@@ -1477,11 +1490,19 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 		}
 
 		let guestSessionId: string | null = null;
+		let operatorAccess = false;
 		if (url.pathname.startsWith("/api/")) {
 			if (env.GUEST_SESSION_ENABLED === "true") {
-				const access = await authorizeGuest(request, env);
-				if ("response" in access) return access.response;
-				guestSessionId = access.sessionId;
+				// The operator token is a server-side secret used by the acceptance
+				// workflow and the development proxy. It is never the public demo
+				// identity: a browser build for production must not carry it.
+				operatorAccess = Boolean(env.DEMO_ACCESS_TOKEN)
+					&& request.headers.get("authorization") === `Bearer ${env.DEMO_ACCESS_TOKEN}`;
+				if (!operatorAccess) {
+					const access = await authorizeGuest(request, env);
+					if ("response" in access) return access.response;
+					guestSessionId = access.sessionId;
+				}
 			} else {
 				const unauthorized = await requireDemoAccess(request, env);
 				if (unauthorized) return unauthorized;
@@ -2613,7 +2634,6 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 					stages: stages.results, created_at: row.created_at, updated_at: row.updated_at });
 			}
 			if (request.method === "POST" && !pipelineMatch[2]) {
-				if (guestSessionId) return json({ error: "operation_unavailable" }, 503);
 				const key = request.headers.get("idempotency-key") ?? "";
 				if (!key || key.length > 200 || !/^[\x21-\x7e]+$/.test(key)) return json({ error: "idempotency_key_required" }, 400);
 				const body = await request.json().catch(() => ({})) as { demand_revision?: unknown };
@@ -2625,9 +2645,25 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 				const demand = JSON.parse(compilation.compilation_json) as { requirements?: unknown[] };
 				if (!Array.isArray(demand.requirements) || demand.requirements.length === 0) return json({ error: "no_recognizable_demand" }, 422);
 				const digest = await sha256Hex(new TextEncoder().encode(JSON.stringify({ demand_revision: revision })));
-				const result = await reservePipeline(env.DB, { projectId, pipelineId: crypto.randomUUID(), runId: crypto.randomUUID(),
+				const existing = await env.DB.prepare(
+					"SELECT id, run_id, demand_revision, status FROM project_pipelines WHERE workspace_id = 'default' AND project_id = ?1 AND idempotency_key = ?2",
+				).bind(projectId, key).first<{ id: string; run_id: string; demand_revision: number; status: string }>();
+				if (existing) {
+					return json({ pipeline_id: existing.id, run_id: existing.run_id, demand_revision: existing.demand_revision, status: existing.status, reused: true }, 202);
+				}
+				const pipelineId = crypto.randomUUID();
+				if (guestSessionId) {
+					const policy = guestAdmissionPolicy(env);
+					if (!policy) return json({ error: "task_budget_not_configured" }, 503);
+					const admission = await reserveGuestTask(env.DB, { sessionId: guestSessionId, projectId,
+						operationId: pipelineId, kind: "PIPELINE", requestHash: digest, units: PIPELINE_UNITS }, policy);
+					if (admission.kind === "DENIED") return json({ error: "budget_exhausted" }, 429);
+					if (admission.kind === "CONFLICT") return json({ error: "idempotency_conflict" }, 409);
+				}
+				const result = await reservePipeline(env.DB, { projectId, pipelineId, runId: crypto.randomUUID(),
 					idempotencyKey: key, requestHash: digest, demandRevision: Number(revision), demandJson: compilation.compilation_json });
 				if (!("pipeline" in result)) {
+					if (guestSessionId) await releaseGuestAdmission(env.DB, pipelineId, "PIPELINE");
 					return json({ error: result.kind === "INPUT_CHANGED" ? "demand_revision_changed" : "idempotency_conflict" }, 409);
 				}
 				const row = result.pipeline;
@@ -2800,6 +2836,14 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 			// written first, so that the workflow can report its outcome.
 			const jobId = crypto.randomUUID();
 			const now = new Date().toISOString();
+			if (guestSessionId) {
+				const policy = guestAdmissionPolicy(env);
+				if (!policy) return json({ error: "task_budget_not_configured" }, 503);
+				const admission = await reserveGuestTask(env.DB, { sessionId: guestSessionId, projectId,
+					operationId: jobId, kind: "COMPILE", requestHash: `${projectId}:${project.demand_revision}`, units: COMPILE_UNITS }, policy);
+				if (admission.kind === "DENIED") return json({ error: "budget_exhausted" }, 429);
+				if (admission.kind === "CONFLICT") return json({ error: "idempotency_conflict" }, 409);
+			}
 			await env.DB.prepare(
 				`INSERT INTO project_jobs (id, workspace_id, project_id, job_type, status, detail_json, created_at, updated_at)
 				 VALUES (?1, 'default', ?2, 'COMPILE', 'QUEUED', ?3, ?4, ?4)`,

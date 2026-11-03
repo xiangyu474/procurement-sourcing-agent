@@ -68,16 +68,29 @@ export async function reserveGuestTask(
 }
 
 /**
- * Conservative release for a demonstrably successful Pipeline only. FAILED,
- * timeouts, missing report and compile jobs remain HELD: a child/container may
- * still be running. Do not expose this as a client endpoint.
+ * Free the concurrency slot of a task that reached a terminal state. The
+ * reserved units stay consumed: the model and search calls of a failed task
+ * were still paid for. Do not expose this as a client endpoint.
  */
-export async function releaseCompletedAdmission(db: D1Database, operationId: string, sessionId: string, projectId: string): Promise<boolean> {
-	const result = await db.prepare(`UPDATE guest_task_admissions SET state = 'RELEASED', released_at = ?4
-		WHERE operation_id = ?1 AND session_id = ?2 AND project_id = ?3 AND operation_kind = 'PIPELINE' AND state = 'HELD'
-		AND EXISTS (SELECT 1 FROM project_pipelines p JOIN runs r ON r.id = p.run_id AND r.project_id = p.project_id
-			WHERE p.id = ?1 AND p.project_id = ?3 AND p.status IN ('COMPLETED','PARTIAL')
-			AND p.decision_version IS NOT NULL AND p.report_status = 'COMPLETED' AND r.status IN ('COMPLETED','PARTIAL'))`)
-		.bind(operationId, sessionId, projectId, new Date().toISOString()).run();
+export async function releaseGuestAdmission(db: D1Database, operationId: string, kind: "COMPILE" | "PIPELINE"): Promise<boolean> {
+	const terminal = kind === "COMPILE"
+		? `EXISTS (SELECT 1 FROM project_jobs j WHERE j.id = ?1 AND j.status IN ('COMPLETED','FAILED'))`
+		: `EXISTS (SELECT 1 FROM project_pipelines p WHERE p.id = ?1 AND p.status IN ('COMPLETED','PARTIAL','FAILED'))`;
+	const result = await db.prepare(`UPDATE guest_task_admissions SET state = 'RELEASED', released_at = ?2
+		WHERE operation_id = ?1 AND operation_kind = ?3 AND state = 'HELD' AND ${terminal}`)
+		.bind(operationId, new Date().toISOString(), kind).run();
 	return result.meta.changes === 1;
+}
+
+/** Read the policy a visitor is subject to, refusing to guess a default. */
+export function guestAdmissionPolicy(env: {
+	GUEST_TASK_GLOBAL_CONCURRENT?: string; GUEST_TASK_SESSION_CONCURRENT?: string;
+	GUEST_TASK_GLOBAL_DAILY_UNITS?: string; GUEST_TASK_SESSION_DAILY_UNITS?: string;
+	GUEST_TASK_SESSION_DAILY_STARTS?: string;
+}): GuestAdmissionPolicy | null {
+	const values = [env.GUEST_TASK_GLOBAL_CONCURRENT, env.GUEST_TASK_SESSION_CONCURRENT,
+		env.GUEST_TASK_GLOBAL_DAILY_UNITS, env.GUEST_TASK_SESSION_DAILY_UNITS, env.GUEST_TASK_SESSION_DAILY_STARTS];
+	if (values.some(value => !value || !/^[1-9]\d{0,5}$/.test(value))) return null;
+	const [globalConcurrent, sessionConcurrent, globalDailyUnits, sessionDailyUnits, sessionDailyStarts] = values.map(Number);
+	return { globalConcurrent: globalConcurrent!, sessionConcurrent: sessionConcurrent!, globalDailyUnits: globalDailyUnits!, sessionDailyUnits: sessionDailyUnits!, sessionDailyStarts: sessionDailyStarts! };
 }

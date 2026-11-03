@@ -192,11 +192,12 @@ export async function authorizeGuest(request: Request, env: GuestEnv): Promise<G
 		throw err;
 	}
 	if ((project || run || evidence) && !owned) return { response: error("not_found", 404) };
-	// Strict application-wide cost control is not implemented yet. Do not expose
-	// model-consuming entrypoints (or newly added writes) to guest traffic.
-	if (unsafe && !(url.pathname === "/api/projects" && request.method === "POST") &&
-		!(project && request.method === "POST" && /\/(requirement-text|upload-sessions)$/.test(url.pathname))) {
-		return { response: error("operation_unavailable", 503) };
-	}
+	// The writes a visitor may perform. Every model-consuming entry point is
+	// admitted by the server-side budget in the route itself, not here.
+	const allowedGuestWrite =
+		(url.pathname === "/api/projects" && request.method === "POST") ||
+		(project && request.method === "POST" && /\/(requirement-text|upload-sessions|requirement-compile|history-imports)$/.test(url.pathname)) ||
+		(project && request.method === "POST" && url.pathname.endsWith("/pipeline"));
+	if (unsafe && !allowedGuestWrite) return { response: error("operation_unavailable", 503) };
 	return { sessionId: session.id };
 }

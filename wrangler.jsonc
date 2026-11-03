@@ -89,6 +89,22 @@
 		// B1 is available only through the existing protected server-side bearer
 		// path. Guest Session and its expensive operations remain disabled.
 		"PIPELINE_ENABLED": "true",
+		// Guest Session: the public demo identity. The signing secret and the
+		// operator token are Worker secrets, never variables.
+		"GUEST_SESSION_ENABLED": "true",
+		"GUEST_PUBLIC_ORIGIN": "https://procurement-sourcing-gateway.xiangyu474.workers.dev",
+		"GUEST_SESSION_GLOBAL_PER_HOUR": "60",
+		"GUEST_SESSION_IP_PER_HOUR": "10",
+		"GUEST_GLOBAL_REQUESTS_PER_MINUTE": "600",
+		"GUEST_SESSION_REQUESTS_PER_MINUTE": "120",
+		// Coarse budget units: one unit is a demand compilation, four are a
+		// complete sourcing and decision pipeline. They bound concurrency and
+		// daily volume; they are not a monetary model budget.
+		"GUEST_TASK_GLOBAL_CONCURRENT": "2",
+		"GUEST_TASK_SESSION_CONCURRENT": "1",
+		"GUEST_TASK_GLOBAL_DAILY_UNITS": "80",
+		"GUEST_TASK_SESSION_DAILY_UNITS": "16",
+		"GUEST_TASK_SESSION_DAILY_STARTS": "6",
 		// The acceptance drives the public API, which starts workflows that
 		// call a container, so it runs in its own instance.
 		"ACCEPTANCE_CONTAINER_NAME": "acceptance-v4",

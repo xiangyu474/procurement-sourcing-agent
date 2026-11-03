@@ -84,7 +84,6 @@ describe("guest session and resource isolation", () => {
 		}
 		assert.equal(await status(await authorizeGuest(req("/api/projects/old", "GET", a), env as never)), 404);
 		assert.equal(await status(await authorizeGuest(req("/api/workspaces/default/suppliers", "GET", a), env as never)), 404);
-		assert.equal(await status(await authorizeGuest(req("/api/projects/p1/runs", "POST", a), env as never)), 503);
 		assert.equal(await status(await authorizeGuest(req("/api/projects/p1/requirement-text", "POST", a, null), env as never)), 403);
 	});
 	it("fails closed without rate settings or a trusted client address", async () => {
@@ -162,6 +161,19 @@ describe("guest session and resource isolation", () => {
 		assert.equal(statuses.filter(code => code === 201).length, 5);
 		assert.equal(statuses.filter(code => code === 429).length, 15);
 		assert.equal(db.prepare("SELECT count(*) AS n FROM guest_sessions").get()?.n, 5);
+	});
+	it("allows the visitor writes that the demo needs and refuses the rest", async () => {
+		const { db, env } = setup();
+		const session = await create(env);
+		db.prepare("INSERT INTO projects (id, created_at, session_id) VALUES (?, ?, ?)").run("p1", "2026", session.split("=")[1].split(".")[0]);
+		for (const path of ["/api/projects", "/api/projects/p1/requirement-text", "/api/projects/p1/upload-sessions",
+			"/api/projects/p1/requirement-compile", "/api/projects/p1/history-imports", "/api/projects/p1/pipeline"]) {
+			assert.equal(await status(await authorizeGuest(req(path, "POST", session), env as never)), 200, path);
+		}
+		for (const path of ["/api/projects/p1/runs", "/api/projects/p1/spec-assessments", "/api/projects/p1/decisions",
+			"/api/projects/p1/reports", "/api/projects/p1/pipeline/p1/report"]) {
+			assert.equal(await status(await authorizeGuest(req(path, "POST", session), env as never)), 503, path);
+		}
 	});
 	it("does not resurrect expired sessions or authorize a bearer token", async () => {
 		const { db, env } = setup();

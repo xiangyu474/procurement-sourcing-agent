@@ -4,6 +4,7 @@ import type { Env, RunRequest } from "./index";
 import { recordPipelineStage, sha256, storePipelineSnapshot } from "./pipeline_store";
 import { buildFinalContext } from "./pipeline_final";
 import { startPipelineReport } from "./pipeline_report";
+import { releaseGuestAdmission } from "./guest_admission";
 
 export interface PipelineRequest { pipelineId: string; projectId: string; runId: string; probeOnly?: boolean }
 interface PipelineRow { id: string; run_id: string; demand_revision: number; history_dataset_id: string | null; history_r2_key: string | null }
@@ -179,6 +180,7 @@ export class ProcurementPipelineWorkflow extends WorkflowEntrypoint<Env, Pipelin
 					.bind(pipelineId, version, terminal, new Date().toISOString()).run();
 				await recordPipelineStage(this.env.DB, pipelineId, "DECIDING", "COMPLETED");
 			});
+			await releaseGuestAdmission(this.env.DB, pipelineId, "PIPELINE");
 			analysisFrozen = true;
 			// Report is an independent finalizer: its failure never rolls back the
 			// already-frozen decision or changes the terminal analysis status.
@@ -205,6 +207,7 @@ export class ProcurementPipelineWorkflow extends WorkflowEntrypoint<Env, Pipelin
 			await step.do("record-pipeline-failure", { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "1 minute" }, async () => {
 				await recordPipelineStage(this.env.DB, pipelineId, activeStage, "FAILED", "PIPELINE_STAGE_FAILED");
 				await update(this.env.DB, pipelineId, "FAILED", activeStage, "PIPELINE_STAGE_FAILED");
+				await releaseGuestAdmission(this.env.DB, pipelineId, "PIPELINE");
 			});
 			return { status: "FAILED", pipeline_id: pipelineId, stage: activeStage, error: "PIPELINE_STAGE_FAILED" };
 		}
