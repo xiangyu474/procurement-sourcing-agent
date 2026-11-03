@@ -2664,9 +2664,24 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 			if (request.method === "POST" && !pipelineMatch[2]) {
 				const key = request.headers.get("idempotency-key") ?? "";
 				if (!key || key.length > 200 || !/^[\x21-\x7e]+$/.test(key)) return json({ error: "idempotency_key_required" }, 400);
-				const body = await request.json().catch(() => ({})) as { demand_revision?: unknown };
+				const body = await request.json().catch(() => ({})) as { demand_revision?: unknown; research_budget?: ResearchBudgetConfig };
 				const revision = body.demand_revision;
 				if (!Number.isSafeInteger(revision) || Number(revision) < 1) return json({ error: "demand_revision_required" }, 422);
+				// A caller may ask for a shorter or a deeper search. The bounds
+				// keep one task from spending more than the shared budget.
+				const requestedBudget = body.research_budget;
+				let researchBudget: ResearchBudgetConfig | undefined;
+				if (requestedBudget !== undefined) {
+					const b = requestedBudget;
+					if (!Number.isInteger(b.max_search_calls) || b.max_search_calls < 1 || b.max_search_calls > 12 ||
+						!Number.isInteger(b.max_fetches) || b.max_fetches < 1 || b.max_fetches > 24 ||
+						!Number.isInteger(b.max_tasks) || b.max_tasks < 1 || b.max_tasks > 3 ||
+						!Number.isInteger(b.max_rounds) || b.max_rounds < 1 || b.max_rounds > 3 ||
+						!Number.isInteger(b.max_model_calls) || b.max_model_calls < 1 || b.max_model_calls > 30) {
+						return json({ error: "research_budget_out_of_range" }, 422);
+					}
+					researchBudget = b;
+				}
 				const compilation = await env.DB.prepare("SELECT compilation_json FROM demand_compilations WHERE project_id = ?1 AND demand_revision = ?2")
 					.bind(projectId, revision).first<{ compilation_json: string }>();
 				if (!compilation) return json({ error: "demand_not_compiled" }, 404);
@@ -2697,7 +2712,7 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 				const row = result.pipeline;
 				if (row.status === "QUEUED") {
 					try {
-						await env.PIPELINE_WORKFLOW.create({ id: row.id, params: { pipelineId: row.id, projectId, runId: row.run_id } });
+						await env.PIPELINE_WORKFLOW.create({ id: row.id, params: { pipelineId: row.id, projectId, runId: row.run_id, researchBudget } });
 					} catch {
 						try { await (await env.PIPELINE_WORKFLOW.get(row.id)).status(); }
 						catch { return json({ error: "workflow_start_failed" }, 503); }

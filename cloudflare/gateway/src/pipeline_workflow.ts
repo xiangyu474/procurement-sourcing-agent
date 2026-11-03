@@ -6,7 +6,7 @@ import { buildFinalContext } from "./pipeline_final";
 import { startPipelineReport } from "./pipeline_report";
 import { releaseGuestAdmission } from "./guest_admission";
 
-export interface PipelineRequest { pipelineId: string; projectId: string; runId: string; probeOnly?: boolean }
+export interface PipelineRequest { pipelineId: string; projectId: string; runId: string; probeOnly?: boolean; researchBudget?: { max_search_calls: number; max_fetches: number; max_tasks: number; max_rounds: number; max_model_calls: number } }
 interface PipelineRow { id: string; run_id: string; demand_revision: number; history_dataset_id: string | null; history_r2_key: string | null }
 interface SpecContext { project_id: string; run_id: string; demand_revision: number; requirements: unknown[]; candidates: { evidence_ids: string[] }[] }
 interface SpecResults { assessments: { assessment: unknown }[] }
@@ -80,7 +80,7 @@ export class ProcurementPipelineWorkflow extends WorkflowEntrypoint<Env, Pipelin
 				const now = new Date().toISOString();
 				await this.env.DB.prepare("INSERT INTO runs (id, project_id, status, current_stage, created_at, updated_at) VALUES (?1, ?2, 'QUEUED', 'QUEUED', ?3, ?3) ON CONFLICT(id) DO NOTHING")
 					.bind(runId, projectId, now).run();
-				const params: RunRequest = { runId, projectId, pipelineId, durationSeconds: 0, mode: "SOURCING" };
+				const params: RunRequest = { runId, projectId, pipelineId, durationSeconds: 0, mode: "SOURCING", researchBudget: event.payload.researchBudget };
 				try { await this.env.WORKFLOW.create({ id: runId, params }); }
 				catch (error) {
 					// An interrupted create can have succeeded remotely. Reuse only a
