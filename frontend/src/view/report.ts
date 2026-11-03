@@ -63,6 +63,18 @@ export function reportButtonLabel(phase: ReportPhase, hasFile: boolean): string 
 	return "下载这一版";
 }
 
+/**
+ * The blocked-button note. A completed report from the reports list means the file exists,
+ * so the note must not say it was never generated. Download stays closed without a decision.
+ */
+export function blockedReportNote(reason: string | null, report: Report | null): string {
+	const fallback = reason ?? "报告还没有生成";
+	if (report?.status === "COMPLETED" && report.download_path && fallback === "报告还没有生成") {
+		return "还不能确认这次运行已经有决策。";
+	}
+	return fallback;
+}
+
 /** The download control. A long list cannot start a report. */
 export function reportPhase(input: { runStatus: string | null; decisionsReady: boolean; report: Report | null; pending: boolean }): ReportPhase {
 	const finished = input.runStatus === "COMPLETED" || input.runStatus === "PARTIAL";

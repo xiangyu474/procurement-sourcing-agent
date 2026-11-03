@@ -12,9 +12,9 @@ import {
 	type CompileView,
 	type UiError,
 } from "../api/adapter";
-import type { ApiClient } from "../api/client";
+import { PIPELINE_REQUEST_TIMEOUT_MS, combineSignals, type ApiClient } from "../api/client";
 import { ApiError, type CompileJob, type Pipeline, type Project, type ProjectRunSummary, type ProjectSummary, type Run, type StartedPipeline } from "../api/types";
-import { pipelineProblemLine, pipelineProgressLine } from "../view/pipeline";
+import { pipelinePollOutcome, pipelineProblemLine, pipelineProgressLine } from "../view/pipeline";
 import { loadDraft, saveDraft } from "../storage";
 import { newIdempotencyKey, readPipelineId, readPipelineKey, writePipelineId, writePipelineKey } from "./pipelineState";
 import { COMPILE_TIMEOUT_MS, POLL_INTERVAL_MS, pollUntil, sleep } from "./poll";
@@ -46,6 +46,7 @@ export type ProjectSession = {
 	selectRun: (runId: string) => void;
 	pipelineLine: string | null;
 	pipelineNote: string | null;
+	pipeline: Pipeline | null;
 	pipelineActive: boolean;
 	startOffer: "retry" | null;
 };
@@ -76,6 +77,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 	const [runHistory, setRunHistory] = useState<ProjectRunSummary[]>([]);
 	const [pipelineLine, setPipelineLine] = useState<string | null>(null);
 	const [pipelineNote, setPipelineNote] = useState<string | null>(null);
+	const [pipeline, setPipeline] = useState<Pipeline | null>(null);
 	const [pipelineActive, setPipelineActive] = useState(false);
 	const [startOffer, setStartOffer] = useState<"retry" | null>(null);
 	const runHistoryRef = useRef<ProjectRunSummary[]>([]);
@@ -121,8 +123,15 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 	}
 
 	function showPipeline(snapshot: Pipeline): void {
+		setPipeline(snapshot);
 		setPipelineLine(pipelineProgressLine(snapshot.status, snapshot.stage));
 		setPipelineNote(pipelineProblemLine(snapshot.status, snapshot.error, snapshot.stages));
+	}
+
+	function clearPipeline(): void {
+		setPipeline(null);
+		setPipelineLine(null);
+		setPipelineNote(null);
 	}
 
 	/** The runs row can appear after the pipeline id. A 404 is ignored so the next poll can bind it. */
@@ -152,24 +161,29 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		let missedRun = 0;
 		while (!signal.aborted) {
 			let snapshot: Pipeline;
+			const attempt = new AbortController();
+			const timer = setTimeout(() => attempt.abort(), PIPELINE_REQUEST_TIMEOUT_MS);
+			const attemptSignal = combineSignals([signal, attempt.signal]);
 			try {
-				snapshot = await clientRef.current.getPipeline(projectId, pipelineId, { signal });
+				snapshot = await clientRef.current.getPipeline(projectId, pipelineId, { signal: attemptSignal, timeoutMs: PIPELINE_REQUEST_TIMEOUT_MS });
 			} catch (caught) {
-				if (isAbort(caught) || signal.aborted) return true;
-				if (caught instanceof ApiError && caught.status === 404) {
+				const outcome = pipelinePollOutcome(caught, signal.aborted);
+				if (outcome === "stop") return true;
+				if (outcome === "missing") {
 					writePipelineId(projectId, null);
 					markPipelineActive(false);
-					setPipelineLine(null);
-					setPipelineNote(null);
+					clearPipeline();
 					return false;
 				}
-				setError(messageForApiError(caught));
+				if (outcome === "show") setError(messageForApiError(caught));
 				try {
 					await sleep(POLL_INTERVAL_MS, signal);
 				} catch (sleepError) {
 					if (isAbort(sleepError) || signal.aborted) return true;
 				}
 				continue;
+			} finally {
+				clearTimeout(timer);
 			}
 			if (signal.aborted) return true;
 			showPipeline(snapshot);
@@ -265,8 +279,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 			runHistoryRef.current = [];
 			setRunHistory([]);
 			markPipelineActive(false);
-			setPipelineLine(null);
-			setPipelineNote(null);
+			clearPipeline();
 			setStartOffer(null);
 			return;
 		}
@@ -560,6 +573,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		if (!pipelineActiveRef.current) {
 			setPipelineLine(null);
 			setPipelineNote(null);
+			setPipeline(null);
 		}
 		const signal = replaceAbort();
 		void runsRef.current.watch(runId, signal, noteRun, runHistoryRef.current).catch((caught) => {
@@ -588,6 +602,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		selectRun,
 		pipelineLine,
 		pipelineNote,
+		pipeline,
 		pipelineActive,
 		startOffer,
 	};

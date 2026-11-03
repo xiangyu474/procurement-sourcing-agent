@@ -177,6 +177,28 @@ describe("ApiClient", () => {
 		expect(started).toEqual({ pipeline_id: "pipe-1", run_id: "run-1", demand_revision: 3, status: "QUEUED", reused: false });
 	});
 
+	it("aborts a pipeline read that sits longer than 15 seconds", async () => {
+		vi.useFakeTimers();
+		try {
+			const fetchImpl = vi.fn((_url: string, init?: RequestInit) => {
+				return new Promise<Response>((_resolve, reject) => {
+					init?.signal?.addEventListener("abort", () => {
+						reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+					});
+				});
+			});
+			const pending = client(fetchImpl as typeof fetch).getPipeline("p1", "pipe-1");
+			const rejected = pending.then(
+				() => null,
+				(caught: unknown) => caught,
+			);
+			await vi.advanceTimersByTimeAsync(15_000);
+			await expect(rejected).resolves.toMatchObject({ code: "timeout" });
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("reads the pipeline status field and keeps a null stage error", async () => {
 		const fetchImpl = vi.fn(async () =>
 			jsonResponse({

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { pipelineProblemLine, pipelineProgressLine } from "./pipeline";
+import { ApiError } from "../api/types";
+import { pipelinePollOutcome, pipelineProblemLine, pipelineProgressLine, pipelineStageLabel } from "./pipeline";
 
 describe("pipeline progress", () => {
 	it("maps both research spellings and never describes a report", () => {
@@ -22,5 +23,17 @@ describe("pipeline progress", () => {
 		expect(pipelineProblemLine("PARTIAL", null, [{ error_code: "UNKNOWN_STAGE" }])).toBe("这次分析只完成了一部分。");
 		expect(pipelineProblemLine("COMPLETED", "NO_FETCHED_EVIDENCE", [])).toBeNull();
 		expect(pipelineProblemLine("FAILED", "container exploded", [])).not.toContain("container");
+	});
+
+	it("treats a timed-out poll as another try and keeps a finished analysis out of the research log", () => {
+		expect(pipelinePollOutcome(new ApiError(0, "timeout", null), false)).toBe("again");
+		expect(pipelinePollOutcome(new ApiError(0, "aborted", null), false)).toBe("again");
+		expect(pipelinePollOutcome(new ApiError(0, "timeout", null), true)).toBe("stop");
+		expect(pipelinePollOutcome(new ApiError(404, "not_found", null), false)).toBe("missing");
+		expect(pipelinePollOutcome(new ApiError(503, "operation_unavailable", null), false)).toBe("show");
+		expect(pipelineStageLabel("RESEARCH")).toBe("寻找供应商");
+		expect(pipelineStageLabel("EVALUATING")).toBe("核对技术与价格");
+		expect(pipelineStageLabel("DECIDING")).toBe("整理采购建议");
+		expect(pipelineStageLabel("WEB_RESEARCH")).toBe("分析");
 	});
 });

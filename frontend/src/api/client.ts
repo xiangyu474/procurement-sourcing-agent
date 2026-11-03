@@ -38,6 +38,25 @@ export type ApiClientOptions = {
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
 
+/** One pipeline poll. A hung GET must not sit on the connection the way the live 100s read did. */
+export const PIPELINE_REQUEST_TIMEOUT_MS = 15_000;
+
+/** Abort when any input aborts. Older runtimes have no AbortSignal.any. */
+export function combineSignals(signals: AbortSignal[]): AbortSignal {
+	const active = signals.filter((signal) => signal);
+	if (active.length === 1) return active[0];
+	const controller = new AbortController();
+	const abort = () => controller.abort();
+	for (const signal of active) {
+		if (signal.aborted) {
+			abort();
+			return controller.signal;
+		}
+		signal.addEventListener("abort", abort, { once: true });
+	}
+	return controller.signal;
+}
+
 function resolveBaseUrl(explicit: string | undefined): string {
 	const configured = explicit ?? import.meta.env.VITE_API_BASE_URL ?? "";
 	return configured.replace(/\/$/, "");
@@ -468,7 +487,22 @@ export class ApiClient {
 	}
 
 	getPipeline(projectId: string, pipelineId: string, call?: CallOptions): Promise<Pipeline> {
-		return this.request(`/api/projects/${encodeURIComponent(projectId)}/pipeline/${encodeURIComponent(pipelineId)}`, { call }).then(asPipeline);
+		const timeout = new AbortController();
+		const timeoutMs = call?.timeoutMs ?? PIPELINE_REQUEST_TIMEOUT_MS;
+		const timer = setTimeout(() => timeout.abort(), timeoutMs);
+		const signal = call?.signal ? combineSignals([call.signal, timeout.signal]) : timeout.signal;
+		return this.request(`/api/projects/${encodeURIComponent(projectId)}/pipeline/${encodeURIComponent(pipelineId)}`, {
+			call: { ...call, signal, timeoutMs },
+		})
+			.then(asPipeline)
+			.catch((caught: unknown) => {
+				if (call?.signal?.aborted) throw caught;
+				if (timeout.signal.aborted && caught instanceof ApiError && caught.code === "aborted") {
+					throw new ApiError(0, "timeout", null);
+				}
+				throw caught;
+			})
+			.finally(() => clearTimeout(timer));
 	}
 
 	startRun(projectId: string, idempotencyKey: string, call?: CallOptions): Promise<StartedRun> {
@@ -618,7 +652,7 @@ export class ApiClient {
 	private async fetchBlob(path: string, call?: CallOptions): Promise<Blob> {
 		const timeout = new AbortController();
 		const timer = setTimeout(() => timeout.abort(), call?.timeoutMs ?? this.timeoutMs);
-		const signal = call?.signal ? AbortSignal.any([call.signal, timeout.signal]) : timeout.signal;
+		const signal = call?.signal ? combineSignals([call.signal, timeout.signal]) : timeout.signal;
 		try {
 			const response = await this.fetchImpl(`${this.baseUrl}${path}`, { credentials: "same-origin", signal });
 			if (!response.ok) {
@@ -645,7 +679,7 @@ export class ApiClient {
 		const timeout = new AbortController();
 		const timer = setTimeout(() => timeout.abort(), timeoutMs);
 		const callerSignal = init.call?.signal;
-		const signal = callerSignal ? AbortSignal.any([callerSignal, timeout.signal]) : timeout.signal;
+		const signal = callerSignal ? combineSignals([callerSignal, timeout.signal]) : timeout.signal;
 		const headers: Record<string, string> = { ...(init.headers ?? {}) };
 		if (init.json !== undefined) headers["content-type"] = headers["content-type"] ?? JSON_HEADERS["content-type"];
 		try {

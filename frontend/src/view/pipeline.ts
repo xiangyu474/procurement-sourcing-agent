@@ -1,5 +1,5 @@
-import { publicReason } from "../api/adapter";
-import type { PipelineStage } from "../api/types";
+import { isAbort, publicReason } from "../api/adapter";
+import { ApiError, type PipelineStage } from "../api/types";
 
 const STAGE_LINES: Record<string, string> = {
 	RESEARCH: "正在寻找供应商",
@@ -20,6 +20,26 @@ export function pipelineProgressLine(status: string, stage: string | null): stri
 	if (status === "QUEUED" || (status === "RUNNING" && normalized.length === 0)) return "正在寻找供应商";
 	if (status === "RUNNING") return "分析进行中";
 	return null;
+}
+
+/** A process-log label for one pipeline stage. This is not the run's research stage. */
+export function pipelineStageLabel(stage: string): string {
+	const normalized = stage.trim().toUpperCase();
+	if (normalized === "RESEARCH" || normalized === "RESEARCHING") return "寻找供应商";
+	if (normalized === "EVALUATING") return "核对技术与价格";
+	if (normalized === "DECIDING") return "整理采购建议";
+	return "分析";
+}
+
+/**
+ * A pipeline poll that ended because the request was aborted or timed out is not a user-facing error.
+ * The caller retries. A real abort of the parent task stops the loop.
+ */
+export function pipelinePollOutcome(caught: unknown, parentAborted: boolean): "stop" | "again" | "missing" | "show" {
+	if (parentAborted) return "stop";
+	if (caught instanceof ApiError && caught.status === 404) return "missing";
+	if (isAbort(caught) || (caught instanceof ApiError && caught.code === "timeout")) return "again";
+	return "show";
 }
 
 /** A short Chinese line from the public code. Raw error text is never returned. */

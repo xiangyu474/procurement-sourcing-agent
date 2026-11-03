@@ -1,5 +1,6 @@
 import { explainRun, runStatusLabel, stageLabel } from "../api/adapter";
-import type { ProjectRunSummary, Run, RunEvent } from "../api/types";
+import type { PipelineStage, ProjectRunSummary, Run, RunEvent } from "../api/types";
+import { pipelineProgressLine, pipelineStageLabel } from "../view/pipeline";
 
 function formatRunStamp(iso: string): string {
 	const date = new Date(iso);
@@ -26,20 +27,35 @@ export function RunPanel(props: {
 	events: RunEvent[];
 	stopReason: string | null;
 	candidateCount?: number | null;
+	pipeline?: { status: string; stage: string | null; stages: PipelineStage[] } | null;
 	reportNote?: { at: string | null; decisionVersion: string | null } | null;
 	runs?: ProjectRunSummary[];
 	onSelectRun?: (runId: string) => void;
 }) {
-	const { run, events, stopReason, candidateCount = null } = props;
+	const { run, events, stopReason, candidateCount = null, pipeline = null } = props;
 	if (!run) return null;
+	const pipelineHeading = pipeline ? pipelineProgressLine(pipeline.status, pipeline.stage) : null;
 	const abnormal = explainRun({ status: run.status, lastError: run.last_error, stopReason, candidateCount });
-	const tone = statusTone(run.status);
-	const inProgress = run.status === "QUEUED" || run.status === "RUNNING";
-	const when = `${formatRunStamp(run.created_at)} ${inProgress ? "开始" : "的寻源"}`;
+	const tone = statusTone(pipeline?.status ?? run.status);
+	const inProgress = pipeline
+		? pipeline.status === "QUEUED" || pipeline.status === "RUNNING"
+		: run.status === "QUEUED" || run.status === "RUNNING";
+	const when = `${formatRunStamp(run.created_at)} ${inProgress ? "开始" : pipeline ? "的分析" : "的寻源"}`;
+	const trace = pipeline && pipeline.stages.length > 0
+		? pipeline.stages.map((stage, index) => ({
+				key: `${stage.stage}-${index}`,
+				at: stage.started_at ?? stage.finished_at,
+				label: pipelineStageLabel(stage.stage),
+			}))
+		: events.map((event, index) => ({
+				key: `${event.created_at}-${event.stage}-${index}`,
+				at: event.created_at,
+				label: stageLabel(event.stage),
+			}));
 	return (
 		<section className="progress" aria-label="进度">
 			<h2 className={tone ? `status ${tone}` : "status"} data-testid="run-status">
-				{statusText(run)}
+				{pipelineHeading ?? statusText(run)}
 			</h2>
 			<p className="version" data-testid="run-version">
 				{when}
@@ -51,12 +67,12 @@ export function RunPanel(props: {
 			) : null}
 			<details className="trace">
 				<summary>过程记录</summary>
-				{events.length > 0 ? (
+				{trace.length > 0 ? (
 					<ol>
-						{events.map((event, index) => (
-							<li key={`${event.created_at}-${event.stage}-${index}`}>
-								<time dateTime={event.created_at}>{formatRunStamp(event.created_at)}</time>
-								<span>{stageLabel(event.stage)}</span>
+						{trace.map((step) => (
+							<li key={step.key}>
+								{step.at ? <time dateTime={step.at}>{formatRunStamp(step.at)}</time> : null}
+								<span>{step.label}</span>
 							</li>
 						))}
 					</ol>

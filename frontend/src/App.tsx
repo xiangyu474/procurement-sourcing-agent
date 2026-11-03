@@ -6,12 +6,13 @@ import { ProjectNav } from "./components/ProjectNav";
 import { RunPanel } from "./components/RunPanel";
 import { WorkspaceShell } from "./components/WorkspaceShell";
 import { useWorkspace } from "./workspace/useWorkspace";
-import { reportButtonLabel, reportPhase } from "./view/report";
+import { blockedReportNote, reportButtonLabel, reportPhase } from "./view/report";
 
 export function App() {
 	const workspace = useWorkspace();
 	const project = workspace.project;
 	const run = workspace.run && workspace.run.project_id === project?.id ? workspace.run : null;
+	const pipelineForRun = workspace.pipeline && run && workspace.pipeline.run_id === run.id ? workspace.pipeline : null;
 	const runActive = Boolean(run && !isTerminalRun(run.status));
 	const analysisActive = workspace.pipelineActive || runActive;
 	const collapsed = Boolean(run && isTerminalRun(run.status));
@@ -70,7 +71,7 @@ export function App() {
 									{reportButtonLabel(downloadPhase, Boolean(workspace.report.report?.status === "COMPLETED" && workspace.report.report.download_path))}
 								</button>
 								{downloadPhase === "blocked" ? (
-									<span className="quiet">{workspace.candidates.reportBlockReason ?? "报告还没有生成"}</span>
+									<span className="quiet">{blockedReportNote(workspace.candidates.reportBlockReason, workspace.report.report)}</span>
 								) : null}
 								{workspace.report.note && downloadPhase !== "blocked" ? <span className="quiet">{workspace.report.note}</span> : null}
 							</div>
@@ -121,10 +122,11 @@ export function App() {
 									}
 								: null
 						}
+						pipeline={pipelineForRun}
 						runs={workspace.runHistory}
 						onSelectRun={workspace.selectRun}
 					/>
-					{workspace.pipelineLine ? (
+					{pipelineForRun ? null : workspace.pipelineLine ? (
 						<p className="quiet" data-testid="pipeline-line">
 							{workspace.pipelineLine}
 						</p>

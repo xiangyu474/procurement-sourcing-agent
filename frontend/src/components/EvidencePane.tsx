@@ -45,10 +45,10 @@ function EvidenceBody(props: {
 				<p className="quiet">还没有来源。</p>
 			)}
 			{row.excerpt ? (
-				<>
-					<h3>摘录</h3>
+				<details className="excerpt">
+					<summary>摘录</summary>
 					<blockquote>{row.excerpt}</blockquote>
-				</>
+				</details>
 			) : null}
 			{row.evidenceId ? (
 				<p>

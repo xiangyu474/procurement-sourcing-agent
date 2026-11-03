@@ -244,6 +244,20 @@ export function installFixture(page: Page, mode: Mode): Promise<unknown> {
 						finished_at: done ? "2026-10-31T00:04:00.000Z" : null,
 						error_code: null,
 					},
+					{
+						stage: "EVALUATING",
+						status: done ? "COMPLETED" : "QUEUED",
+						started_at: done ? "2026-10-31T00:04:00.000Z" : null,
+						finished_at: done ? "2026-10-31T00:05:00.000Z" : null,
+						error_code: null,
+					},
+					{
+						stage: "DECIDING",
+						status: done ? "COMPLETED" : "QUEUED",
+						started_at: done ? "2026-10-31T00:05:00.000Z" : null,
+						finished_at: done ? "2026-10-31T00:05:30.000Z" : null,
+						error_code: null,
+					},
 				],
 				created_at: "2026-10-31T00:03:00.000Z",
 				updated_at: "2026-10-31T00:04:00.000Z",
@@ -284,6 +298,10 @@ export function installFixture(page: Page, mode: Mode): Promise<unknown> {
 		}
 		if (request.method() === "GET" && path === `/api/projects/${state.id}/candidates`) {
 			await fulfill(200, { candidates: [] });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${state.id}/reports`) {
+			await fulfill(200, { reports: [] });
 			return;
 		}
 		if (request.method() === "GET" && (path === `/api/projects/${state.id}/spec-assessments/status` || path === `/api/projects/${state.id}/decisions/status`)) {

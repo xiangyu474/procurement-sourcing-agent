@@ -43,16 +43,21 @@ export function useReport(
 		setReport(null);
 		setNote(null);
 		setPending(false);
-		if (!projectId || !runId || !finished || !decisionsReady) return;
+		if (!projectId || !runId || !finished) return;
 		const controller = new AbortController();
 		abortRef.current = controller;
 		const signal = controller.signal;
+		const allowGenerate = decisionsReady;
 		void (async () => {
 			try {
-				const listed = await clientRef.current.listReports(projectId, { signal });
+				const listed = await clientRef.current.listReports(projectId, { signal }).catch((caught: unknown) => {
+					if (caught instanceof ApiError && caught.status === 404) return [];
+					throw caught;
+				});
 				if (signal.aborted) return;
 				const selected = selectReport(listed, runId);
 				setReport(selected);
+				if (!allowGenerate) return;
 				if (selected?.status === "FAILED") setNote(PRIOR_REPORT_FAILURE);
 				if (selected && (selected.status === "QUEUED" || selected.status === "RUNNING")) {
 					await settle(projectId, selected.report_id, signal);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Report } from "../api/types";
-import { decisionCoversRun, reportFailure, reportFileName, reportPhase, selectReport } from "./report";
+import { blockedReportNote, decisionCoversRun, reportFailure, reportFileName, reportPhase, selectReport } from "./report";
 
 function report(patch: Partial<Report>): Report {
 	return {
@@ -57,5 +57,9 @@ describe("report download", () => {
 		});
 		expect(decisionCoversRun({ runUpdatedAt: "2026-11-01T11:00:00.000Z", projectDemandRevision: 2, job: { ...job, updated_at: null } }).ready).toBe(false);
 		expect(decisionCoversRun({ runUpdatedAt: "2026-11-01T11:00:00.000Z", projectDemandRevision: 2, job: { ...job, status: "IDLE" } }).reason).toBe("报告还没有生成");
+		expect(blockedReportNote("报告还没有生成", report({}))).toBe("还不能确认这次运行已经有决策。");
+		expect(blockedReportNote("报告还没有生成", null)).toBe("报告还没有生成");
+		expect(blockedReportNote("还不能确认这次运行已经有决策。", report({}))).toBe("还不能确认这次运行已经有决策。");
+		expect(reportPhase({ runStatus: "COMPLETED", decisionsReady: false, report: report({}), pending: false })).toBe("blocked");
 	});
 });

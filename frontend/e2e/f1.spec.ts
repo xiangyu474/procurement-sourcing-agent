@@ -26,9 +26,9 @@ test("fixture path creates a project, accepts files, and restores a partial run"
 	await expect(page.getByText("历史采购.xlsx 已接收")).toBeVisible();
 	await page.screenshot({ path: `${screenshots}/f1-input.png`, fullPage: true });
 	await page.getByRole("button", { name: "开始分析" }).click();
-	await expect(page.getByTestId("run-status")).toHaveText("正在查阅公开资料", { timeout: 20_000 });
+	await expect(page.getByTestId("run-status")).toHaveText("正在寻找供应商", { timeout: 20_000 });
 	await page.screenshot({ path: `${screenshots}/f1-running.png`, fullPage: true });
-	await expect(page.getByTestId("run-status")).toHaveText("部分完成", { timeout: 30_000 });
+	await expect(page.getByTestId("run-status")).toHaveText("需要处理", { timeout: 30_000 });
 	await expect(page.getByRole("alert")).toContainText("没有找到有公开资料支撑的候选供应商。");
 	await expect(page.getByRole("alert")).not.toContainText("已保留目前得到的结果");
 	await expect(page.getByText("有 3 条需求没能整理")).toBeVisible();
@@ -52,7 +52,7 @@ test("fixture path creates a project, accepts files, and restores a partial run"
 
 	await page.reload();
 	await expect(page.getByRole("heading", { name: LONG_TITLE })).toBeVisible();
-	await expect(page.getByTestId("run-status")).toHaveText("部分完成");
+	await expect(page.getByTestId("run-status")).toHaveText("需要处理");
 	await expect(page.getByTestId("run-version")).not.toContainText("22222222");
 	await page.getByText("过程记录").click();
 	await expect(page.getByTestId("run-id")).toContainText("22222222");
@@ -87,7 +87,7 @@ test("fixture path shows a completed run without a download control", async ({ p
 	await page.getByRole("button", { name: "创建" }).click();
 	await page.getByLabel("需求文字").fill("采购 10 套工业摄像机。");
 	await page.getByRole("button", { name: "开始分析" }).click();
-	await expect(page.getByTestId("run-status")).toHaveText("寻源已结束", { timeout: 30_000 });
+	await expect(page.getByTestId("run-status")).toHaveText("已完成", { timeout: 30_000 });
 	await expect(page.getByRole("button", { name: "下载这一版" })).toBeDisabled();
 	await expect(page.getByText("报告还没有生成")).toBeVisible();
 	await expect(page.getByText("这次没有候选供应商。")).toBeVisible();
@@ -102,7 +102,7 @@ test("fixture path shows a failed run", async ({ page }) => {
 	await page.getByRole("button", { name: "创建" }).click();
 	await page.getByLabel("需求文字").fill("采购 10 套工业摄像机。");
 	await page.getByRole("button", { name: "开始分析" }).click();
-	await expect(page.getByTestId("run-status")).toHaveText("未能完成", { timeout: 30_000 });
+	await expect(page.getByTestId("run-status")).toHaveText("需要处理", { timeout: 30_000 });
 	await expect(page.getByRole("alert")).toContainText("分析超时");
 	await page.screenshot({ path: `${screenshots}/f1-failed.png`, fullPage: true });
 });

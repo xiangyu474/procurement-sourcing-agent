@@ -40,6 +40,32 @@ describe("RunPanel", () => {
 		expect(screen.getByTestId("run-version").textContent).not.toContain("run-123");
 	});
 
+	it("uses the pipeline for the heading and the process log when this run has one", () => {
+		render(
+			<RunPanel
+				run={run({ status: "COMPLETED", current_stage: "WEB_RESEARCH" })}
+				events={[{ stage: "WEB_RESEARCH", created_at: "2026-10-31T00:02:00.000Z" }]}
+				stopReason={null}
+				pipeline={{
+					status: "COMPLETED",
+					stage: "COMPLETED",
+					stages: [
+						{ stage: "RESEARCH", status: "COMPLETED", started_at: "2026-10-31T00:01:00.000Z", finished_at: "2026-10-31T00:02:00.000Z", error_code: null },
+						{ stage: "EVALUATING", status: "COMPLETED", started_at: "2026-10-31T00:02:00.000Z", finished_at: "2026-10-31T00:03:00.000Z", error_code: null },
+						{ stage: "DECIDING", status: "COMPLETED", started_at: "2026-10-31T00:03:00.000Z", finished_at: "2026-10-31T00:04:00.000Z", error_code: null },
+					],
+				}}
+			/>,
+		);
+		expect(screen.getByTestId("run-status").textContent).toBe("已完成");
+		expect(screen.getByTestId("run-status").textContent).not.toContain("寻源已结束");
+		expect(screen.getByTestId("run-version").textContent).toContain("的分析");
+		expect(screen.getByTestId("run-version").textContent).not.toContain("寻源");
+		expect(screen.getByText("核对技术与价格")).toBeTruthy();
+		expect(screen.getByText("整理采购建议")).toBeTruthy();
+		expect(screen.queryByText("查阅公开资料")).toBeNull();
+	});
+
 	it("does not explain a finished run", () => {
 		render(<RunPanel run={run({})} events={[]} stopReason={null} />);
 		expect(screen.getByTestId("run-status").textContent).toContain("寻源已结束");
