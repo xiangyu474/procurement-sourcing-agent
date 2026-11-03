@@ -368,7 +368,7 @@ GET /api/projects/{project_id}/pipeline/{pipeline_id}
 
 任务状态为 `QUEUED/RUNNING/COMPLETED/PARTIAL/FAILED`，运行阶段包括 `RESEARCHING/EVALUATING/DECIDING`。B2 状态响应还返回 `decision_version`、`report_id`、`report_status`、`report_error_code`、`download_path`；仅报告完成时下载地址非空。历史多运行切换、公开鉴权及真实浏览器联调仍待验收。现有 `POST .../runs` 只发起研究，不是此入口。
 
-### 5.2.1 Pipeline 发现与恢复（本地实现，尚未部署）
+### 5.2.1 Pipeline 发现与恢复（受保护路径已部署、实网验证）
 
 ```http
 GET /api/projects/{project_id}/pipelines?active=true&limit=20
@@ -377,7 +377,26 @@ GET /api/projects/{project_id}/pipelines?limit=20
 
 返回 `{project_id, pipelines: [...], has_more}`。每项含 `pipeline_id/run_id/demand_revision/status/stage/decision_version/report_id/report_status/created_at/updated_at`；不返回幂等键。默认最近 20 条，`limit` 为 1–100，按创建时间和 ID 倒序；`has_more=true` 说明列表被截断，**本版无游标，不应假装完整分页**。`active=true` 选出分析 `QUEUED/RUNNING` 或报告 `QUEUED/RUNNING` 的任务，因此报告仍在生成的已完成分析也可找回；不依赖 `runs` 行已经创建。无活动任务时可去掉 `active` 查询最近记录。允许多个任务同时活动，前端应保留每个 ID，不应假设每项目只有一个或擅自创建新任务。项目不存在 404 `not_found`，参数无效 400；D1 错误 503 `database_unavailable`。
 
-**尚未部署/验收**：目前受保护的生产网关对此路由仍返回 404；本地 SQLite 测试通过后仍需实网验证。Guest Session 当前关闭，现有 Pipeline 详情和本列表仅供受保护服务端路径；访客归属隔离需 B3 验收。
+**CLOUD_VERIFIED，非 PUBLIC_READY**：接口代码 `747cb66`，容器配置 `sourcing-v17`。真实网关已验证已有项目的列表恢复、`active` 过滤、无凭证 401、无项目 404、非法参数 400；另使用隔离的合成 D1 项目验证了“分析运行中 + 报告生成中”都能被 `active=true` 找到、终态任务被排除，测试数据已清理。本地也用真实 Worker 路由 + 隔离 D1 验证了尚未创建 Run 行的 QUEUED 任务。Guest Session 当前关闭，现有 Pipeline 详情和本列表仅供受保护服务端路径；访客归属隔离需 B3 验收。
+
+真实网关返回的已完成任务摘要（`pipelines` 中一项）：
+
+```json
+{
+  "pipeline_id":"122c314b-a45c-4016-9ec8-8988b5fbf4b8",
+  "run_id":"c88cebb6-2161-4ae2-95d6-98b1470cd3ac",
+  "demand_revision":1,
+  "status":"COMPLETED",
+  "stage":"COMPLETED",
+  "decision_version":"314ca44a85aecf6bdf09d09518c5cf4820fd7ab2d6440349967fa74846dc49f7",
+  "report_id":"pr_122c314b-a45c-4016-9ec8-8988b5fbf4b8",
+  "report_status":"COMPLETED",
+  "created_at":"2026-11-02T17:19:23.513Z",
+  "updated_at":"2026-11-02T17:33:09.904Z"
+}
+```
+
+刷新后先查询 `active=true`，用返回的 ID 查询详情并继续轮询；若无活动项，可不带 `active` 查询最近记录。分析刚结束、报告仍为 `NOT_STARTED` 的短暂间隙不会被 `active=true` 判成正在运行，因此仍需最近记录的兜底。拿不到启动响应时，优先保留原幂等键并重试；`idempotency_conflict` 表示该键已绑定不同请求，不应无提示地换新键自动创建可能重复计费的任务。
 
 ### 5.2.2 精确阶段与报告语义
 
@@ -488,7 +507,7 @@ B2 云端验收自动下载并打开 DOCX，检查报告内 Run/版本以及下�
 | 2026-11-02 | 前端 | 契约还没发布，前端不会自己编响应形状。各批需要这些材料才能联调。A 会话：`POST /api/session`、`GET /api/session` 的真实响应样例；会话过期、限流、额度用尽、以及他人资源 404 的 HTTP 状态和公开 `code`。B 流水线：`POST /api/projects/{id}/pipeline` 与 `GET .../pipeline/{pipeline_id}` 的真实样例；状态值（可映射 `RESEARCHING` / `EVALUATING` / `DECIDING` / `REPORT_GENERATING` / `COMPLETED` / `PARTIAL` / `FAILED`）和单独的 `report_status`；与 `run_id` 的关联。C 分析：`GET /api/projects/{id}/analysis` 的真实样例，以及它如何给出这次运行的 `run_id`、`decision_version`、assessment id、`history_scope` 和报告引用。D 报告：自动生成后的状态与下载引用样例，失败时的公开错误码和短句。价格口径已有 §2.3，接入 C 时按该接口读，不在前端重算。 |
 | 2026-11-02 | 前端 | 已知缺口：当前核对仍按项目关联，不按运行。切到更早的一次运行时，可能看到后来的判定，直到 `/analysis` 按运行返回。这不是前端再猜版本能补上的。 |
 | 2026-11-02 | 前端 | B1 受保护 Pipeline 已接到开发代理。开始分析调用 `POST /api/projects/{id}/pipeline`，请求头 `Idempotency-Key`，正文 `{"demand_revision": 项目当前修订}`。同一项目和同一修订的键保留到收到 202，所以重复点击、失败重试或刷新会复用同一任务。进度轮询 `GET /api/projects/{id}/pipeline/{pipeline_id}`，状态读 `status`。`RESEARCH` 和 `RESEARCHING` 都显示「正在寻找供应商」，`EVALUATING` 显示「正在核对技术与价格」，`DECIDING` 显示「正在整理采购建议」。`COMPLETED` 只表示分析完成，不显示「正在生成报告」，因为这一版没有 `report_status`。返回的 `run_id` 用来选定运行。B1 没有文档化的办法在刷新后找回项目正在进行的 Pipeline，前端只把最近的 `pipeline_id` 放在 sessionStorage，这是界面状态，不是接口。请后端提供一种发现方式：`GET /api/projects/{id}/runs` 的每条带上 `pipeline_id`，或者 `GET /api/projects/{id}/pipelines?limit=`。请确认阶段名是 `RESEARCH` 还是 `RESEARCHING`（验收样例的 `stages[].stage` 是 `RESEARCH`，正文写 `RESEARCHING`）。请确认 B2 的 `stages[]` 会不会增加 `REPORT`。生产访客会话仍按要求关闭。这条链路还没有实网联调。 |
-| 2026-11-03 | 后端 | 收到 PR #4（`8cbfb09`，已合并 `d116ebb`）。恢复入口采用 `GET .../pipelines?active=true`，本地已实现、暂未部署，详见 §5.2.1；部署和实网测试后另行回复。`RESEARCHING` 是顶层当前阶段，`RESEARCH` 是阶段记录的名字；B2 不增加 `stages[].REPORT`，报告看独立 `report_status`，详见 §5.2.2。已观察到实际 RUNNING 响应同时包含这两种名字。前端目前在分析终态停止 Pipeline 轮询，请按报告状态继续跟踪。 |
+| 2026-11-03 | 后端 | 收到 PR #4（`8cbfb09`，已合并 `d116ebb`）。恢复入口 `GET .../pipelines?active=true` 已部署并完成受保护实网验证（代码 `747cb66`），详见 §5.2.1。`RESEARCHING` 是顶层当前阶段，`RESEARCH` 是阶段记录的名字；B2 不增加 `stages[].REPORT`，报告看独立 `report_status`，详见 §5.2.2。已观察到实际 RUNNING 响应同时包含这两种名字。前端目前在分析终态停止 Pipeline 轮询，请按报告状态继续跟踪。 |
 | 2026-11-03 | 后端 | F2/F3 对齐提醒：Pipeline 的核验与决策写在该次冻结快照，不会回填旧项目级 `/spec-assessments` 与 `/decisions`；不要使用旧 job 的时间比较或项目级最新判断代替版本关联。请按选中 `run_id` 或 `pipeline_id` 调 §5.3 `/analysis`，无快照的旧运行保留 409，不拼接最新数据。只有采纳、技术 PASS 的 SHORTLIST 是建议，候选 `stage` 不代表已进入 RFQ。 |
 | 2026-11-02 | 前端 | 集成检查表（未验收；勾选只在真实测试之后）： |
 
