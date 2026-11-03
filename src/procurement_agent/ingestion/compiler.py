@@ -93,9 +93,10 @@ def _follow_up_message(attempt: int, payloads: list[dict[str, Any]]) -> str:
     """Ask the model again, saying what the previous answer was missing."""
     if payloads:
         return (
-            "The previous answer carried no purchase line, but the document contains "
-            "rows with data. Call the RequirementCompilation tool again with every "
-            "purchase line the document states, one requirement for each row."
+            "The previous answer produced no validated purchase line. Check the original "
+            "fragments and the RequirementCompilation schema again. If the source explicitly "
+            "contains a purchase line, return it with its product name, citations, and nested "
+            "constraints. Do not invent values; if it contains no purchase demand, return an empty list."
         )
     return (
         "The previous answer carried no structured compilation. Call the "
@@ -135,6 +136,8 @@ def compile_requirement_fragments(
     }
     payloads: list[dict[str, Any]] = []
     merged: dict[str, Any] = {}
+    validated: RequirementCompilation | None = None
+    prior_attempts: list[RequirementCompilation] = []
     for attempt in range(MAX_COMPILER_ATTEMPTS):
         payloads, text = stream_tool_call(
             model,
@@ -154,10 +157,12 @@ def compile_requirement_fragments(
         if not payloads:
             continue
         merged = merge_compilation_payloads(payloads)
-        if merged.get("requirements") or attempt == MAX_COMPILER_ATTEMPTS - 1:
+        validated = _validated_compilation_payload(merged, project_id=project_id, revision=revision)
+        if validated.requirements or attempt == MAX_COMPILER_ATTEMPTS - 1:
             break
-        # The model reported no purchase line. The document carries data rows,
-        # so ask again before an empty answer is accepted.
+        # A nonempty raw list can still contain only schema-invalid items.
+        # Retry without inventing fields and retain source-backed gaps below.
+        prior_attempts.append(validated)
     if not merged:
         return CompilerResult(
             compilation=RequirementCompilation(
@@ -167,11 +172,28 @@ def compile_requirement_fragments(
             ),
             shaping_issues=("The model answered without a structured compilation.",),
         )
-    raw = _validated_compilation_payload(
-        merged,
-        project_id=project_id,
-        revision=revision,
-    )
+    raw = validated or _validated_compilation_payload(merged, project_id=project_id, revision=revision)
+    for prior in prior_attempts:
+        for item in prior.unstructured_requirements:
+            if item not in raw.unstructured_requirements:
+                raw.unstructured_requirements.append(item)
+        for conflict in prior.conflicts:
+            if conflict not in raw.conflicts:
+                raw.conflicts.append(conflict)
+        for issue in prior.issues:
+            if issue not in raw.issues:
+                raw.issues.append(issue)
+        for question in prior.open_questions:
+            if question not in raw.open_questions:
+                raw.open_questions.append(question)
+    if not raw.requirements:
+        code = (
+            "requirements_schema_unresolved"
+            if any("did not satisfy the requirement schema" in issue for issue in raw.issues)
+            else "no_recognizable_demand"
+        )
+        if code not in raw.issues:
+            raw.issues.append(code)
 
     raw.project_id = project_id
     raw.revision = revision

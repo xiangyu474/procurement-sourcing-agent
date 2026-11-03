@@ -170,6 +170,91 @@ def test_compiler_sends_every_fragment_to_the_model():
     assert [item["text"] for item in payload["fragments"]] == [f.text for f in fragments]
 
 
+def test_compiler_retries_a_schema_invalid_line_and_preserves_its_source_gap():
+    locator = "user_text:p1:rev_1:line_1:span_0_20"
+    fragment = _fragment(locator, "采购5MP工业网络摄像机，输出至少5MP")
+    constraint = {
+        "constraint_id": "c1", "requirement_id": "r1", "attribute_key": "output_resolution",
+        "attribute_definition": "输出分辨率", "value_type": "NUMBER", "operator": "GTE",
+        "value": "5", "unit": "MP", "importance": "HARD", "origin": "USER_EXPLICIT",
+        "source_ref": locator, "source_quote": "输出至少5MP",
+    }
+    invalid = {"requirements": [{"requirement_id": "r1", "source_refs": [locator], "constraints": [constraint]}]}
+    valid = {"requirements": [{"requirement_id": "r1", "product_name": "5MP工业网络摄像机", "source_refs": [locator], "constraints": [constraint]}]}
+
+    class SequenceModel(FakeChatModel):
+        def __init__(self):
+            super().__init__(invalid)
+            self.responses = [invalid, valid]
+            self.calls = 0
+
+        def stream(self, messages, config=None):
+            self.captured.extend(messages)
+            response = self.responses[self.calls]
+            self.calls += 1
+            yield _FakeToolCallChunk(response)
+
+    model = SequenceModel()
+    result = compile_requirement_fragments(project_id="p1", fragments=[fragment], model=model)
+    assert model.calls == 2
+    assert result.compilation.requirements[0].product_name == "5MP工业网络摄像机"
+    assert result.compilation.requirements[0].constraints[0].value == "5"
+    assert result.compilation.requirements[0].constraints[0].source_quote == "输出至少5MP"
+    assert any(item.source_quote == "输出至少5MP" for item in result.compilation.unstructured_requirements)
+    assert any("did not satisfy the requirement schema" in issue for issue in result.compilation.issues)
+
+
+def test_retry_does_not_silently_replace_a_conflicting_model_number():
+    locator = "user_text:p1:rev_1:line_1:span_0_20"
+    fragment = _fragment(locator, "采购5MP工业网络摄像机，输出至少5MP")
+    constraint = {
+        "constraint_id": "c1", "requirement_id": "r1", "attribute_key": "output_resolution",
+        "attribute_definition": "输出分辨率", "value_type": "NUMBER", "operator": "GTE",
+        "value": "5", "unit": "MP", "importance": "HARD", "origin": "USER_EXPLICIT",
+        "source_ref": locator, "source_quote": "输出至少5MP",
+    }
+    invalid = {"requirements": [{"requirement_id": "r1", "source_refs": [locator], "constraints": [constraint]}]}
+    valid = {"requirements": [{"requirement_id": "r1", "product_name": "5MP工业网络摄像机", "source_refs": [locator], "constraints": [{**constraint, "value": "4"}]}]}
+
+    class SequenceModel(FakeChatModel):
+        def __init__(self):
+            super().__init__(invalid)
+            self.responses = iter([invalid, valid])
+
+        def stream(self, messages, config=None):
+            yield _FakeToolCallChunk(next(self.responses))
+
+    result = compile_requirement_fragments(project_id="p1", fragments=[fragment], model=SequenceModel())
+    extracted = result.compilation.requirements[0].constraints[0]
+    assert extracted.value == "4"
+    assert extracted.parse_status.value == "AMBIGUOUS"
+    assert any(item.source_quote == "输出至少5MP" for item in result.compilation.unstructured_requirements)
+
+
+def test_compiler_retains_invalid_schema_gap_after_all_retries():
+    locator = "user_text:p1:rev_1:line_1:span_0_20"
+    fragment = _fragment(locator, "采购5MP工业网络摄像机，输出至少5MP")
+    invalid = {
+        "requirements": [{"requirement_id": "r1", "source_refs": [locator], "constraints": [{
+            "attribute_key": "resolution", "attribute_definition": "输出分辨率", "value_type": "NUMBER",
+            "operator": "GTE", "value": "5", "unit": "MP", "importance": "HARD",
+            "origin": "USER_EXPLICIT", "source_ref": locator, "source_quote": "输出至少5MP",
+        }]}]
+    }
+    model = FakeChatModel(invalid)
+    result = compile_requirement_fragments(project_id="p1", fragments=[fragment], model=model)
+    assert result.compilation.requirements == []
+    assert any(item.source_quote == "输出至少5MP" for item in result.compilation.unstructured_requirements)
+    assert "requirements_schema_unresolved" in result.compilation.issues
+
+
+def test_no_procurement_content_returns_an_explicit_issue_without_inventing_a_line():
+    fragment = _fragment("user_text:p1:line=1", "你好，今天天气不错。")
+    result = compile_requirement_fragments(project_id="p1", fragments=[fragment], model=FakeChatModel({"requirements": []}))
+    assert result.compilation.requirements == []
+    assert "no_recognizable_demand" in result.compilation.issues
+
+
 def test_incomplete_model_requirement_is_demoted_to_unstructured():
     payload = {
         "project_id": "p1",

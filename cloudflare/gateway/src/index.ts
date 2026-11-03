@@ -7,6 +7,7 @@ import { ProcurementPipelineWorkflow, type PipelineRequest } from "./pipeline_wo
 import { startPipelineReport } from "./pipeline_report";
 import { shapePipelineAnalysis } from "./pipeline_analysis";
 import { listProjectPipelines } from "./pipeline_discovery";
+import { evidenceDisplayExcerpt } from "./evidence_excerpt";
 export { ProcurementPipelineWorkflow };
 import {
 	checkInternalAuth,
@@ -1835,14 +1836,17 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 					...(pipelineId ? candidates.flatMap(candidate => candidate.evidence_ids) : []),
 				])].filter(Boolean);
 				const evidenceHashes: Record<string, string> = {};
-				let frozenEvidence: { evidence_id: string; title: string; url: string; quote: string; content_sha256: string }[] = [];
+				let frozenEvidence: { evidence_id: string; title: string; url: string; quote: string | null; quote_status: string; content_sha256: string }[] = [];
 				if (evidenceIds.length > 0) {
 					const { results: evidenceRows } = await env.DB.prepare(
 						`SELECT id, content_sha256, title, source_url, excerpt FROM research_evidence WHERE workspace_id = 'default' AND id IN (SELECT value FROM json_each(?1))`,
 					).bind(JSON.stringify(evidenceIds)).all<{ id: string; content_sha256: string; title: string; source_url: string; excerpt: string }>();
 					for (const row of evidenceRows) evidenceHashes[row.id] = row.content_sha256;
 					if (pipelineId && evidenceIds.some(id => !evidenceHashes[id])) return json({ error: "pipeline_evidence_missing" }, 409);
-					frozenEvidence = evidenceRows.map(row => ({ evidence_id: row.id, title: row.title, url: row.source_url, quote: row.excerpt, content_sha256: row.content_sha256 }));
+					frozenEvidence = evidenceRows.map(row => {
+						const excerpt = evidenceDisplayExcerpt(row.excerpt);
+						return { evidence_id: row.id, title: row.title, url: row.source_url, quote: excerpt.text, quote_status: excerpt.status, content_sha256: row.content_sha256 };
+					});
 				}
 				return json({
 					project_id: projectId,
@@ -3235,9 +3239,11 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 					grouped.set(id, item);
 				}
 				if (row.evidence_id && !item.evidence.some(evidence => evidence.evidence_id === row.evidence_id)) {
+					const excerpt = evidenceDisplayExcerpt(typeof row.excerpt === "string" ? row.excerpt : null);
 					item.evidence.push({
 						evidence_id: row.evidence_id, source_url: row.source_url,
-						title: row.evidence_title, retrieved_at: row.retrieved_at, excerpt: row.excerpt,
+						title: row.evidence_title, retrieved_at: row.retrieved_at, excerpt: excerpt.text,
+						excerpt_status: excerpt.status,
 						content_date_hints: JSON.parse(String(row.content_date_hints_json ?? "[]")),
 					});
 				}
@@ -3283,8 +3289,11 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 				   ON e.workspace_id = l.workspace_id AND e.id = l.evidence_id
 				 WHERE l.workspace_id = 'default' AND l.entity_type = 'SUPPLIER' AND l.entity_id = ?1
 				 ORDER BY e.retrieved_at DESC LIMIT 50`,
-			).bind(supplierId).all();
-			return json({ supplier, products, evidence });
+			).bind(supplierId).all<Record<string, unknown>>();
+			return json({ supplier, products, evidence: evidence.map(row => {
+				const excerpt = evidenceDisplayExcerpt(typeof row.excerpt === "string" ? row.excerpt : null);
+				return { ...row, excerpt: excerpt.text, excerpt_status: excerpt.status };
+			}) });
 		}
 
 		const runsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/runs$/);
@@ -3440,9 +3449,12 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 			const snapshot = await env.BUCKET.get(String(evidence.snapshot_r2_key));
 			if (!snapshot) return json({ error: "evidence_snapshot_missing" }, 404);
 			const { snapshot_r2_key: _snapshotKey, ...publicEvidence } = evidence;
+			const displayedExcerpt = evidenceDisplayExcerpt(typeof evidence.excerpt === "string" ? evidence.excerpt : null);
 			return json({
 				evidence: {
 					...(guestSessionId ? publicEvidence : evidence),
+					excerpt: displayedExcerpt.text,
+					excerpt_status: displayedExcerpt.status,
 					content_date_hints: JSON.parse(String(evidence.content_date_hints_json ?? "[]")),
 					snapshot_text: await snapshot.text(),
 				},

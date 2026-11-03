@@ -19,3 +19,15 @@ it("exposes frozen IDs and scoped prices without internal paths or model configu
 	assert.equal(price.overview_is_not_a_baseline, true);
 	assert.deepEqual(price.overview_statistics, { minimum: "77" });
 });
+
+it("filters an old frozen evidence display without changing its ID, hash or snapshot input", () => {
+	const raw = "Add paragraph text. Click “Edit Text” to update the font, size and more.\n\nThe RUT241 is a compact industrial cellular router with LTE and multiple connectivity options.";
+	const frozen = { evidence: [{ evidence_id: "ev1", quote: raw, content_sha256: "abc" }] };
+	const output = shapePipelineAnalysis(frozen, {});
+	const row = (output.evidence as Array<Record<string, unknown>>)[0];
+	assert.equal(row.evidence_id, "ev1");
+	assert.equal(row.content_sha256, "abc");
+	assert.equal(row.quote_status, "FILTERED_BOILERPLATE");
+	assert.equal(row.quote, "The RUT241 is a compact industrial cellular router with LTE and multiple connectivity options.");
+	assert.equal(frozen.evidence[0].quote, raw);
+});

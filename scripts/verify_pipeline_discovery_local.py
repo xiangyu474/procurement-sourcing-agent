@@ -7,6 +7,7 @@ and never accesses Cloudflare resources or uses a production credential.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -39,6 +40,7 @@ def main() -> int:
                 "database_id": "00000000-0000-0000-0000-000000000001",
                 "migrations_dir": str(ROOT / "cloudflare/gateway/migrations"),
             }],
+            "r2_buckets": [{"binding": "BUCKET", "bucket_name": "discovery-test-bucket"}],
             "vars": {"PIPELINE_ENABLED": "true", "DEMO_ACCESS_TOKEN": "local-test-only"},
         }), encoding="utf-8")
         environment = {**os.environ, "WRANGLER_SEND_METRICS": "false"}
@@ -54,6 +56,19 @@ def main() -> int:
             VALUES ('research','default','p1','r3',1,'RUNNING','RESEARCHING','NOT_STARTED','2026-01-01','2026-01-01');
         INSERT INTO pipeline_stages(pipeline_id,stage,status,started_at) VALUES ('research','RESEARCH','RUNNING','2026-01-01');
         """
+        raw_evidence = (
+            'Add paragraph text. Click “Edit Text” to update the font, size and more.\n\n'
+            'The RUT241 is a compact industrial cellular router with LTE and reliable connectivity.'
+        )
+        digest = hashlib.sha256(raw_evidence.encode()).hexdigest()
+        escaped = raw_evidence.replace("'", "''")
+        seed += f"""
+        INSERT INTO research_evidence(id,workspace_id,source_type,source_url,normalized_url,title,retrieved_at,locator,excerpt,content_sha256,snapshot_r2_key,trust_notes,first_run_id,last_run_id)
+            VALUES ('ev1','default','PUBLIC_WEB','https://example.test/a','https://example.test/a','Product','2026','local','{escaped}','{digest}','evidence/ev1','test','r3','r3');
+        """
+        evidence_file = directory / "evidence.txt"
+        evidence_file.write_bytes(raw_evidence.encode("utf-8"))
+        subprocess.run([NPX, "wrangler", "r2", "object", "put", "discovery-test-bucket/evidence/ev1", *common, "--file", str(evidence_file)], cwd=ROOT, env=environment, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
         seed_file = directory / "seed.sql"
         seed_file.write_text(seed, encoding="utf-8")
         seeded = subprocess.run([NPX, "wrangler", "d1", "execute", "DB", *common, "--file", str(seed_file)], cwd=ROOT, env=environment, capture_output=True, text=True, encoding="utf-8", errors="replace")
@@ -96,7 +111,15 @@ def main() -> int:
                 assert detail.status_code == 200, detail.text
                 assert detail.json()["stage"] == "RESEARCHING"
                 assert detail.json()["stages"][0]["stage"] == "RESEARCH"
-                print("PASS: real local Worker routes, isolated D1, auth, queued recovery, report activity and stage names")
+                source = client.get("/api/evidence/ev1", headers=headers)
+                assert source.status_code == 200, source.text
+                evidence = source.json()["evidence"]
+                assert evidence["excerpt_status"] == "FILTERED_BOILERPLATE"
+                assert "Add paragraph text" not in evidence["excerpt"]
+                assert evidence["excerpt"] in raw_evidence
+                assert evidence["snapshot_text"] == raw_evidence
+                assert evidence["content_sha256"] == digest
+                print("PASS: real local Worker routes, isolated D1/R2, auth, queued recovery, report activity, stage names and source-preserving excerpt")
         finally:
             if os.name == "nt":
                 subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, check=False)

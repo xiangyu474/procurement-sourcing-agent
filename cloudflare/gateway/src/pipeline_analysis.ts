@@ -1,3 +1,5 @@
+import { evidenceDisplayExcerpt } from "./evidence_excerpt.ts";
+
 type Row = Record<string, unknown>;
 const obj = (value: unknown): Row => value && typeof value === "object" && !Array.isArray(value) ? value as Row : {};
 const rows = (value: unknown): Row[] => Array.isArray(value) ? value.map(obj) : [];
@@ -31,7 +33,11 @@ export function shapePipelineAnalysis(final: Row, report: Row): Row {
 			notes: row.notes ?? [],
 		};
 	});
-	const evidence = rows(final.evidence).map(row => pick(row, ["evidence_id", "title", "url", "quote", "content_sha256"]));
+	const evidence = rows(final.evidence).map(row => {
+		const excerpt = evidenceDisplayExcerpt(typeof row.quote === "string" ? row.quote : null);
+		const status = excerpt.status === "ORIGINAL" && row.quote_status === "FILTERED_BOILERPLATE" ? row.quote_status : excerpt.status;
+		return { ...pick(row, ["evidence_id", "title", "url", "content_sha256"]), quote: excerpt.text, quote_status: status };
+	});
 	return { ...pick(final, ["project_id", "pipeline_id", "run_id", "demand_revision", "research_status"]),
 		requirements, candidates, assessments, decisions, price_contexts: priceContexts, evidence, report };
 }
