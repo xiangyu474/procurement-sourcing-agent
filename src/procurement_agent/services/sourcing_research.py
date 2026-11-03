@@ -318,52 +318,79 @@ def build_sourcing_plan(
             "max_model_calls": min(settings.max_model_calls, 30),
         },
     }
-    response = model.with_structured_output(
-        SourcingPlanProposal,
-        method="function_calling",
-        include_raw=True,
-    ).invoke(
-        [
+    def _plan_questions(proposal: SourcingPlanProposal) -> tuple[list[ResearchQuestion], list[str]]:
+        valid_questions: list[ResearchQuestion] = []
+        seen_questions: set[tuple[str, str, str]] = set()
+        plan_issues: list[str] = []
+        for question in proposal.research_questions:
+            requirement_id = question.requirement_id
+            association_origin = RequirementAssociationOrigin.PLAN_EXPLICIT
+            if requirement_id is None and len(requirements) == 1:
+                requirement_id = requirements[0].requirement_id
+                association_origin = RequirementAssociationOrigin.SINGLE_REQUIREMENT_FALLBACK
+                plan_issues.append("Associated a plan question with the only structured requirement because the model omitted its ID.")
+            if requirement_id not in requirement_ids:
+                plan_issues.append("Discarded a plan question that did not reference a known requirement.")
+                continue
+            key = (requirement_id, question.channel.value, _normalize_words(question.question))
+            if key in seen_questions:
+                continue
+            seen_questions.add(key)
+            question_id = stable_id("q", run_id, *key)
+            valid_questions.append(
+                ResearchQuestion(
+                    question_id=question_id,
+                    requirement_id=requirement_id,
+                    association_origin=association_origin,
+                    question=question.question,
+                    channel=question.channel,
+                    expected_evidence=question.expected_evidence,
+                    rationale=question.rationale,
+                )
+            )
+        return valid_questions, plan_issues
+
+    proposal: SourcingPlanProposal | None = None
+    issues: list[str] = []
+    valid_questions: list[ResearchQuestion] = []
+    # A plan whose questions reference no known requirement cannot start any
+    # research. Ask once more with the reason instead of failing the run.
+    for attempt in range(2):
+        messages = [
             SystemMessage(content=PLAN_SYSTEM_PROMPT),
             HumanMessage(content=json.dumps(prompt, ensure_ascii=False, default=str)),
-        ],
-        config={
-            "callbacks": [model_budget] if model_budget else [],
-            "tags": ["m2-sourcing-plan"],
-            "metadata": {"research_phase": "PLAN", "sourcing_project_id": project_id, "sourcing_run_id": run_id},
-        },
-    )
-    proposal, issues = _validated_sourcing_plan_proposal(response)
-
-    valid_questions: list[ResearchQuestion] = []
-    seen_questions: set[tuple[str, str, str]] = set()
-    for question in proposal.research_questions:
-        requirement_id = question.requirement_id
-        association_origin = RequirementAssociationOrigin.PLAN_EXPLICIT
-        if requirement_id is None and len(requirements) == 1:
-            requirement_id = requirements[0].requirement_id
-            association_origin = RequirementAssociationOrigin.SINGLE_REQUIREMENT_FALLBACK
-            issues.append("Associated a plan question with the only structured requirement because the model omitted its ID.")
-        if requirement_id not in requirement_ids:
-            issues.append("Discarded a plan question that did not reference a known requirement.")
-            continue
-        key = (requirement_id, question.channel.value, _normalize_words(question.question))
-        if key in seen_questions:
-            continue
-        seen_questions.add(key)
-        question_id = stable_id("q", run_id, *key)
-        valid_questions.append(
-            ResearchQuestion(
-                question_id=question_id,
-                requirement_id=requirement_id,
-                association_origin=association_origin,
-                question=question.question,
-                channel=question.channel,
-                expected_evidence=question.expected_evidence,
-                rationale=question.rationale,
-            )
+        ]
+        if attempt:
+            messages.append(HumanMessage(content=(
+                "The previous plan carried no research question for a known requirement. "
+                f"Answer again with at least one question whose requirement_id is one of "
+                f"{sorted(requirement_ids)}."
+            )))
+        response = model.with_structured_output(
+            SourcingPlanProposal,
+            method="function_calling",
+            include_raw=True,
+        ).invoke(
+            messages,
+            config={
+                "callbacks": [model_budget] if model_budget else [],
+                "tags": ["m2-sourcing-plan"],
+                "metadata": {"research_phase": "PLAN", "sourcing_project_id": project_id, "sourcing_run_id": run_id},
+            },
         )
-    if not valid_questions:
+        try:
+            proposal, plan_response_issues = _validated_sourcing_plan_proposal(response)
+        except ResearchInputError:
+            # The answer did not satisfy the plan schema. Ask once more with
+            # the requirement ids, because a run cannot start without a plan.
+            if attempt == 0:
+                continue
+            raise
+        valid_questions, plan_issues = _plan_questions(proposal)
+        issues = list(issues) + plan_response_issues + plan_issues
+        if valid_questions:
+            break
+    if proposal is None or not valid_questions:
         raise ResearchInputError("the structured SourcingPlan contains no valid research question")
 
     explicit_goal_text = " ".join([
