@@ -33,11 +33,18 @@ export function shapePipelineAnalysis(final: Row, report: Row): Row {
 			notes: row.notes ?? [],
 		};
 	});
-	const evidence = rows(final.evidence).map(row => {
+	const frozenEvidence = rows(final.evidence);
+	const evidence = frozenEvidence.map(row => {
 		const excerpt = evidenceDisplayExcerpt(typeof row.quote === "string" ? row.quote : null);
 		const status = excerpt.status === "ORIGINAL" && row.quote_status === "FILTERED_BOILERPLATE" ? row.quote_status : excerpt.status;
 		return { ...pick(row, ["evidence_id", "title", "url", "content_sha256"]), quote: excerpt.text, quote_status: status };
 	});
+	// The displayed quote can be safely filtered without mutating the frozen
+	// snapshot, but a DOCX produced from an older raw snapshot may still contain
+	// the original template text. Do not silently overwrite that artifact.
+	const legacyBoilerplate = frozenEvidence.some(row =>
+		typeof row.quote === "string" && row.quote.trim().length > 0 && evidenceDisplayExcerpt(row.quote).status !== "ORIGINAL");
+	const reportView = { ...report, warning_codes: legacyBoilerplate ? ["LEGACY_PLACEHOLDER_EXCERPT"] : [] };
 	return { ...pick(final, ["project_id", "pipeline_id", "run_id", "demand_revision", "research_status"]),
-		requirements, candidates, assessments, decisions, price_contexts: priceContexts, evidence, report };
+		requirements, candidates, assessments, decisions, price_contexts: priceContexts, evidence, report: reportView };
 }

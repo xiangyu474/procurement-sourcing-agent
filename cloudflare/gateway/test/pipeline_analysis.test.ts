@@ -29,5 +29,8 @@ it("filters an old frozen evidence display without changing its ID, hash or snap
 	assert.equal(row.content_sha256, "abc");
 	assert.equal(row.quote_status, "FILTERED_BOILERPLATE");
 	assert.equal(row.quote, "The RUT241 is a compact industrial cellular router with LTE and multiple connectivity options.");
+	assert.deepEqual((output.report as Record<string, unknown>).warning_codes, ["LEGACY_PLACEHOLDER_EXCERPT"]);
 	assert.equal(frozen.evidence[0].quote, raw);
+	const cleaned = shapePipelineAnalysis({ evidence: [{ evidence_id: "ev1", quote: row.quote, quote_status: "FILTERED_BOILERPLATE", content_sha256: "abc" }] }, {});
+	assert.deepEqual((cleaned.report as Record<string, unknown>).warning_codes, []);
 });
