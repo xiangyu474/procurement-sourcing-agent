@@ -462,7 +462,7 @@ GET /api/projects/{project_id}/analysis?run_id={run_id}
 
 同一测试项目以 `run_id` 选择返回完全相同的响应；B1 旧运行无快照返回 409；跨项目选择返回 404。该次 24 条决策中 23 条 `PASS/VERIFIED_PASS/SHORTLIST`、1 条 `UNKNOWN/UNVERIFIED/INVESTIGATE`，这是模型和程序门禁输出，**不是独立业务准确性验收**。
 
-### 5.3.1 决策中文展示摘要（本地实现，待部署）
+### 5.3.1 决策中文展示摘要（受保护路径已部署、实网验证）
 
 `/analysis` 的每条 `decisions[]` 新增 `display`：
 
@@ -472,16 +472,16 @@ GET /api/projects/{project_id}/analysis?run_id={run_id}
   "basis":"STRUCTURED_ASSESSMENT_NOT_TRANSLATION",
   "summary_code":"EVIDENCE_INSUFFICIENT",
   "summary_zh":"现有证据不足以判断是否符合全部硬性条件，建议补充核验。",
-  "gaps":[{"code":"MISSING_CLAIM","constraint_id":"k1","importance":"HARD","evidence_ids":[],"text_zh":"尚未找到支持该项指标的可用资料。"}],
-  "next_actions":[{"code":"MISSING_CLAIM","constraint_id":"k1","text_zh":"补充该型号的对应技术资料并核验来源。"}],
+  "gaps":[{"code":"MISSING_CLAIM","constraint_id":"text_1:c3","importance":"HARD","evidence_ids":[],"text_zh":"尚未找到支持该项指标的可用资料。"}],
+  "next_actions":[{"code":"MISSING_CLAIM","constraint_id":"text_1:c3","text_zh":"补充该型号的对应技术资料并核验来源。"}],
   "unresolved_question_ids":[],
   "untranslated_originals":{"rationale":true,"gap_count":5,"next_action_count":3}
 }
 ```
 
-这是字段形状示例，**不是云端响应**。`display` 按本次冻结核验、门禁状态和原因码确定性生成；`summary_zh` 是核验摘要，不是模型英文 `rationale` 的逐句翻译。`gaps/next_actions` 是基于结构化核验原因的通用缺口与跟进建议，保留约束和证据 ID；不保证覆盖模型原文中所有商务、供货或其他缺口。原始 `rationale/gaps/next_actions` 不变，`untranslated_originals` 标明仍有多少原始内容未逐条翻译。前端应提示“还有原始信息待核对”，不能把中文摘要当成完整翻译或丢弃原文中的缺口。未知原因返回 `UNMAPPED_ASSESSMENT_REASON`，不伪造具体结论。
+这是 RUT241 实网响应的 `display` 摘录，数组只展示一条；该真实响应包含 4 项结构化缺口、4 项结构化跟进建议。`display` 按本次冻结核验、门禁状态和原因码确定性生成；`summary_zh` 是核验摘要，不是模型英文 `rationale` 的逐句翻译。`gaps/next_actions` 是基于结构化核验原因的通用缺口与跟进建议，保留约束和证据 ID；不保证覆盖模型原文中所有商务、供货或其他缺口。原始 `rationale/gaps/next_actions` 不变，`untranslated_originals` 标明仍有多少原始内容未逐条翻译。前端应提示“还有原始信息待核对”，不能把中文摘要当成完整翻译或丢弃原文中的缺口。**完整逐条中文翻译尚未实现**；需要单独做带溯源和一致性校验的翻译，不能用规则猜测原文的商业含义。未知原因返回 `UNMAPPED_ASSESSMENT_REASON`，不伪造具体结论。
 
-摘要码：`GATE_REJECTED`、`ASSESSMENT_UNAVAILABLE`、`RECOMMENDED_INQUIRY_VERIFIED`、`HARD_REQUIREMENT_FAILED`、`EVIDENCE_INSUFFICIENT`、`FURTHER_INVESTIGATION`、`REVIEW_REQUIRED`。`UNKNOWN` 和拒绝决策不会被摘要显示成合格或建议询价。`display.version` 是展示规则版本，独立于 `decision_version`；这是对不可变快照的只读投影，不改变原始决策版本或历史报告。此字段尚未部署和真实网关联调。
+摘要码：`GATE_REJECTED`、`ASSESSMENT_UNAVAILABLE`、`RECOMMENDED_INQUIRY_VERIFIED`、`HARD_REQUIREMENT_FAILED`、`EVIDENCE_INSUFFICIENT`、`FURTHER_INVESTIGATION`、`REVIEW_REQUIRED`。`UNKNOWN` 和拒绝决策不会被摘要显示成合格或建议询价。`display.version` 是展示规则版本，独立于 `decision_version`；这是对不可变快照的只读投影，不改变原始决策版本或历史报告。代码 `9b3cc27` 已部署；真实网关按 Pipeline 和 Run 选择得到相同响应，并核对决策版本及原始理由、缺口、行动和 Evidence ID 均未改变。
 
 ### 5.4 自动报告：受保护路径已部署，单次云端验收通过
 
@@ -534,7 +534,7 @@ B2 云端验收自动下载并打开 DOCX，检查报告内 Run/版本以及下�
 | 2026-11-03 | 后端 | `ev_a3fe0597c3455af88296ed36` 的原始快照确有网页模板占位文字，也包含 RUT241 正文；该证据未被该次技术核验作为比较依据，决策保留 UNKNOWN。代码 `c0b7393` 已部署并实网验证：`/api/evidence`、旧 `/candidates` 的 `excerpt` 和 `/analysis` 的 `quote` 不再显示该模板文字，选出的摘录是原始快照中的连续子串；证据 ID、快照哈希、历史决策版本及 UNKNOWN 决策均未改变。`excerpt_status/quote_status` 为 `ORIGINAL/FILTERED_BOILERPLATE/UNAVAILABLE`；原始 `snapshot_text` 保留，不是经过清洗的引用。`def5a3e` 还从公开证据响应隐藏了 R2 key 和内部 locator。已有 DOCX 是不可变历史制品，仍包含旧占位摘录，不会静默覆盖；`e19f5ac` 已部署并实网验证：该版本的 `/analysis.report.warning_codes` 返回 `["LEGACY_PLACEHOLDER_EXCERPT"]`，普通不含该占位内容的报告返回空数组。前端应提示历史报告含占位摘录。 |
 | 2026-11-03 | 后端 | `runs.current_stage=WEB_RESEARCH` 与 `artifact_key_present` 描述 M2/旧 Spike 运行，不描述 Pipeline 后续阶段或正式报告；请用 Pipeline 状态与 `report_status`。就报告的约 100 秒轮询，我对同一已完成 Pipeline 实测 5 次约 0.6–1.6 秒，未复现，不能据此判断原因或宣称修复；前端单请求超时后继续轮询是合理的。 |
 | 2026-11-03 | 后端 | 两次摄像机整理对应同项目需求修订 1、2，D1 确认均无结构化需求并记录 Requirement schema 验证失败；不能当成“没有采购内容”。代码 `c0b7393` / 容器 `sourcing-v18` 已部署：对全体模型需求均未通过 schema 的情况最多按既有上限重试，保留先前来源条款/缺口，不由代码补造数字；重试仍失败时在 `issues` 返回 `requirements_schema_unresolved`，模型未识别需求返回 `no_recognizable_demand`。用两次原文各自在隔离项目实网重跑：均得到 1 条需求，分别含 1、3 条约束，输出约束引文均可在原文找到；原项目两条原文哈希未变，隔离记录已清理。该结果不证明每次模型输出都正确，也未证明本次实际触发了重试。 |
-| 2026-11-03 | 后端 | 对理由、缺口与下一步：`/analysis.decisions[].display` 已在本地增加基于冻结核验原因码的中文摘要和跟进建议，详见 §5.3.1；原始文本保留，中文摘要不声称逐条翻译，仍未映射的原文数量明确返回。当前尚未部署，云端验证后再通知接入。交付状态文档已纠正 B2 的旧“本地未验证”表述。访客会话基础代码虽然已部署，但开关仍关闭；A/B 越权、会话创建限流、单访客和部署级预算/并发尚未完成，不应声称公开流程可用。 |
+| 2026-11-03 | 后端 | 对理由、缺口与下一步：`/analysis.decisions[].display` 的结构化中文摘要已在 `9b3cc27` 部署并实网验证，详见 §5.3.1；原始文本保留，中文摘要不是逐条翻译，仍未映射的原文数量明确返回。交付状态文档已纠正 B2 的旧“本地未验证”表述。访客会话基础代码虽然已部署，但开关仍关闭；A/B 越权、会话创建限流、单访客和部署级预算/并发尚未完成，不应声称公开流程可用。 |
 | 2026-11-02 | 前端 | 集成检查表（未验收；勾选只在真实测试之后）： |
 
 | 项 | 状态 | 负责人 | 前端对接 | 验收 |

@@ -14,6 +14,7 @@ B1：**CLOUD_VERIFIED（一次受保护验收） / NOT_PUBLIC_READY**。Git `41a
 | 总预算与滥用防护 | 现有 `runs`、`research_run_costs`、Workflow 入口 | 未实现全局原子预约、预算上限和并发控制，也未保护会话创建频率。仅按 session 计数或按地域限流均不足以保证全局预算；尚未启用公开访客任务。 |
 | Pipeline | `cloudflare/gateway/src/pipeline_workflow.ts`, `pipeline_store.ts`, `index.ts` | B1/B2 在受保护路径分别完成一次云端验收；B2 快照和自动报告已部署。异常恢复、更多实际 Worker 路由及浏览器联调仍需补充。 |
 | Analysis 与版本 | `pipeline_final.ts`, `pipeline_analysis.ts`, `index.ts` | CLOUD_VERIFIED 单次：实际网关分别按 Pipeline/Run 查询得到完全相同响应；旧运行无快照返回 409、跨项目返回 404。多运行切换尚未完成真实浏览器验收。 |
+| 决策中文展示 | `decision_display.ts`, `pipeline_analysis.ts` | CLOUD_VERIFIED 单次：基于冻结核验原因码生成中文摘要和通用跟进，原始英文理由/缺口/行动及版本未改变；不是逐条翻译，完整原文中文化仍未实现。 |
 | Report | `pipeline_report.ts`, `SourcingReportWorkflow`, `src/procurement_agent/reports/procurement_report.py` | CLOUD_VERIFIED 单次：云端验收及本机实际网关均下载并打开 DOCX，Run/版本和字节 SHA 一致；重复触发复用同一报告。报告启动失败不影响分析、失败重试本地测试通过，云端故障注入/A/B 授权尚未验收。 |
 | 前端联调 | `docs/m4/backend_contract_response.md` | §5.1 会话仍为关闭状态、不可用于真实联调；§5.2–§5.4 受保护 Pipeline/Analysis/Report 已有实网样例，公开 Session 和完整链路尚未验收。 |
 | 验收 | `cloudflare/gateway/test/guest_session.test.ts`, `scripts/run_cloud_acceptance.py` | 当前 Node/SQLite 测试不等于 Worker 实际路由或云端验收。正式验收需固定部署 SHA/镜像，A/B 越权、CSRF、限额、幂等、失败恢复、刷新及 DOCX 下载全链路。 |
