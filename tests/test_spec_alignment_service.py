@@ -176,6 +176,28 @@ def test_a_wrong_method_label_is_not_repaired_outside_the_curated_table():
     assert alignment.method != AlignmentMethod.APPROVED_ALIAS
 
 
+def test_a_pairing_without_a_usable_claim_is_supplied_from_the_curated_table():
+    """The model paired the two but named no claim; the table supplies it."""
+    alignment = canonical_alignment(
+        proposal(claim_ids=[]),
+        constraint=constraint(),
+        claims={"clm1": typed_claim(attribute_key="video_output_resolution")},
+    )
+    assert alignment.status == AlignmentStatus.ALIGNED
+    assert alignment.method == AlignmentMethod.APPROVED_ALIAS
+    assert alignment.claim_ids == ["clm1"]
+
+
+def test_a_pairing_without_a_usable_claim_stays_refused_outside_the_table():
+    alignment = canonical_alignment(
+        proposal(claim_ids=[]),
+        constraint=constraint(),
+        claims={"clm1": typed_claim(attribute_key="sensor_total_pixels")},
+    )
+    assert alignment.status == AlignmentStatus.NOT_ALIGNED
+    assert alignment.claim_ids == []
+
+
 def test_the_model_may_still_refuse_a_pairing_the_curated_table_allows():
     """A refusal is a semantic judgement and is not overridden by the code."""
     alignment = canonical_alignment(
@@ -193,10 +215,11 @@ def test_rated_output_power_and_max_input_power_are_not_aliases():
 
 
 def test_a_pairing_that_names_no_claim_is_not_an_alignment():
+    """Without a claim of the reviewed attribute, there is nothing to compare."""
     alignment = canonical_alignment(
         proposal(claim_ids=[]),
         constraint=constraint(),
-        claims={"clm1": typed_claim()},
+        claims={"clm1": typed_claim(attribute_key="sensor_total_pixels")},
     )
     assert alignment.status == AlignmentStatus.NOT_ALIGNED
 

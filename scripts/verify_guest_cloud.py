@@ -102,11 +102,26 @@ def main() -> int:
         if not finished:
             failures.append("the visitor's analysis did not finish in time")
             return report(failures, project_id)
-        analysis = a.get(f"/api/projects/{project_id}/analysis", params={"pipeline_id": pipeline_id})
-        if analysis.status_code != 200:
-            failures.append(f"the visitor could not read the analysis: {analysis.status_code}")
+        analysis_response = a.get(f"/api/projects/{project_id}/analysis", params={"pipeline_id": pipeline_id})
+        if analysis_response.status_code != 200:
+            failures.append(f"the visitor could not read the analysis: {analysis_response.status_code}")
             return report(failures, project_id)
-        payload = analysis.json()
+        # The report is written after the decision; wait for it before reading it.
+        report_ready = False
+        for _ in range(40):
+            state = a.get(f"/api/projects/{project_id}/pipeline/{pipeline_id}").json()
+            if state.get("report_status") == "COMPLETED":
+                report_ready = True
+                break
+            if state.get("report_status") == "FAILED":
+                failures.append(f"the report failed: {state.get('report_error_code')}")
+                break
+            time.sleep(15)
+        if not report_ready:
+            failures.append("the report did not finish in time")
+            return report(failures, project_id)
+        analysis = a.get(f"/api/projects/{project_id}/analysis", params={"pipeline_id": pipeline_id}).json()
+        payload = analysis
         if not payload.get("candidates") or not payload.get("assessments"):
             failures.append("the visitor's analysis has no candidate or assessment")
         if b.get(f"/api/projects/{project_id}/analysis", params={"pipeline_id": pipeline_id}).status_code != 404:
@@ -123,11 +138,13 @@ def main() -> int:
                 failures.append("the second visitor could download the first visitor's report")
         else:
             failures.append("the visitor's report is not downloadable")
+        summary = payload.get("summary") or {}
         return report(failures, project_id, {
             "project_id": project_id, "pipeline_id": pipeline_id, "run_id": run_id,
             "demand_revision": revision, "candidates": len(payload.get("candidates", [])),
             "assessments": len(payload.get("assessments", [])), "decisions": len(payload.get("decisions", [])),
             "decision_version": payload.get("decision_version"), "report_bytes": report_bytes,
+            "summary": summary,
         })
 
 

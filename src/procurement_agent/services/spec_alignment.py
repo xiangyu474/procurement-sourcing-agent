@@ -10,7 +10,9 @@ without judgement:
   pairing that says the keys are a known alias is only kept when the alias
   table says so.
 - A unit conversion has to be one the whitelist allows.
-- A pairing that names no claim is not an alignment.
+- A pairing that names no claim is not an alignment. When the model paired the
+  two sides but named no usable claim, the reviewed alias table supplies the
+  claim of that candidate; without one, the pairing stays unusable.
 
 A pairing the code cannot confirm stays AMBIGUOUS, and the calculator turns
 that into UNKNOWN. Nothing here turns a mismatch into a pass.
@@ -131,6 +133,7 @@ def _aliased_alignment(
     claim: ProductAttributeClaim,
     claim_ids: Sequence[str],
     proposal: AlignmentProposal,
+    note: str | None = None,
 ) -> SemanticAlignment:
     """Keep a pairing the model proposed, with the curated method label."""
     return SemanticAlignment(
@@ -138,7 +141,7 @@ def _aliased_alignment(
         claim_ids=list(claim_ids),
         status=AlignmentStatus.ALIGNED,
         method=AlignmentMethod.APPROVED_ALIAS,
-        reason=(
+        reason=note or (
             f"The model paired these two as the same measurement and named the attribute as "
             f"{constraint.attribute_key} against {claim.attribute_key}; the reviewed alias table "
             "confirms that pair."
@@ -165,6 +168,43 @@ def canonical_alignment(
         )
     known = [claim_id for claim_id in proposal.claim_ids if claim_id in claims]
     missing = [claim_id for claim_id in proposal.claim_ids if claim_id not in claims]
+    if proposal.status == AlignmentStatus.ALIGNED and not known:
+        # The model believed these measure the same thing but named no claim
+        # that can be used. The curated alias table decides which claim of this
+        # candidate carries the measurement; without such a claim the pairing
+        # still cannot be used.
+        if constraint is not None:
+            supplied = [
+                claim.claim_id
+                for claim in claims.values()
+                if _approved_pair(constraint.attribute_key, claim.attribute_key)
+            ]
+            if supplied:
+                return _aliased_alignment(
+                    constraint,
+                    claims[supplied[0]],
+                    supplied,
+                    proposal,
+                    note=(
+                        "The model paired these two as the same measurement but named no usable "
+                        "claim; the reviewed alias table links the attribute keys."
+                    ),
+                )
+        if missing:
+            return SemanticAlignment(
+                constraint_id=proposal.constraint_id,
+                claim_ids=[],
+                status=AlignmentStatus.NOT_ALIGNED,
+                method=proposal.method,
+                reason=f"The proposal names a claim that does not exist: {', '.join(missing)}.",
+            )
+        return SemanticAlignment(
+            constraint_id=proposal.constraint_id,
+            claim_ids=[],
+            status=AlignmentStatus.NOT_ALIGNED,
+            method=proposal.method,
+            reason="The proposal calls the pairing aligned but names no claim.",
+        )
     if missing:
         return SemanticAlignment(
             constraint_id=proposal.constraint_id,
@@ -172,14 +212,6 @@ def canonical_alignment(
             status=AlignmentStatus.NOT_ALIGNED,
             method=proposal.method,
             reason=f"The proposal names a claim that does not exist: {', '.join(missing)}.",
-        )
-    if proposal.status == AlignmentStatus.ALIGNED and not known:
-        return SemanticAlignment(
-            constraint_id=proposal.constraint_id,
-            claim_ids=[],
-            status=AlignmentStatus.NOT_ALIGNED,
-            method=proposal.method,
-            reason="The proposal calls the pairing aligned but names no claim.",
         )
     if proposal.status != AlignmentStatus.ALIGNED:
         return SemanticAlignment(
