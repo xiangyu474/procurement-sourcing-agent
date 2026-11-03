@@ -59,10 +59,32 @@ APPROVED_ALIASES: dict[str, frozenset[str]] = {
     "max_input_power": frozenset({"max_input_power", "input_power"}),
 }
 
+
+def _alias_group_text() -> str:
+    """The reviewed groups, written out so the model can use them."""
+    lines = []
+    for key, members in sorted(APPROVED_ALIASES.items()):
+        lines.append(f"- {key}: {', '.join(sorted(members))}")
+    return "\n".join(lines)
+
+
+ALIAS_GROUP_TEXT = _alias_group_text()
+
 ALIGNMENT_BATCH_SIZE = 1
 ALIGNMENT_CONCURRENCY = 3
 
-SYSTEM_PROMPT = """You decide whether a requirement constraint and a product claim measure the same thing.
+
+def _alias_group_text() -> str:
+    """The reviewed groups, written out so the model can use them."""
+    lines = []
+    for key, members in sorted(APPROVED_ALIASES.items()):
+        lines.append(f"- {key}: {', '.join(sorted(members))}")
+    return "\n".join(lines)
+
+
+ALIAS_GROUP_TEXT = _alias_group_text()
+
+SYSTEM_PROMPT = f"""You decide whether a requirement constraint and a product claim measure the same thing.
 
 A constraint says what the buyer wants: an attribute key, a definition of what
 the attribute measures, a comparison, a value, and a unit. A claim says what a
@@ -73,10 +95,14 @@ candidate's claims measure one and the same quantity.
 
 Rules:
 - Align only when the two sides measure the same physical or business quantity under the same conditions. "rated output power" and "maximum input power" are not the same quantity. "sensor effective pixels" and "video output pixels" are not the same quantity.
-- Use method EXACT_ATTRIBUTE_KEY only when the attribute keys are literally the same. Use method APPROVED_ALIAS only when the keys are known aliases of each other. Use method LLM_PROPOSED_REVIEWED for a pairing you have checked yourself, and then name the measurement object in dimension and explain in reason what the two sides have in common.
+- Use method EXACT_ATTRIBUTE_KEY only when the attribute keys are literally the same. Use method APPROVED_ALIAS only when the keys are known aliases of each other, which the list below defines. Use method LLM_PROPOSED_REVIEWED for a pairing you have checked yourself, and then name the measurement object in dimension and explain in reason what the two sides have in common.
 - A claim that does not state the attribute is not a pair. Report NOT_ALIGNED with the reason.
+- Always name the claim identifiers you paired. A pairing without a claim identifier cannot be used.
 - When the source states several values for one attribute, or when the wording leaves the quantity open, report AMBIGUOUS or CONFLICTING. Never pick the value that suits the requirement.
 - Copy the constraint_id and product_candidate_id exactly as they are given.
+
+The reviewed alias groups are:
+{ALIAS_GROUP_TEXT}
 """
 
 
