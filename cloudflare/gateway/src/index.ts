@@ -723,6 +723,7 @@ export class SourcingCompileWorkflow extends WorkflowEntrypoint<Env, CompileRequ
 					// started before it can answer.
 					const response = await retryContainerNotRunning(async () => {
 						await container.start();
+						await waitForContainer(container);
 						return container.fetch(
 						new Request("http://container/internal/compile-demand", {
 							method: "POST",
@@ -868,6 +869,26 @@ function _parseStages(value: string | undefined): Record<string, unknown> {
  * few times with a short wait in between, which is cheaper than a failed
  * acceptance round.
  */
+/** A container that is still waking up refuses connections. Wait for it. */
+async function waitForContainer(
+	container: { fetch: (request: Request) => Promise<Response> },
+	attempts = 40,
+): Promise<boolean> {
+	for (let attempt = 0; attempt < attempts; attempt += 1) {
+		try {
+			const response = await container.fetch(new Request("http://container/health"));
+			if (response.status < 500) {
+				await response.arrayBuffer().catch(() => undefined);
+				return true;
+			}
+		} catch {
+			// The container is not accepting connections yet.
+		}
+		await new Promise((resolve) => setTimeout(resolve, 1500));
+	}
+	return false;
+}
+
 async function fetchContainer(
 	env: Env,
 	instanceName: string,
@@ -879,6 +900,11 @@ async function fetchContainer(
 	for (let attempt = 0; attempt < 4; attempt += 1) {
 		try {
 			await container.start();
+			if (!await waitForContainer(container)) {
+				lastError = "the container did not become ready";
+				await new Promise((resolve) => setTimeout(resolve, 3000));
+				continue;
+			}
 			const response = await container.fetch(
 				new Request(`http://container${path}`, {
 					method: "POST",
@@ -1396,8 +1422,9 @@ export class SourcingWorkflow extends WorkflowEntrypoint<Env, RunRequest> {
 				async () => {
 					const container = getContainer(this.env.SOURCING_CONTAINER, this.env.CONTAINER_INSTANCE_NAME);
 					// The instance sleeps when it is idle, so it has to be
-					// started before it can answer.
+					// started and ready before a long request is sent.
 					await container.start();
+					await waitForContainer(container);
 					const runtimeConfig = {
 						GENESIS_BASE_URL: this.env.GENESIS_BASE_URL,
 						GENESIS_ACCESS_TOKEN: this.env.GENESIS_ACCESS_TOKEN,
