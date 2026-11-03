@@ -62,9 +62,24 @@ def main() -> int:
         )
         digest = hashlib.sha256(raw_evidence.encode()).hexdigest()
         escaped = raw_evidence.replace("'", "''")
+        frozen = {
+            "project_id": "p1", "pipeline_id": "reporting", "run_id": "r2", "demand_revision": 1,
+            "research_status": "COMPLETED", "requirements": [], "candidates": [], "price_contexts": [], "evidence": [],
+            "assessments": [{"assessment_id": "a1", "requirement_id": "req1", "product_candidate_id": "c1",
+                "hard_spec_overall": "UNKNOWN", "checks": [{"constraint_id": "k1", "status": "UNKNOWN", "reason_code": "MISSING_CLAIM", "evidence_ids": []}]}],
+            "decisions": [{"requirement_id": "req1", "product_candidate_id": "c1", "hard_spec_overall": "UNKNOWN",
+                "recommendation": "INVESTIGATE", "technical_verdict": "UNVERIFIED", "accepted": True,
+                "rationale": "Need a datasheet.", "gaps": ["No claim."], "next_actions": ["Request a datasheet."]}],
+        }
+        frozen_json = json.dumps(frozen, ensure_ascii=False, separators=(",", ":"))
+        frozen_hash = hashlib.sha256(frozen_json.encode("utf-8")).hexdigest()
+        frozen_sql = frozen_json.replace("'", "''")
         seed += f"""
         INSERT INTO research_evidence(id,workspace_id,source_type,source_url,normalized_url,title,retrieved_at,locator,excerpt,content_sha256,snapshot_r2_key,trust_notes,first_run_id,last_run_id)
             VALUES ('ev1','default','PUBLIC_WEB','https://example.test/a','https://example.test/a','Product','2026','local','{escaped}','{digest}','evidence/ev1','test','r3','r3');
+        UPDATE project_pipelines SET decision_version='{frozen_hash}' WHERE id='reporting';
+        INSERT INTO pipeline_snapshots(pipeline_id,snapshot_type,payload_json,sha256,created_at)
+            VALUES ('reporting','FINAL_CONTEXT','{frozen_sql}','{frozen_hash}','2026');
         """
         evidence_file = directory / "evidence.txt"
         evidence_file.write_bytes(raw_evidence.encode("utf-8"))
@@ -120,7 +135,15 @@ def main() -> int:
                 assert evidence["snapshot_text"] == raw_evidence
                 assert evidence["content_sha256"] == digest
                 assert "snapshot_r2_key" not in evidence and "locator" not in evidence
-                print("PASS: real local Worker routes, isolated D1/R2, auth, queued recovery, report activity, stage names and source-preserving excerpt")
+                analysis = client.get("/api/projects/p1/analysis", params={"pipeline_id": "reporting"}, headers=headers)
+                assert analysis.status_code == 200, analysis.text
+                decision = analysis.json()["decisions"][0]
+                assert decision["display"]["summary_code"] == "EVIDENCE_INSUFFICIENT"
+                assert decision["display"]["gaps"][0]["code"] == "MISSING_CLAIM"
+                assert decision["display"]["untranslated_originals"]["gap_count"] == 1
+                assert decision["rationale"] == "Need a datasheet."
+                assert analysis.json()["decision_version"] == frozen_hash
+                print("PASS: local Worker routes, isolated D1/R2, auth, recovery, report activity, stage names, evidence and decision display")
         finally:
             if os.name == "nt":
                 subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, check=False)

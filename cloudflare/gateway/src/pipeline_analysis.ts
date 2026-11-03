@@ -1,4 +1,5 @@
 import { evidenceDisplayExcerpt } from "./evidence_excerpt.ts";
+import { decisionDisplay } from "./decision_display.ts";
 
 type Row = Record<string, unknown>;
 const obj = (value: unknown): Row => value && typeof value === "object" && !Array.isArray(value) ? value as Row : {};
@@ -20,7 +21,18 @@ export function shapePipelineAnalysis(final: Row, report: Row): Row {
 		...pick(row, ["assessment_id", "requirement_id", "product_candidate_id", "product_model_ref", "hard_spec_overall", "overall_reason_codes", "hard_constraint_count", "unresolved_question_ids", "evaluated_at"]),
 		checks: rows(row.checks).map(check => pick(check, ["constraint_id", "requirement_id", "claim_ids", "status", "reason_code", "operation", "normalized_actual", "normalized_required", "unit", "evidence_ids", "importance"])),
 	}));
-	const decisions = rows(final.decisions).map(row => pick(row, ["decision_id", "requirement_id", "product_candidate_id", "product_model_ref", "recommendation", "technical_verdict", "hard_spec_overall", "accepted", "rationale", "evidence_ids", "gaps", "next_actions", "priority_rank", "violations", "decided_at"]));
+	const assessmentsByKey = new Map<string, Row | null>();
+	for (const assessment of rows(final.assessments)) {
+		const key = `${String(assessment.requirement_id ?? "")}\u001f${String(assessment.product_candidate_id ?? "")}`;
+		assessmentsByKey.set(key, assessmentsByKey.has(key) ? null : assessment);
+	}
+	const decisions = rows(final.decisions).map(row => {
+		const key = `${String(row.requirement_id ?? "")}\u001f${String(row.product_candidate_id ?? "")}`;
+		return {
+			...pick(row, ["decision_id", "requirement_id", "product_candidate_id", "product_model_ref", "recommendation", "technical_verdict", "hard_spec_overall", "accepted", "rationale", "evidence_ids", "gaps", "next_actions", "priority_rank", "violations", "decided_at"]),
+			display: decisionDisplay(row, assessmentsByKey.get(key) ?? undefined),
+		};
+	});
 	const priceContexts = rows(final.price_contexts).map(row => {
 		const history = obj(row.history); const overview = obj(row.history_overview);
 		return {
