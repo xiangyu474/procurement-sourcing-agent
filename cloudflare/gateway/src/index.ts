@@ -8,6 +8,7 @@ import { startPipelineReport } from "./pipeline_report";
 import { shapePipelineAnalysis } from "./pipeline_analysis";
 import { listProjectPipelines } from "./pipeline_discovery";
 import { evidenceDisplayExcerpt } from "./evidence_excerpt";
+import { guestEvent, guestRun, guestRunSummary, guestStage, guestStopReason } from "./guest_public";
 export { ProcurementPipelineWorkflow };
 import {
 	checkInternalAuth,
@@ -37,6 +38,10 @@ export interface Env {
 	GUEST_SESSION_ENABLED?: string;
 	GUEST_SESSION_SECRET?: string;
 	GUEST_PUBLIC_ORIGIN?: string;
+	GUEST_SESSION_GLOBAL_PER_HOUR?: string;
+	GUEST_SESSION_IP_PER_HOUR?: string;
+	GUEST_GLOBAL_REQUESTS_PER_MINUTE?: string;
+	GUEST_SESSION_REQUESTS_PER_MINUTE?: string;
 	PIPELINE_ENABLED?: string;
 	CONTAINER_GATEWAY_URL: string;
 	CONTAINER_INSTANCE_NAME: string;
@@ -2430,12 +2435,20 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 		// The list of the projects of the workspace, with the run that is
 		// still going on or that finished last.
 		if (request.method === "GET" && url.pathname === "/api/projects") {
-			const limit = Math.min(Number(url.searchParams.get("limit") ?? 50) || 50, 200);
+			const requested = Number(url.searchParams.get("limit") ?? 50);
+			const limit = Number.isFinite(requested) ? Math.max(1, Math.min(200, Math.floor(requested))) : 50;
 			const listSql = guestSessionId ? guestProjectsListSql : projectsListSql;
 			const statement = env.DB.prepare(listSql);
 			const { results } = await (guestSessionId ? statement.bind(limit, guestSessionId) : statement.bind(limit))
 				.all<Record<string, unknown>>();
-			return json({ projects: results.map((row) => shapeProject(row)) });
+			return json({ projects: results.map((row) => {
+				const project = shapeProject(row);
+				if (guestSessionId && project.latest_run && typeof project.latest_run === "object") {
+					const run = project.latest_run as Record<string, unknown>;
+					project.latest_run = { ...run, current_stage: guestStage(run.current_stage, run.status) };
+				}
+				return project;
+			}) });
 		}
 
 		// The runs of one project, so that a project can be opened from a
@@ -2446,7 +2459,10 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 			const { results } = await env.DB.prepare(projectRunsSql)
 				.bind(projectId)
 				.all<Record<string, unknown>>();
-			return json({ runs: results.map((row) => shapeRun(row)) });
+			return json({ runs: results.map((row) => {
+				const run = shapeRun(row);
+				return guestSessionId ? guestRunSummary(run) : run;
+			}) });
 		}
 
 		// The text of the latest demand revision, so that the input can be
@@ -2479,7 +2495,7 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 				status: row.status,
 				analysis_version: detail.analysis_version ?? null,
 				demand_revision: detail.demand_revision ?? null,
-				error: row.error,
+				error: guestSessionId && row.error ? "COMPILE_FAILED" : row.error,
 			});
 		}
 
@@ -2498,7 +2514,8 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 			)
 				.bind(projectId)
 				.first<{ demand_revision: number }>();
-			return json(shapeJobStatus(row, revision?.demand_revision ?? null));
+			const job = shapeJobStatus(row, revision?.demand_revision ?? null);
+			return json(guestSessionId ? { ...job, error: job.error ? "JOB_FAILED" : null, detail: {} } : job);
 		}
 
 		if (request.method === "POST" && url.pathname === "/api/projects") {
@@ -2539,8 +2556,7 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 
 		const pipelinesMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/pipelines$/);
 		if (pipelinesMatch && request.method === "GET") {
-			// Match the existing Pipeline detail route: guest access is not live.
-			if (env.PIPELINE_ENABLED !== "true" || guestSessionId) return json({ error: "operation_unavailable" }, 503);
+			if (env.PIPELINE_ENABLED !== "true") return json({ error: "operation_unavailable" }, 503);
 			return listProjectPipelines(request, env.DB, decodeURIComponent(pipelinesMatch[1]), guestSessionId);
 		}
 
@@ -2577,9 +2593,9 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 
 		const pipelineMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/pipeline(?:\/([^/]+))?$/);
 		if (pipelineMatch) {
-			// B1 is restricted to the explicitly enabled server-side bearer path.
-			// Guest writes remain blocked by authorizeGuest, even when enabled.
-			if (env.PIPELINE_ENABLED !== "true" || guestSessionId) return json({ error: "operation_unavailable" }, 503);
+			// Guest reads are ownership-checked by authorizeGuest; expensive writes
+			// remain disabled until strict deployment-wide quotas are enforced.
+			if (env.PIPELINE_ENABLED !== "true") return json({ error: "operation_unavailable" }, 503);
 			const projectId = decodeURIComponent(pipelineMatch[1]);
 			if (request.method === "GET" && pipelineMatch[2]) {
 				const id = decodeURIComponent(pipelineMatch[2]);
@@ -2597,6 +2613,7 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 					stages: stages.results, created_at: row.created_at, updated_at: row.updated_at });
 			}
 			if (request.method === "POST" && !pipelineMatch[2]) {
+				if (guestSessionId) return json({ error: "operation_unavailable" }, 503);
 				const key = request.headers.get("idempotency-key") ?? "";
 				if (!key || key.length > 200 || !/^[\x21-\x7e]+$/.test(key)) return json({ error: "idempotency_key_required" }, 400);
 				const body = await request.json().catch(() => ({})) as { demand_revision?: unknown };
@@ -2841,7 +2858,14 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 				.bind(projectId)
 				.first<{ analysis_version: number; compilation_json: string }>();
 			if (!row) return json({ error: "not_compiled" }, 404);
-			return json({ analysis_version: row.analysis_version, compilation: JSON.parse(row.compilation_json) });
+			const compilation = JSON.parse(row.compilation_json) as Record<string, unknown>;
+			// Failed compile jobs store an internal exception in an issue-only
+			// record. Do not expose that exception to a guest. Normal compiled
+			// demand, conflicts and source-backed gaps stay intact.
+			if (guestSessionId && !Array.isArray(compilation.requirements) && Array.isArray(compilation.issues)) {
+				return json({ analysis_version: row.analysis_version, compilation: { ...compilation, issues: ["COMPILE_FAILED"] } });
+			}
+			return json({ analysis_version: row.analysis_version, compilation });
 		}
 
 		const historyImportMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/history-imports$/);
@@ -3370,7 +3394,7 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 				.bind(runMatch[1])
 				.first<RunRow>();
 			if (!run) return json({ error: "not_found" }, 404);
-			return json(run);
+			return json(guestSessionId ? guestRun(run) : run);
 		}
 
 		const researchRunMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/research$/);
@@ -3404,6 +3428,11 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 				evidence_count: number; reused_intelligence_count: number; refreshed_intelligence_count: number;
 				ignored_intelligence_count: number; warnings_json: string;
 			}>();
+			if (guestSessionId) return json({
+				run: { ...run, current_stage: guestStage(run.current_stage, run.status) },
+				metrics: { status: costs?.status ?? run.status, stop_reason_code: guestStopReason(costs?.stop_reason_code),
+					candidate_count: costs?.candidate_count ?? 0, evidence_count: costs?.evidence_count ?? 0 },
+			});
 			return json({
 				run,
 				plan: planRow ? JSON.parse(planRow.plan_json) : null,
@@ -3468,7 +3497,7 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 			)
 				.bind(eventsMatch[1])
 				.all();
-			return json({ events: results });
+			return json({ events: guestSessionId ? results.map(row => guestEvent(row as Record<string, unknown>)) : results });
 		}
 
 		const downloadMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/report\/download$/);

@@ -2,7 +2,7 @@
 
 依据 `docs/TODO.md`。本文件区分本地实现和云端验收，不将接口草案视为已交付。
 
-Session 基础实现：**CLOUD_DEPLOYED（功能关闭） / NOT_PUBLIC_READY**。基础代码提交 `e70afe8bb3dd4d4335e1042c4a0b186432d91694` 已随后续构建进入网关；`GUEST_SESSION_ENABLED` 未启用，访客昂贵写操作保持禁用。Node/SQLite 本地测试通过，尚无真实访客 A/B 隔离和全局限额验收；不可据此称生产就绪。
+Session：**B3 LOCAL_IMPLEMENTED（部分） / NOT_PUBLIC_READY**。已部署的基础代码仍关闭 `GUEST_SESSION_ENABLED`；本地新增会话创建和认证请求的全局/访客固定窗口限流、访客 Pipeline 只读和部分响应脱敏。真实本地 Worker + 隔离 D1/R2 已验证 A/B 隔离、Cookie、Origin、限流和并发、自己的 Pipeline 只读及昂贵写操作拒绝；未验证云端 A/B，也未实现严格全局模型成本预算或允许访客启动任务。新 migration `0016–0018` 尚未应用远端。
 
 B2：**CLOUD_VERIFIED（一次受保护验收） / NOT_PUBLIC_READY**。Git `d021de4`、容器 `sourcing-v17`、D1 migration `0015`；验收 `cf_c4397689d684785ec4d5d80b245906b3af996cc05452507410354c34244caafc`，24 个候选/核验/决策，自动生成并通过网关下载 44,335 字节 DOCX，报告版本和 SHA、Run、复用均核对。23 条为 PASS/SHORTLIST、1 条 UNKNOWN/INVESTIGATE，这仅是程序输出，不是独立语义准确性证明。第一次 B2 验收出现旧步骤执行，报告未启动，已终止；后续发现新部署后 Workflow 版本存在传播延迟，经无模型探针确认再重跑成功。原因仍需进一步确认。
 
@@ -10,18 +10,18 @@ B1：**CLOUD_VERIFIED（一次受保护验收） / NOT_PUBLIC_READY**。Git `41a
 
 | 顺序 | 代码位置 | 当前状态 / 后续工作 |
 | --- | --- | --- |
-| Session | `cloudflare/gateway/src/guest_session.ts`, `index.ts`, migration `0012` | 基础代码已部署但开关关闭；尚未发布真实访客会话能力。需完成真实 Worker 路由、浏览器 A/B 隔离和运行时测试，以及严格限额后才可启用。旧无归属项目对访客不可见；管理路径须另行设计。 |
-| 总预算与滥用防护 | 现有 `runs`、`research_run_costs`、Workflow 入口 | 未实现全局原子预约、预算上限和并发控制，也未保护会话创建频率。仅按 session 计数或按地域限流均不足以保证全局预算；尚未启用公开访客任务。 |
+| Session | `guest_session.ts`, `guest_public.ts`, `index.ts`, migrations `0012/0016/0017` | 本地真实 Worker 已验证 A/B 项目/Run/证据/报告隔离、Cookie/Origin、Pipeline 自有只读和限流；未做真实云端/浏览器 A/B 验收，开关保持关闭。旧无归属项目对访客不可见；管理路径须另行设计。 |
+| 总预算与滥用防护 | `guest_session.ts`, `guest_admission.ts`, migrations `0016–0018` | 本地新增全局/IP 会话创建及全局/Session 认证请求限流；新增尚未接入任务入口的 D1 原子预算单位/并发预约原语，并以隔离本地 Worker 并发测试。预约单位不等于金额，也没有约束实际模型/搜索调用；缺少供应商调用逐次扣额、全链路保守上限和失败任务安全回收。频率限制和未接入的预约不能替代部署级成本预算，访客任务仍关闭。 |
 | Pipeline | `cloudflare/gateway/src/pipeline_workflow.ts`, `pipeline_store.ts`, `index.ts` | B1/B2 在受保护路径分别完成一次云端验收；B2 快照和自动报告已部署。异常恢复、更多实际 Worker 路由及浏览器联调仍需补充。 |
 | Analysis 与版本 | `pipeline_final.ts`, `pipeline_analysis.ts`, `index.ts` | CLOUD_VERIFIED 单次：实际网关分别按 Pipeline/Run 查询得到完全相同响应；旧运行无快照返回 409、跨项目返回 404。多运行切换尚未完成真实浏览器验收。 |
 | 决策中文展示 | `decision_display.ts`, `pipeline_analysis.ts` | CLOUD_VERIFIED 单次：基于冻结核验原因码生成中文摘要和通用跟进，原始英文理由/缺口/行动及版本未改变；不是逐条翻译，完整原文中文化仍未实现。 |
 | Report | `pipeline_report.ts`, `SourcingReportWorkflow`, `src/procurement_agent/reports/procurement_report.py` | CLOUD_VERIFIED 单次：云端验收及本机实际网关均下载并打开 DOCX，Run/版本和字节 SHA 一致；重复触发复用同一报告。报告启动失败不影响分析、失败重试本地测试通过，云端故障注入/A/B 授权尚未验收。 |
 | 前端联调 | `docs/m4/backend_contract_response.md` | §5.1 会话仍为关闭状态、不可用于真实联调；§5.2–§5.4 受保护 Pipeline/Analysis/Report 已有实网样例，公开 Session 和完整链路尚未验收。 |
-| 验收 | `cloudflare/gateway/test/guest_session.test.ts`, `scripts/run_cloud_acceptance.py` | 当前 Node/SQLite 测试不等于 Worker 实际路由或云端验收。正式验收需固定部署 SHA/镜像，A/B 越权、CSRF、限额、幂等、失败恢复、刷新及 DOCX 下载全链路。 |
+| 验收 | `scripts/verify_guest_isolation_local.py`, `scripts/verify_guest_admission_local.py`, `cloudflare/gateway/test/guest_session.test.ts` | 有真实本地 Worker + 本地 D1/R2 的 A/B、限流和并发预约测试，不等于真实云端或浏览器验收。正式验收需固定部署 SHA/镜像，A/B 越权、CSRF、限额、幂等、失败恢复、刷新及 DOCX 下载全链路。 |
 
 ## 当前安全边界
 
-`GUEST_SESSION_ENABLED` 默认未配置。旧模式使用共享 Bearer，不能作为公开演示的项目隔离；新模式即使启用也缺少严格配额，必须保持关闭。当前访客模式的 Pipeline 查询/启动及耗模型写请求仍受限，不能仅打开开关就完成公开流程。共享演示凭证曾在对话中披露，应协调前端代理后轮换；不要将其放入浏览器、日志或 Git。
+`GUEST_SESSION_ENABLED` 默认未配置。旧模式使用共享 Bearer，不能作为公开演示的项目隔离；新模式即使启用也缺少严格配额，必须保持关闭。当前本地实现仅放开已归属访客的 Pipeline 读取，启动及耗模型写请求仍受限，不能仅打开开关就完成公开流程。无效 Cookie 等未认证请求不受 Session 请求计数保护，上线前还需边缘滥用防护。共享演示凭证曾在对话中披露，应协调前端代理后轮换；不要将其放入浏览器、日志或 Git。
 
 远端 D1 migration `0012–0015` 已应用；会话迁移只增加可空归属字段，不会自动将已有项目分配给访客。任何历史数据迁移或管理访问策略都需要明确、独立的授权。
 
