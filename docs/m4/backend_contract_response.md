@@ -327,7 +327,7 @@ GET /api/projects/{project_id}/requirement-text
 - Cookie 为 `HttpOnly; Secure; SameSite=Lax; Path=/`，固定 24 小时；签名密钥只存在服务端。修改请求缺失或不匹配 Origin 返回 403 `{ "error": "origin_mismatch" }`。
 - 本地启用模式按归属保护项目、运行、证据及报告，跨访客或无归属资源返回 404 `{ "error": "not_found" }`；共享 Bearer 不代替访客 Cookie。缺少会话密钥返回 503 `{ "error": "session_not_configured" }`。
 - 本地 B3 已添加 D1 固定窗口：会话创建按全局/IP 计数，认证请求按全局/Session 计数；缺少限额配置或 D1 故障时拒绝，超限返回 429 `rate_limited` 和 `Retry-After`。只保存 IP 的 HMAC，不保存原始 IP；同区域 Worker 子请求的 IP 可能被改写，不能把它视为身份。固定窗口可能在边界突发，也不是全局模型成本预算。
-- 本地真实 Worker 已验证 A/B 项目/Run/证据/报告隔离、自有 Pipeline 只读、Origin 和限流；另有**未接入任务入口**的预算单位/并发预约原语通过本地并发测试。预约单位不代表费用，也没有限制实际模型或搜索调用；全局模型预算、昂贵任务次数/并发的实际接入、真实云端/浏览器 A/B 验收未完成。访客昂贵写请求仍返回 503 `operation_unavailable`，公开开关保持关闭。远端 migration `0012–0015` 已应用；本地 `0016–0018` 尚未应用远端。上述限流行为尚不是已部署的生产会话契约。
+- 本地真实 Worker 已验证 A/B 项目/Run/证据/报告隔离、自有 Pipeline 只读、Origin 和限流；另有**未接入任务入口**的预算单位/并发预约原语通过本地并发测试。预约单位不代表费用，也没有限制实际模型或搜索调用；全局模型预算、昂贵任务次数/并发的实际接入、真实云端/浏览器 A/B 验收未完成。访客昂贵写请求仍返回 503 `operation_unavailable`，公开开关保持关闭。远端 migration `0012–0018` 已应用；新的限流与只读代码仍待部署，且访客开关保持关闭。上述限流行为尚不是已发布的生产会话契约。
 
 ### 5.2 Pipeline：受保护路径已部署，单次云端验收通过
 

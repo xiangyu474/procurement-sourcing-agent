@@ -42,12 +42,14 @@ def main() -> int:
             "ON CONFLICT(scope,window_start) DO UPDATE SET request_count=request_count+1 "
             "WHERE request_count<5 RETURNING request_count"
         )
-        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
-            responses = list(pool.map(lambda _i: query(sql), range(20)))
+        # Two simultaneous writers still exercise the atomic boundary while
+        # avoiding unnecessary load on the shared production database.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(lambda _i: query(sql), range(12)))
         granted = sum(bool(rows) for rows in responses)
         row = query(f"SELECT request_count FROM guest_session_creation_windows WHERE scope='{scope}' AND window_start={window}")
         assert granted == 5 and row and row[0]["request_count"] == 5, (granted, row)
-        print("PASS: real D1 accepted exactly 5 of 20 concurrent conditional updates")
+        print("PASS: real D1 accepted exactly 5 of 12 conditional updates with two concurrent writers")
     finally:
         query(f"DELETE FROM guest_session_creation_windows WHERE scope='{scope}' AND window_start={window}")
         print("synthetic counter removed")
