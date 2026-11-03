@@ -328,7 +328,11 @@ GET /api/projects/{project_id}/requirement-text
 - 访客可执行：建项目、提交需求文字、上传 PPTX/XLSX、需求整理、导入历史、一次点击分析。**其他写操作仍返回 503 `operation_unavailable`**（独立寻源运行、独立核验、独立决策、按需报告）。跨访客或无归属资源统一 404 `{ "error": "not_found" }`。
 - 限流：D1 固定窗口，会话创建按全局/IP 计数，认证请求按全局/会话计数；缺少限额配置或 D1 故障时拒绝，超限返回 429 `rate_limited` 与 `Retry-After`。只保存 IP 的 HMAC，不保存原始 IP；同区域 Worker 子请求的 IP 可能被改写，不能当作身份。固定窗口在边界可能突发。
 - 任务预算：每次需求整理占 1 个单位，每次完整分析占 4 个单位；并发上限全局 2、每访客 1；每访客每日 16 个单位、6 次启动；全局每日 80 个单位。超限返回 429 `{ "error": "budget_exhausted" }`；未配置返回 503 `task_budget_not_configured`。单位是并发与日量的粗略代理，**不是模型调用次数或金额**：实际模型与搜索调用仍只受 M2 内部已有的搜索/取页/轮次上限约束，没有逐次扣费。
-- **CLOUD_VERIFIED（访客全链路）**：代码 `6a9bcb7`、容器 `sourcing-v18`、migration `0012–0018`。验收脚本 `scripts/verify_guest_cloud.py`：两个真实访客会话互不可见（项目、运行、分析、报告与报告下载全部 404）；一个访客完成“建项目 → 提交需求 → 整理 → 一次点击分析 → 读取冻结分析 → 下载 DOCX”，得到 24 候选/24 核验/24 决策，报告 44,574 字节且内含 Run 与决策版本；重复启动复用同一任务；整理与分析各占 1/4 单位，任务结束后释放并发但**不退还日额度**。这次验收的 24 条决策均为 `UNKNOWN/UNVERIFIED/INVESTIGATE`，因此不构成技术准确性证明；浏览器人工验收仍未做。
+- **CLOUD_VERIFIED（访客全链路）**：代码 `f0f57f4`、容器 `sourcing-v18`、migration `0012–0018`。验收脚本 `scripts/verify_guest_cloud.py`：两个真实访客会话互不可见（项目、运行、分析、报告与报告下载全部 404）；一个访客完成“建项目 → 提交需求 → 整理 → 一次点击分析 → 读取冻结分析 → 下载 DOCX”，报告约 44 KB 且内含 Run 与决策版本；重复启动复用同一任务；整理与分析各占 1/4 单位，任务结束后释放并发但**不退还日额度**。
+- **寻源结果质量**：同一需求下修复前的结果是 24 条全部 `UNKNOWN/UNVERIFIED/INVESTIGATE`（等于没找到可用的采购结论）；修复后为 **22 条 `PASS`/`SHORTLIST` + 1 条 `UNKNOWN`/`INVESTIGATE`**，29 份证据快照。修复内容：把人工审校的别名表写进对齐提示词、模型把方法标错时按别名表纠正、模型未给出可用 claim 时由别名表补选证据。模型的语义拒绝仍保留为 UNKNOWN，代码不把不确定变成通过。
+- **结果摘要**：`/analysis` 新增 `summary`，给出 `requirements / candidate_rows / distinct_models / distinct_suppliers / models[] / assessments / by_verdict / by_recommendation / evidence / coverage_warnings`。`models[]` 按型号聚合 `candidate_rows` 与 `supplier_count`，界面应按型号展示而不是把同一型号的多个供应商行平铺。`coverage_warnings` 在只找到一个型号、没有候选、没有证据或没有候选通过核验时给出中文提示。
+- **过程可见**：`GET .../pipeline/{pipeline_id}` 新增 `candidates_found / models_found / evidence_found`，在核验开始前就已写入，前端可在等待期显示“已找到 N 个型号 / M 个供应来源”。
+- **研究深度可调**：`POST .../pipeline` 可选 `research_budget`（`max_search_calls/max_fetches/max_tasks/max_rounds/max_model_calls`，各有上限，越界 422 `research_budget_out_of_range`）。默认 `4/4/2/1/12`；一次完整的公开演示约 8–12 分钟，评委时间紧张时前端可提供“快速预览”（如 `3/3/1/1/8`）。
 - 运维身份：`DEMO_ACCESS_TOKEN` 已轮换，仅供验收脚本与开发代理使用；生产前端构建不得携带它。访客开关已开启（`GUEST_SESSION_ENABLED=true`），共享凭证路径仅作为运维入口保留。
 
 ### 5.2 Pipeline：受保护路径已部署，单次云端验收通过
