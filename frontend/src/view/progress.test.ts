@@ -37,6 +37,39 @@ describe("user progress", () => {
 				done: false,
 			}),
 		).toBe("正在整理采购建议");
+		expect(
+			userProgress({
+				pipelineStatus: "RESEARCH",
+				runStatus: "RUNNING",
+				specActive: false,
+				decisionActive: false,
+				reportActive: false,
+				attention: false,
+				done: false,
+			}),
+		).toBe("正在寻找供应商");
+		expect(
+			userProgress({
+				pipelineStatus: "RESEARCHING",
+				runStatus: "COMPLETED",
+				specActive: false,
+				decisionActive: false,
+				reportActive: false,
+				attention: false,
+				done: false,
+			}),
+		).toBe("正在寻找供应商");
+		expect(
+			userProgress({
+				pipelineStatus: "COMPLETED",
+				runStatus: "COMPLETED",
+				specActive: false,
+				decisionActive: false,
+				reportActive: true,
+				attention: false,
+				done: true,
+			}),
+		).toBe("已完成");
 	});
 
 	it("leaves guest session off until the contract is published", () => {

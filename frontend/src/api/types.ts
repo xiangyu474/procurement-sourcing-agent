@@ -117,6 +117,37 @@ export type StartedRun = {
 	reused: boolean;
 };
 
+/** POST /api/projects/{id}/pipeline 202 body. Field names match the published status API. */
+export type StartedPipeline = {
+	pipeline_id: string;
+	run_id: string;
+	demand_revision: number;
+	status: string;
+	reused: boolean;
+};
+
+export type PipelineStage = {
+	stage: string;
+	status: string;
+	started_at: string | null;
+	finished_at: string | null;
+	error_code: string | null;
+};
+
+/** GET /api/projects/{id}/pipeline/{pipeline_id}. `status` is the task field; there is no report_status in B1. */
+export type Pipeline = {
+	pipeline_id: string;
+	project_id: string;
+	run_id: string;
+	demand_revision: number;
+	status: string;
+	stage: string | null;
+	error: string | null;
+	stages: PipelineStage[];
+	created_at: string;
+	updated_at: string;
+};
+
 export type Run = {
 	id: string;
 	project_id: string;

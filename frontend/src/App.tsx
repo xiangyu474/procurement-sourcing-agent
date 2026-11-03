@@ -13,8 +13,9 @@ export function App() {
 	const project = workspace.project;
 	const run = workspace.run && workspace.run.project_id === project?.id ? workspace.run : null;
 	const runActive = Boolean(run && !isTerminalRun(run.status));
+	const analysisActive = workspace.pipelineActive || runActive;
 	const collapsed = Boolean(run && isTerminalRun(run.status));
-	const startLabel = runActive ? "分析进行中" : run ? "再次分析" : "开始分析";
+	const startLabel = workspace.startOffer === "retry" ? "重试" : analysisActive ? "分析进行中" : run ? "再次分析" : "开始分析";
 	const downloadPhase = reportPhase({
 		runStatus: run?.status ?? null,
 		decisionsReady: workspace.candidates.decisionsReady,
@@ -79,7 +80,7 @@ export function App() {
 						project={project}
 						text={workspace.text}
 						busy={workspace.busy}
-						locked={runActive}
+						locked={analysisActive}
 						collapsed={collapsed}
 						compileCount={workspace.compileView?.phase === "ready" ? workspace.compileView.requirementCount : null}
 						compileNotices={workspace.compileView?.phase === "ready" ? workspace.compileView.notices : []}
@@ -123,7 +124,14 @@ export function App() {
 						runs={workspace.runHistory}
 						onSelectRun={workspace.selectRun}
 					/>
-					{workspace.candidates.progressLine ? <p className="quiet">{workspace.candidates.progressLine}</p> : null}
+					{workspace.pipelineLine ? (
+						<p className="quiet" data-testid="pipeline-line">
+							{workspace.pipelineLine}
+						</p>
+					) : workspace.candidates.progressLine ? (
+						<p className="quiet">{workspace.candidates.progressLine}</p>
+					) : null}
+					{workspace.pipelineNote ? <p data-testid="pipeline-note">{workspace.pipelineNote}</p> : null}
 					{workspace.candidates.listNote ? <p>{workspace.candidates.listNote}</p> : null}
 					{workspace.candidates.loading ? <p className="quiet">正在读取候选。</p> : null}
 					{showEmptyCandidates ? <p>这次没有候选供应商。</p> : null}

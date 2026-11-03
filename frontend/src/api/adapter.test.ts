@@ -128,7 +128,15 @@ describe("adapter", () => {
 
 	it("maps unauthorized and history import failures", () => {
 		expect(messageForApiError(new ApiError(401, "unauthorized", null)).summary).toBe("访问被拒绝。");
-		expect(messageForApiError(new ApiError(401, "session_expired", null)).summary).toBe("这次访问已过期。请刷新页面后再试。");
+		expect(messageForApiError(new ApiError(401, "session_expired", null)).summary).toBe("会话已失效，请刷新页面。");
+		expect(messageForApiError(new ApiError(401, "session_required", null)).summary).toBe("会话已失效，请刷新页面。");
+		expect(messageForApiError(new ApiError(403, "origin_mismatch", null)).summary).toBe("页面来源不对，请从本站重新打开。");
+		expect(messageForApiError(new ApiError(404, "not_found", null)).summary).toBe("找不到这个项目或已无权访问。");
+		expect(messageForApiError(new ApiError(409, "demand_revision_changed", null)).summary).toBe("需求刚更新过，请确认后再开始。");
+		expect(messageForApiError(new ApiError(422, "no_recognizable_demand", null)).summary).toBe("没有识别出采购需求。");
+		expect(messageForApiError(new ApiError(503, "operation_unavailable", { error: "operation_unavailable" })).summary).toBe("分析暂时不可用。");
+		expect(messageForApiError(new ApiError(503, "workflow_start_failed", { detail: "container log" })).summary).toBe("分析没能启动。");
+		expect(messageForApiError(new ApiError(503, "session_not_configured", null)).summary).toBe("会话还没有配置。");
 		const imported = messageForApiError(new ApiError(500, "history_import_failed", { detail: "Supervisor timeout token sk-abcdef" }));
 		expect(imported.summary).toBe("历史数据导入失败。");
 		expect(imported.technical).toBeUndefined();

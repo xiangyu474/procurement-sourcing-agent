@@ -13,14 +13,17 @@ import {
 	type UiError,
 } from "../api/adapter";
 import type { ApiClient } from "../api/client";
-import { ApiError, type CompileJob, type Project, type ProjectRunSummary, type ProjectSummary, type Run } from "../api/types";
+import { ApiError, type CompileJob, type Pipeline, type Project, type ProjectRunSummary, type ProjectSummary, type Run, type StartedPipeline } from "../api/types";
+import { pipelineProblemLine, pipelineProgressLine } from "../view/pipeline";
 import { loadDraft, saveDraft } from "../storage";
-import { COMPILE_TIMEOUT_MS, POLL_INTERVAL_MS, pollUntil } from "./poll";
+import { newIdempotencyKey, readPipelineId, readPipelineKey, writePipelineId, writePipelineKey } from "./pipelineState";
+import { COMPILE_TIMEOUT_MS, POLL_INTERVAL_MS, pollUntil, sleep } from "./poll";
 import type { HistoryNote } from "./types";
 import type { RunPort } from "./useRunWatch";
 
 const ACTIVE_KEY = "psi.activeProjectId";
-const PENDING_KEY = "psi.pendingRuns.v1";
+const DEMAND_CHANGED = "需求刚更新过，请确认后再开始。";
+const ANALYSIS_NOT_STARTED = "分析没能启动。";
 
 export type ProjectSession = {
 	projects: ProjectSummary[];
@@ -41,28 +44,11 @@ export type ProjectSession = {
 	onStart: () => Promise<void>;
 	runHistory: ProjectRunSummary[];
 	selectRun: (runId: string) => void;
+	pipelineLine: string | null;
+	pipelineNote: string | null;
+	pipelineActive: boolean;
+	startOffer: "retry" | null;
 };
-
-function readPending(projectId: string): string | null {
-	try {
-		const parsed = JSON.parse(sessionStorage.getItem(PENDING_KEY) ?? "{}") as Record<string, unknown>;
-		const value = parsed[projectId];
-		return typeof value === "string" ? value : null;
-	} catch {
-		return null;
-	}
-}
-
-function writePending(projectId: string, key: string | null): void {
-	try {
-		const parsed = JSON.parse(sessionStorage.getItem(PENDING_KEY) ?? "{}") as Record<string, unknown>;
-		if (key) parsed[projectId] = key;
-		else delete parsed[projectId];
-		sessionStorage.setItem(PENDING_KEY, JSON.stringify(parsed));
-	} catch {
-		/* A lost idempotency key only risks a second run after a failed refresh. */
-	}
-}
 
 function stampKey(projectId: string): string {
 	return `psi.compileDemand.${projectId}`;
@@ -88,7 +74,13 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 	const [compileView, setCompileView] = useState<CompileView | null>(null);
 	const [historyNote, setHistoryNote] = useState<HistoryNote | null>(null);
 	const [runHistory, setRunHistory] = useState<ProjectRunSummary[]>([]);
+	const [pipelineLine, setPipelineLine] = useState<string | null>(null);
+	const [pipelineNote, setPipelineNote] = useState<string | null>(null);
+	const [pipelineActive, setPipelineActive] = useState(false);
+	const [startOffer, setStartOffer] = useState<"retry" | null>(null);
 	const runHistoryRef = useRef<ProjectRunSummary[]>([]);
+	const pipelineActiveRef = useRef(false);
+	const followedRunRef = useRef<string | null>(null);
 	const activeRef = useRef(activeProjectId);
 	const textRef = useRef(text);
 	const serverTextRef = useRef("");
@@ -104,6 +96,107 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		const controller = new AbortController();
 		abortRef.current = controller;
 		return controller.signal;
+	}
+
+	function markPipelineActive(active: boolean): void {
+		pipelineActiveRef.current = active;
+		setPipelineActive(active);
+	}
+
+	function rememberRun(next: Run): void {
+		noteRun(next);
+		const summary: ProjectRunSummary = {
+			id: next.id,
+			status: next.status,
+			current_stage: next.current_stage,
+			last_error: next.last_error,
+			stop_reason_code: null,
+			artifact_key_present: Boolean(next.artifact_key),
+			created_at: next.created_at,
+			updated_at: next.updated_at,
+		};
+		const nextHistory = [summary, ...runHistoryRef.current.filter((item) => item.id !== summary.id)];
+		runHistoryRef.current = nextHistory;
+		setRunHistory(nextHistory);
+	}
+
+	function showPipeline(snapshot: Pipeline): void {
+		setPipelineLine(pipelineProgressLine(snapshot.status, snapshot.stage));
+		setPipelineNote(pipelineProblemLine(snapshot.status, snapshot.error, snapshot.stages));
+	}
+
+	/** The runs row can appear after the pipeline id. A 404 is ignored so the next poll can bind it. */
+	async function ensureRun(runId: string, signal: AbortSignal): Promise<boolean> {
+		if (followedRunRef.current === runId) return true;
+		try {
+			const loaded = await clientRef.current.getRun(runId, { signal });
+			if (signal.aborted) return false;
+			rememberRun(loaded);
+			followedRunRef.current = runId;
+			void runsRef.current.watch(runId, signal, noteRun).catch((caught) => {
+				if (!isAbort(caught) && !signal.aborted) setError(messageForApiError(caught));
+			});
+			return true;
+		} catch (caught) {
+			if (isAbort(caught) || signal.aborted) return false;
+			if (caught instanceof ApiError && caught.status === 404) return false;
+			setError(messageForApiError(caught));
+			return false;
+		}
+	}
+
+	/** Poll the saved pipeline. Returns false when B1 has no such task, so the caller can fall back to the run list. */
+	async function followPipeline(projectId: string, pipelineId: string, signal: AbortSignal): Promise<boolean> {
+		markPipelineActive(true);
+		followedRunRef.current = null;
+		let missedRun = 0;
+		while (!signal.aborted) {
+			let snapshot: Pipeline;
+			try {
+				snapshot = await clientRef.current.getPipeline(projectId, pipelineId, { signal });
+			} catch (caught) {
+				if (isAbort(caught) || signal.aborted) return true;
+				if (caught instanceof ApiError && caught.status === 404) {
+					writePipelineId(projectId, null);
+					markPipelineActive(false);
+					setPipelineLine(null);
+					setPipelineNote(null);
+					return false;
+				}
+				setError(messageForApiError(caught));
+				try {
+					await sleep(POLL_INTERVAL_MS, signal);
+				} catch (sleepError) {
+					if (isAbort(sleepError) || signal.aborted) return true;
+				}
+				continue;
+			}
+			if (signal.aborted) return true;
+			showPipeline(snapshot);
+			const terminal = snapshot.status === "COMPLETED" || snapshot.status === "PARTIAL" || snapshot.status === "FAILED";
+			if (terminal) markPipelineActive(false);
+			const bound = snapshot.run_id ? await ensureRun(snapshot.run_id, signal) : true;
+			if (signal.aborted) return true;
+			if (terminal) {
+				if (snapshot.run_id && !bound) {
+					missedRun += 1;
+					if (missedRun >= 20) return true;
+					try {
+						await sleep(POLL_INTERVAL_MS, signal);
+					} catch (caught) {
+						if (isAbort(caught) || signal.aborted) return true;
+					}
+					continue;
+				}
+				return true;
+			}
+			try {
+				await sleep(POLL_INTERVAL_MS, signal);
+			} catch (caught) {
+				if (isAbort(caught) || signal.aborted) return true;
+			}
+		}
+		return true;
 	}
 
 	function remember(projectId: string | null): void {
@@ -171,6 +264,10 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 			setText("");
 			runHistoryRef.current = [];
 			setRunHistory([]);
+			markPipelineActive(false);
+			setPipelineLine(null);
+			setPipelineNote(null);
+			setStartOffer(null);
 			return;
 		}
 		const signal = replaceAbort();
@@ -200,6 +297,11 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 				const listed = await clientRef.current.listRuns(projectId, { signal });
 				runHistoryRef.current = listed;
 				setRunHistory(listed);
+				const savedPipeline = readPipelineId(projectId);
+				if (savedPipeline) {
+					const followed = await followPipeline(projectId, savedPipeline, signal);
+					if (signal.aborted || followed) return;
+				}
 				const latest = listed[0];
 				if (!latest) return;
 				setActivity(null);
@@ -327,14 +429,37 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		}
 	};
 
+	async function postPipeline(projectId: string, revision: number, signal: AbortSignal): Promise<StartedPipeline> {
+		let key = readPipelineKey(projectId, revision) ?? newIdempotencyKey();
+		writePipelineKey(projectId, revision, key);
+		try {
+			return await clientRef.current.startPipeline(projectId, key, revision, { signal });
+		} catch (caught) {
+			if (!(caught instanceof ApiError) || caught.code !== "idempotency_conflict") throw caught;
+			key = newIdempotencyKey();
+			writePipelineKey(projectId, revision, key);
+			try {
+				return await clientRef.current.startPipeline(projectId, key, revision, { signal });
+			} catch (again) {
+				if (again instanceof ApiError && again.code === "idempotency_conflict") {
+					key = newIdempotencyKey();
+					writePipelineKey(projectId, revision, key);
+				}
+				throw again;
+			}
+		}
+	}
+
 	const onStart = async () => {
-		if (!project || busy) return;
+		if (!project || busy || pipelineActiveRef.current) return;
 		const currentRun = runsRef.current.runRef.current;
 		if (currentRun && currentRun.project_id === project.id && !isTerminalRun(currentRun.status)) return;
 		const signal = replaceAbort();
 		setBusy(true);
 		setError(null);
-		let startedRunId: string | null = null;
+		setPipelineNote(null);
+		let accepted: StartedPipeline | null = null;
+		let acceptedProjectId = "";
 		try {
 			let current = project;
 			const draft = textRef.current.trim();
@@ -386,54 +511,44 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 					setError({ summary: view.phase === "failed" ? "需求整理失败。" : NO_RECOGNIZABLE_DEMAND });
 					return;
 				}
+				current = await refreshProject(current.id, signal);
 				writeStamp(current.id, current.demand_revision);
 			}
-			setActivity("正在启动寻源");
-			const key = readPending(current.id) || crypto.randomUUID();
-			writePending(current.id, key);
+			setActivity("正在开始分析");
+			const revision = current.demand_revision;
 			try {
-				const started = await clientRef.current.startRun(current.id, key, { signal });
-				startedRunId = started.run_id;
-				writePending(current.id, null);
-				const placeholder: Run = {
-					id: started.run_id,
-					project_id: current.id,
-					status: started.status || "QUEUED",
-					current_stage: "QUEUED",
-					artifact_key: null,
-					last_error: null,
-					created_at: new Date().toISOString(),
-					updated_at: new Date().toISOString(),
-				};
-				runsRef.current.adopt(placeholder);
-				noteRun(placeholder);
-				const summary: ProjectRunSummary = {
-					id: placeholder.id,
-					status: placeholder.status,
-					current_stage: placeholder.current_stage,
-					last_error: null,
-					stop_reason_code: null,
-					artifact_key_present: false,
-					created_at: placeholder.created_at,
-					updated_at: placeholder.updated_at,
-				};
-				const nextHistory = [summary, ...runHistoryRef.current.filter((item) => item.id !== summary.id)];
-				runHistoryRef.current = nextHistory;
-				setRunHistory(nextHistory);
+				accepted = await postPipeline(current.id, revision, signal);
 			} catch (caught) {
-				if (caught instanceof ApiError && (caught.code === "network" || caught.code === "timeout")) throw caught;
-				writePending(current.id, null);
+				if (caught instanceof ApiError && caught.code === "idempotency_conflict") return;
+				if (caught instanceof ApiError && caught.code === "demand_revision_changed") {
+					writePipelineKey(current.id, revision, null);
+					sessionStorage.removeItem(stampKey(current.id));
+					await refreshProject(current.id, signal);
+					setStartOffer(null);
+					setError({ summary: DEMAND_CHANGED });
+					return;
+				}
+				if (caught instanceof ApiError && caught.code === "workflow_start_failed") {
+					setStartOffer("retry");
+					setError({ summary: ANALYSIS_NOT_STARTED });
+					return;
+				}
 				throw caught;
 			}
+			writePipelineKey(current.id, revision, null);
+			writePipelineId(current.id, accepted.pipeline_id);
+			acceptedProjectId = current.id;
+			setStartOffer(null);
+			markPipelineActive(true);
 		} catch (caught) {
 			if (!isAbort(caught)) setError(messageForApiError(caught));
 		} finally {
 			setActivity(null);
 			setBusy(false);
 		}
-		if (!startedRunId || signal.aborted) return;
+		if (!accepted || !acceptedProjectId || signal.aborted) return;
 		try {
-			await runsRef.current.watch(startedRunId, signal, noteRun);
+			await followPipeline(acceptedProjectId, accepted.pipeline_id, signal);
 		} catch (caught) {
 			if (!isAbort(caught)) setError(messageForApiError(caught));
 		}
@@ -442,6 +557,10 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 	const selectRun = (runId: string) => {
 		const projectId = activeRef.current;
 		if (!projectId || runsRef.current.runRef.current?.id === runId) return;
+		if (!pipelineActiveRef.current) {
+			setPipelineLine(null);
+			setPipelineNote(null);
+		}
 		const signal = replaceAbort();
 		void runsRef.current.watch(runId, signal, noteRun, runHistoryRef.current).catch((caught) => {
 			if (!isAbort(caught)) setError(messageForApiError(caught));
@@ -467,5 +586,9 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		onStart,
 		runHistory,
 		selectRun,
+		pipelineLine,
+		pipelineNote,
+		pipelineActive,
+		startOffer,
 	};
 }
