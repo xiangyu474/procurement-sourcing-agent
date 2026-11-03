@@ -6,6 +6,7 @@ import { readPipelineDemand, reservePipeline, storePipelineSnapshot } from "./pi
 import { ProcurementPipelineWorkflow, type PipelineRequest } from "./pipeline_workflow";
 import { startPipelineReport } from "./pipeline_report";
 import { shapePipelineAnalysis } from "./pipeline_analysis";
+import { listProjectPipelines } from "./pipeline_discovery";
 export { ProcurementPipelineWorkflow };
 import {
 	checkInternalAuth,
@@ -2530,6 +2531,13 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 					.run();
 			}
 			return json({ project_id: projectId, source_id: sourceId, analysis_version: analysisVersion }, 201);
+		}
+
+		const pipelinesMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/pipelines$/);
+		if (pipelinesMatch && request.method === "GET") {
+			// Match the existing Pipeline detail route: guest access is not live.
+			if (env.PIPELINE_ENABLED !== "true" || guestSessionId) return json({ error: "operation_unavailable" }, 503);
+			return listProjectPipelines(request, env.DB, decodeURIComponent(pipelinesMatch[1]), guestSessionId);
 		}
 
 		const analysisMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/analysis$/);
