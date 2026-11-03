@@ -320,14 +320,16 @@ GET /api/projects/{project_id}/requirement-text
 
 **受保护的 Pipeline、Analysis 和自动报告已通过一次云端验收，但不是公开生产验收；不要打开生产 Session 开关。** 前端尚未完成真实联调，五项联合集成检查仍保持未勾选。代码映射和阻塞项见 `docs/m4/backend_delivery_status.md`。
 
-### 5.1 Session：基础代码已部署，功能关闭、未发布
+### 5.1 Session：已启用并完成云端访客验收
 
-- `POST /api/session`：同源 Origin 必填；创建返回 201 `{ "expires_at": "ISO-8601" }`，设置 `__Host-ps_session`；有效会话重复请求返回 200、同一过期时间；其他 API 不自动创建。前端现有 `openSession()` 仅要求 2xx，与本地形状兼容，尚未真实联调。
+- `POST /api/session`：同源 Origin 必填；创建返回 201 `{ "expires_at": "ISO-8601" }`，设置 `__Host-ps_session`；有效会话重复请求返回 200、同一过期时间；其他 API 不自动创建。前端现有 `openSession()` 只要求 2xx，与真实形状兼容。
 - `GET /api/session`：200 `{ "expires_at": "ISO-8601" }`；无会话 401 `{ "error": "session_required" }`；无效或过期 Cookie 401 `{ "error": "session_expired" }`。过期后 POST 创建新身份，不能恢复旧项目。
 - Cookie 为 `HttpOnly; Secure; SameSite=Lax; Path=/`，固定 24 小时；签名密钥只存在服务端。修改请求缺失或不匹配 Origin 返回 403 `{ "error": "origin_mismatch" }`。
-- 本地启用模式按归属保护项目、运行、证据及报告，跨访客或无归属资源返回 404 `{ "error": "not_found" }`；共享 Bearer 不代替访客 Cookie。缺少会话密钥返回 503 `{ "error": "session_not_configured" }`。
-- 本地 B3 已添加 D1 固定窗口：会话创建按全局/IP 计数，认证请求按全局/Session 计数；缺少限额配置或 D1 故障时拒绝，超限返回 429 `rate_limited` 和 `Retry-After`。只保存 IP 的 HMAC，不保存原始 IP；同区域 Worker 子请求的 IP 可能被改写，不能把它视为身份。固定窗口可能在边界突发，也不是全局模型成本预算。
-- 本地真实 Worker 已验证 A/B 项目/Run/证据/报告隔离、自有 Pipeline 只读、Origin 和限流；另有**未接入任务入口**的预算单位/并发预约原语通过本地并发测试。预约单位不代表费用，也没有限制实际模型或搜索调用；全局模型预算、昂贵任务次数/并发的实际接入、真实云端/浏览器 A/B 验收未完成。访客昂贵写请求仍返回 503 `operation_unavailable`，公开开关保持关闭。远端 migration `0012–0018` 及限流/只读基础代码（`42a8387`，部署 `414dea5`）已部署，但访客开关保持关闭。云端只验证了 D1 条件计数的并发原子性，尚未验证访客路由、模型预算或跨访客云端隔离；上述限流行为不是已发布的公开会话契约。
+- 访客可执行：建项目、提交需求文字、上传 PPTX/XLSX、需求整理、导入历史、一次点击分析。**其他写操作仍返回 503 `operation_unavailable`**（独立寻源运行、独立核验、独立决策、按需报告）。跨访客或无归属资源统一 404 `{ "error": "not_found" }`。
+- 限流：D1 固定窗口，会话创建按全局/IP 计数，认证请求按全局/会话计数；缺少限额配置或 D1 故障时拒绝，超限返回 429 `rate_limited` 与 `Retry-After`。只保存 IP 的 HMAC，不保存原始 IP；同区域 Worker 子请求的 IP 可能被改写，不能当作身份。固定窗口在边界可能突发。
+- 任务预算：每次需求整理占 1 个单位，每次完整分析占 4 个单位；并发上限全局 2、每访客 1；每访客每日 16 个单位、6 次启动；全局每日 80 个单位。超限返回 429 `{ "error": "budget_exhausted" }`；未配置返回 503 `task_budget_not_configured`。单位是并发与日量的粗略代理，**不是模型调用次数或金额**：实际模型与搜索调用仍只受 M2 内部已有的搜索/取页/轮次上限约束，没有逐次扣费。
+- **CLOUD_VERIFIED（访客全链路）**：代码 `6a9bcb7`、容器 `sourcing-v18`、migration `0012–0018`。验收脚本 `scripts/verify_guest_cloud.py`：两个真实访客会话互不可见（项目、运行、分析、报告与报告下载全部 404）；一个访客完成“建项目 → 提交需求 → 整理 → 一次点击分析 → 读取冻结分析 → 下载 DOCX”，得到 24 候选/24 核验/24 决策，报告 44,574 字节且内含 Run 与决策版本；重复启动复用同一任务；整理与分析各占 1/4 单位，任务结束后释放并发但**不退还日额度**。这次验收的 24 条决策均为 `UNKNOWN/UNVERIFIED/INVESTIGATE`，因此不构成技术准确性证明；浏览器人工验收仍未做。
+- 运维身份：`DEMO_ACCESS_TOKEN` 已轮换，仅供验收脚本与开发代理使用；生产前端构建不得携带它。访客开关已开启（`GUEST_SESSION_ENABLED=true`），共享凭证路径仅作为运维入口保留。
 
 ### 5.2 Pipeline：受保护路径已部署，单次云端验收通过
 
@@ -535,6 +537,8 @@ B2 云端验收自动下载并打开 DOCX，检查报告内 Run/版本以及下�
 | 2026-11-03 | 后端 | `ev_a3fe0597c3455af88296ed36` 的原始快照确有网页模板占位文字，也包含 RUT241 正文；该证据未被该次技术核验作为比较依据，决策保留 UNKNOWN。代码 `c0b7393` 已部署并实网验证：`/api/evidence`、旧 `/candidates` 的 `excerpt` 和 `/analysis` 的 `quote` 不再显示该模板文字，选出的摘录是原始快照中的连续子串；证据 ID、快照哈希、历史决策版本及 UNKNOWN 决策均未改变。`excerpt_status/quote_status` 为 `ORIGINAL/FILTERED_BOILERPLATE/UNAVAILABLE`；原始 `snapshot_text` 保留，不是经过清洗的引用。`def5a3e` 还从公开证据响应隐藏了 R2 key 和内部 locator。已有 DOCX 是不可变历史制品，仍包含旧占位摘录，不会静默覆盖；`e19f5ac` 已部署并实网验证：该版本的 `/analysis.report.warning_codes` 返回 `["LEGACY_PLACEHOLDER_EXCERPT"]`，普通不含该占位内容的报告返回空数组。前端应提示历史报告含占位摘录。 |
 | 2026-11-03 | 后端 | `runs.current_stage=WEB_RESEARCH` 与 `artifact_key_present` 描述 M2/旧 Spike 运行，不描述 Pipeline 后续阶段或正式报告；请用 Pipeline 状态与 `report_status`。就报告的约 100 秒轮询，我对同一已完成 Pipeline 实测 5 次约 0.6–1.6 秒，未复现，不能据此判断原因或宣称修复；前端单请求超时后继续轮询是合理的。 |
 | 2026-11-03 | 后端 | 两次摄像机整理对应同项目需求修订 1、2，D1 确认均无结构化需求并记录 Requirement schema 验证失败；不能当成“没有采购内容”。代码 `c0b7393` / 容器 `sourcing-v18` 已部署：对全体模型需求均未通过 schema 的情况最多按既有上限重试，保留先前来源条款/缺口，不由代码补造数字；重试仍失败时在 `issues` 返回 `requirements_schema_unresolved`，模型未识别需求返回 `no_recognizable_demand`。用两次原文各自在隔离项目实网重跑：均得到 1 条需求，分别含 1、3 条约束，输出约束引文均可在原文找到；原项目两条原文哈希未变，隔离记录已清理。该结果不证明每次模型输出都正确，也未证明本次实际触发了重试。 |
+| 2026-11-03 | 后端 | **访客会话已启用并完成云端全链路验收**（代码 `3b0f562`/`6a9bcb7`）：两个真实访客互不可见，一个访客跑通“建项目→需求→整理→一次点击分析→冻结分析→下载 DOCX”。契约见 §5.1。运维 Bearer 凭证已轮换；请前端更新本地 `.env.local`，且**生产构建不得携带该凭证**，浏览器只依赖 HttpOnly 会话。访客可执行整理与一次点击分析；独立寻源/核验/决策/按需报告接口对访客仍返回 503，前端继续只调用 `POST .../pipeline`。 |
+| 2026-11-03 | 后端 | M2 寻源计划在“没有可用研究问题”时改为再问一次（同一模型、同一规则），此前该情况会让整条分析以 `INVALID_RESEARCH_INPUT` 失败；访客验收因此通过。真实访客验收曾遇到一次容器端口中断导致分析失败，研发步骤不做自动重试以免重复计费，失败按 `PIPELINE_STAGE_FAILED` 记录并可由用户重试。 |
 | 2026-11-03 | 后端 | 对理由、缺口与下一步：`/analysis.decisions[].display` 的结构化中文摘要已在 `9b3cc27` 部署并实网验证，详见 §5.3.1；原始文本保留，中文摘要不是逐条翻译，仍未映射的原文数量明确返回。交付状态文档已纠正 B2 的旧“本地未验证”表述。访客会话基础代码虽然已部署，但开关仍关闭；A/B 越权、会话创建限流、单访客和部署级预算/并发尚未完成，不应声称公开流程可用。 |
 | 2026-11-02 | 前端 | 集成检查表（未验收；勾选只在真实测试之后）： |
 
