@@ -1,5 +1,6 @@
 import { evidenceDisplayExcerpt } from "./evidence_excerpt.ts";
 import { decisionDisplay } from "./decision_display.ts";
+import { sourcingSummary } from "./pipeline_summary.ts";
 
 type Row = Record<string, unknown>;
 const obj = (value: unknown): Row => value && typeof value === "object" && !Array.isArray(value) ? value as Row : {};
@@ -58,5 +59,6 @@ export function shapePipelineAnalysis(final: Row, report: Row): Row {
 		typeof row.quote === "string" && row.quote.trim().length > 0 && evidenceDisplayExcerpt(row.quote).status !== "ORIGINAL");
 	const reportView = { ...report, warning_codes: legacyBoilerplate ? ["LEGACY_PLACEHOLDER_EXCERPT"] : [] };
 	return { ...pick(final, ["project_id", "pipeline_id", "run_id", "demand_revision", "research_status"]),
-		requirements, candidates, assessments, decisions, price_contexts: priceContexts, evidence, report: reportView };
+		requirements, candidates, assessments, decisions, price_contexts: priceContexts, evidence,
+		summary: sourcingSummary(final), report: reportView };
 }

@@ -1420,7 +1420,7 @@ export class SourcingWorkflow extends WorkflowEntrypoint<Env, RunRequest> {
 									gateway_url: this.env.CONTAINER_GATEWAY_URL,
 									token: this.env.INTERNAL_GATEWAY_TOKEN,
 									runtime_config: runtimeConfig,
-									research_budget: event.payload.researchBudget ?? { max_search_calls: 4, max_fetches: 4, max_tasks: 2, max_rounds: 2, max_model_calls: 15 },
+									research_budget: event.payload.researchBudget ?? { max_search_calls: 4, max_fetches: 4, max_tasks: 2, max_rounds: 1, max_model_calls: 12 },
 								}
 								: {
 									run_id: runId,
@@ -2621,7 +2621,7 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 			if (request.method === "GET" && pipelineMatch[2]) {
 				const id = decodeURIComponent(pipelineMatch[2]);
 				const row = await env.DB.prepare(`SELECT id, project_id, run_id, demand_revision, status, stage, error, created_at, updated_at,
-					decision_version, report_id, report_status, report_error_code
+					decision_version, report_id, report_status, report_error_code, candidates_found, models_found, evidence_found
 					FROM project_pipelines WHERE id = ?1 AND project_id = ?2`).bind(id, projectId).first<Record<string, unknown>>();
 				if (!row) return json({ error: "not_found" }, 404);
 				const stages = await env.DB.prepare("SELECT stage, status, started_at, finished_at, error_code FROM pipeline_stages WHERE pipeline_id = ?1 ORDER BY started_at, stage")
@@ -2630,6 +2630,7 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 					demand_revision: row.demand_revision, status: row.status, stage: row.stage, error: row.error,
 					decision_version: row.decision_version, report_id: row.report_id, report_status: row.report_status,
 					report_error_code: row.report_error_code,
+					candidates_found: row.candidates_found ?? 0, models_found: row.models_found ?? 0, evidence_found: row.evidence_found ?? 0,
 					download_path: row.report_status === "COMPLETED" && row.report_id ? `/api/projects/${encodeURIComponent(projectId)}/reports/${encodeURIComponent(String(row.report_id))}/download` : null,
 					stages: stages.results, created_at: row.created_at, updated_at: row.updated_at });
 			}

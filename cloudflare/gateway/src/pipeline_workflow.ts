@@ -99,6 +99,21 @@ export class ProcurementPipelineWorkflow extends WorkflowEntrypoint<Env, Pipelin
 			if (!researchStatus) throw new Error("RESEARCH_TIMEOUT");
 			if (researchStatus === "FAILED") throw new Error("RESEARCH_FAILED");
 			await step.do("freeze-spec-context", { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "2 minutes" }, async () => {
+				// What the research found is visible before the slower stages, so a
+				// visitor can see progress instead of a silent wait.
+				const found = await this.env.DB.prepare(`SELECT COUNT(*) AS candidates,
+					COUNT(DISTINCT COALESCE(p.model, c.product_id)) AS models
+					FROM project_candidates c LEFT JOIN intelligence_products p
+					  ON p.workspace_id = c.workspace_id AND p.id = c.product_id
+					WHERE c.workspace_id = 'default' AND c.project_id = ?1 AND c.last_seen_run_id = ?2`)
+					.bind(projectId, runId).first<{ candidates: number; models: number }>();
+				const evidence = await this.env.DB.prepare(`SELECT COUNT(DISTINCT e.evidence_id) AS evidence
+					FROM project_candidate_evidence e JOIN project_candidates c
+					  ON c.id = e.candidate_id AND c.workspace_id = e.workspace_id
+					WHERE c.workspace_id = 'default' AND c.project_id = ?1 AND c.last_seen_run_id = ?2`)
+					.bind(projectId, runId).first<{ evidence: number }>();
+				await this.env.DB.prepare(`UPDATE project_pipelines SET candidates_found = ?2, models_found = ?3, evidence_found = ?4, updated_at = ?5 WHERE id = ?1`)
+					.bind(pipelineId, found?.candidates ?? 0, found?.models ?? 0, evidence?.evidence ?? 0, new Date().toISOString()).run();
 				const already = await this.env.DB.prepare("SELECT sha256 FROM pipeline_snapshots WHERE pipeline_id = ?1 AND snapshot_type = 'SPEC_CONTEXT'")
 					.bind(pipelineId).first<{ sha256: string }>();
 				if (!already) {

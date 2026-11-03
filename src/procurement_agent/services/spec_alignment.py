@@ -91,6 +91,9 @@ def alignment_rules_version() -> str:
             "prompt": SYSTEM_PROMPT,
             "schema": AlignmentBatch.model_json_schema(),
             "aliases": {key: sorted(value) for key, value in APPROVED_ALIASES.items()},
+            # A wrong method label is corrected from the curated table, so the
+            # cached alignments of the older rule must not be reused.
+            "rule_version": "alias-repair-v1",
         }
     )
 
@@ -121,6 +124,28 @@ def _unit_conversion_is_safe(constraint: RequirementConstraint, claim: ProductAt
     if constraint_unit is None or claim_unit is None:
         return constraint.unit == claim.unit
     return constraint_unit.dimension == claim_unit.dimension
+
+
+def _aliased_alignment(
+    constraint: RequirementConstraint,
+    claim: ProductAttributeClaim,
+    claim_ids: Sequence[str],
+    proposal: AlignmentProposal,
+) -> SemanticAlignment:
+    """Keep a pairing the model proposed, with the curated method label."""
+    return SemanticAlignment(
+        constraint_id=proposal.constraint_id,
+        claim_ids=list(claim_ids),
+        status=AlignmentStatus.ALIGNED,
+        method=AlignmentMethod.APPROVED_ALIAS,
+        reason=(
+            f"The model paired these two as the same measurement and named the attribute as "
+            f"{constraint.attribute_key} against {claim.attribute_key}; the reviewed alias table "
+            "confirms that pair."
+        ),
+        dimension=proposal.dimension,
+        unit_conversion=proposal.unit_conversion,
+    )
 
 
 def canonical_alignment(
@@ -170,6 +195,11 @@ def canonical_alignment(
     claim = claims[known[0]]
     if proposal.method == AlignmentMethod.EXACT_ATTRIBUTE_KEY:
         if constraint.attribute_key != claim.attribute_key:
+            if _approved_pair(constraint.attribute_key, claim.attribute_key):
+                # The model believed these measure the same thing but labelled the
+                # pair wrongly. The curated alias table is the reviewed rule, so
+                # the pairing is kept with the correct method.
+                return _aliased_alignment(constraint, claim, known, proposal)
             return SemanticAlignment(
                 constraint_id=proposal.constraint_id,
                 claim_ids=known,

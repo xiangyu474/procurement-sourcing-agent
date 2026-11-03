@@ -153,6 +153,40 @@ def test_an_alias_pairing_that_is_not_approved_is_refused():
     assert alignment.status == AlignmentStatus.NOT_ALIGNED
 
 
+def test_a_wrong_method_label_is_repaired_from_the_curated_table():
+    """The model said "same measurement" but labelled the pair wrongly."""
+    alignment = canonical_alignment(
+        proposal(method=AlignmentMethod.EXACT_ATTRIBUTE_KEY),
+        constraint=constraint(),
+        claims={"clm1": typed_claim(attribute_key="video_output_resolution")},
+    )
+    assert alignment.status == AlignmentStatus.ALIGNED
+    assert alignment.method == AlignmentMethod.APPROVED_ALIAS
+    assert alignment.claim_ids == ["clm1"]
+    assert "alias table" in alignment.reason
+
+
+def test_a_wrong_method_label_is_not_repaired_outside_the_curated_table():
+    alignment = canonical_alignment(
+        proposal(method=AlignmentMethod.EXACT_ATTRIBUTE_KEY),
+        constraint=constraint(),
+        claims={"clm1": typed_claim(attribute_key="sensor_total_pixels")},
+    )
+    assert alignment.status == AlignmentStatus.NOT_ALIGNED
+    assert alignment.method != AlignmentMethod.APPROVED_ALIAS
+
+
+def test_the_model_may_still_refuse_a_pairing_the_curated_table_allows():
+    """A refusal is a semantic judgement and is not overridden by the code."""
+    alignment = canonical_alignment(
+        proposal(status=AlignmentStatus.NOT_ALIGNED, method=AlignmentMethod.LLM_PROPOSED_REVIEWED, reason="the source states the sensor size"),
+        constraint=constraint(),
+        claims={"clm1": typed_claim(attribute_key="video_output_resolution")},
+    )
+    assert alignment.status == AlignmentStatus.NOT_ALIGNED
+    assert alignment.claim_ids == ["clm1"]
+
+
 def test_rated_output_power_and_max_input_power_are_not_aliases():
     assert not _approved_pair("rated_output_power", "max_input_power")
     assert _approved_pair("max_input_power", "input_power")
