@@ -3448,11 +3448,11 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 			if (!evidence) return json({ error: "not_found" }, 404);
 			const snapshot = await env.BUCKET.get(String(evidence.snapshot_r2_key));
 			if (!snapshot) return json({ error: "evidence_snapshot_missing" }, 404);
-			const { snapshot_r2_key: _snapshotKey, ...publicEvidence } = evidence;
+			const { snapshot_r2_key: _snapshotKey, locator: _internalLocator, ...publicEvidence } = evidence;
 			const displayedExcerpt = evidenceDisplayExcerpt(typeof evidence.excerpt === "string" ? evidence.excerpt : null);
 			return json({
 				evidence: {
-					...(guestSessionId ? publicEvidence : evidence),
+					...publicEvidence,
 					excerpt: displayedExcerpt.text,
 					excerpt_status: displayedExcerpt.status,
 					content_date_hints: JSON.parse(String(evidence.content_date_hints_json ?? "[]")),

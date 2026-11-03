@@ -119,6 +119,7 @@ def main() -> int:
                 assert evidence["excerpt"] in raw_evidence
                 assert evidence["snapshot_text"] == raw_evidence
                 assert evidence["content_sha256"] == digest
+                assert "snapshot_r2_key" not in evidence and "locator" not in evidence
                 print("PASS: real local Worker routes, isolated D1/R2, auth, queued recovery, report activity, stage names and source-preserving excerpt")
         finally:
             if os.name == "nt":
