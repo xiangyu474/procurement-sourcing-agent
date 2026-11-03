@@ -17,15 +17,33 @@ const error = (code: string, status: number, retryAfter?: number) => Response.js
 	status, headers: { "cache-control": "no-store", ...(retryAfter === undefined ? {} : { "retry-after": String(retryAfter) }) },
 });
 
+function allowedOrigins(request: Request, env: GuestEnv): string[] {
+	const configured = (env.GUEST_PUBLIC_ORIGIN ?? "").split(",").map(value => value.trim()).filter(Boolean);
+	if (configured.length) return configured;
+	// Without a configured list, only the origin the request itself came from is
+	// accepted, which is the same-origin deployment of the public demo.
+	try {
+		return [new URL(request.url).origin];
+	} catch {
+		return [];
+	}
+}
+
 function originAllowed(request: Request, env: GuestEnv): boolean {
 	const origin = request.headers.get("origin");
 	if (!origin || origin === "null") return false;
-	try {
-		const expected = new URL(env.GUEST_PUBLIC_ORIGIN ?? request.url);
-		return expected.protocol === "https:" && origin === expected.origin;
-	} catch {
-		return false;
-	}
+	return allowedOrigins(request, env).some((value) => {
+		try {
+			const allowed = new URL(value);
+			// Only https origins are trusted; a plain http origin is accepted only
+			// for the local development proxy on loopback.
+			const trusted = allowed.protocol === "https:"
+				|| allowed.hostname === "localhost" || allowed.hostname === "127.0.0.1";
+			return trusted && allowed.origin === origin;
+		} catch {
+			return false;
+		}
+	});
 }
 
 function cookieValue(request: Request): string | null {

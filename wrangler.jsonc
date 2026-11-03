@@ -92,7 +92,7 @@
 		// Guest Session: the public demo identity. The signing secret and the
 		// operator token are Worker secrets, never variables.
 		"GUEST_SESSION_ENABLED": "true",
-		"GUEST_PUBLIC_ORIGIN": "https://procurement-sourcing-gateway.xiangyu474.workers.dev",
+		"GUEST_PUBLIC_ORIGIN": "https://procurement-sourcing-gateway.xiangyu474.workers.dev,http://localhost:5173,http://127.0.0.1:5173",
 		"GUEST_SESSION_GLOBAL_PER_HOUR": "60",
 		"GUEST_SESSION_IP_PER_HOUR": "10",
 		"GUEST_GLOBAL_REQUESTS_PER_MINUTE": "600",

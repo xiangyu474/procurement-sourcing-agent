@@ -175,6 +175,14 @@ describe("guest session and resource isolation", () => {
 			assert.equal(await status(await authorizeGuest(req(path, "POST", session), env as never)), 503, path);
 		}
 	});
+	it("accepts only the configured origins and the local proxy, not another site", async () => {
+		const { env } = setup();
+		env.GUEST_PUBLIC_ORIGIN = "https://demo.example.test,http://localhost:5173";
+		assert.equal(await status(await authorizeGuest(req("/api/session", "POST", "", "https://demo.example.test"), env as never)), 201);
+		assert.equal(await status(await authorizeGuest(req("/api/session", "POST", "", "http://localhost:5173"), env as never)), 201);
+		assert.equal(await status(await authorizeGuest(req("/api/session", "POST", "", "https://evil.test"), env as never)), 403);
+		assert.equal(await status(await authorizeGuest(req("/api/session", "POST", "", "http://notlocalhost.test"), env as never)), 403);
+	});
 	it("does not resurrect expired sessions or authorize a bearer token", async () => {
 		const { db, env } = setup();
 		const old = await create(env);
