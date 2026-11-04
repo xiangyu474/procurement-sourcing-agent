@@ -1419,7 +1419,10 @@ export class SourcingWorkflow extends WorkflowEntrypoint<Env, RunRequest> {
 					// happens when the container itself failed. The research
 					// budget lives in the container's memory, so a crashed
 					// instance has nothing to reset.
-					retries: { limit: mode === "SOURCING" && event.payload.pipelineId ? 0 : 2, delay: "10 seconds", backoff: "exponential" },
+					// A crashed container loses the research it had done, so one
+					// retry is allowed for a pipeline run: without it a single
+					// container restart would fail the whole visit.
+					retries: { limit: mode === "SOURCING" && event.payload.pipelineId ? 1 : 2, delay: "10 seconds", backoff: "exponential" },
 					timeout: "20 minutes",
 				},
 				async () => {
@@ -1454,7 +1457,7 @@ export class SourcingWorkflow extends WorkflowEntrypoint<Env, RunRequest> {
 									// constraints: with too little research the claims stay thin and
 									// every verdict falls back to UNKNOWN. A visitor may ask for a
 									// shorter run, but the default is the quality of the answer.
-									research_budget: event.payload.researchBudget ?? { max_search_calls: 6, max_fetches: 8, max_tasks: 3, max_rounds: 2, max_model_calls: 18 },
+									research_budget: event.payload.researchBudget ?? { max_search_calls: 5, max_fetches: 6, max_tasks: 2, max_rounds: 1, max_model_calls: 15 },
 								}
 								: {
 									run_id: runId,
@@ -2471,7 +2474,12 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 			if (eventMatch && request.method === "POST") {
 				const body = (await request.json()) as { stage: string; detail: string };
 				await appendEvent(env, eventMatch[1], body.stage, body.detail);
-				await updateRun(env, eventMatch[1], "RUNNING", body.stage);
+				// A late event from a container that is dying must never resurrect a
+				// run that already reached a terminal state.
+				await env.DB.prepare(
+					`UPDATE runs SET status = 'RUNNING', current_stage = ?2, updated_at = ?3
+					 WHERE id = ?1 AND status NOT IN ('FAILED', 'COMPLETED')`,
+				).bind(eventMatch[1], body.stage, new Date().toISOString()).run();
 				return json({ ok: true });
 			}
 
@@ -2484,7 +2492,10 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 				const key = `workspaces/default/projects/${artifactMatch[1]}/reports/${artifactMatch[1]}/${name}`;
 				const body = await request.arrayBuffer();
 				await env.BUCKET.put(key, body, { httpMetadata: { contentType } });
-				await updateRun(env, artifactMatch[1], "RUNNING", "REPORTING", key);
+				await env.DB.prepare(
+					`UPDATE runs SET status = 'RUNNING', current_stage = 'REPORTING', updated_at = ?2, artifact_key = ?3
+					 WHERE id = ?1 AND status NOT IN ('FAILED', 'COMPLETED')`,
+				).bind(artifactMatch[1], new Date().toISOString(), key).run();
 				return json({ ok: true, key, bytes: body.byteLength });
 			}
 
@@ -3459,7 +3470,7 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 			};
 			const durationSeconds = body.duration_seconds ?? 150;
 			const mode = body.mode ?? "SOURCING";
-			const researchBudget = body.research_budget ?? { max_search_calls: 6, max_fetches: 8, max_tasks: 3, max_rounds: 2, max_model_calls: 18 };
+			const researchBudget = body.research_budget ?? { max_search_calls: 5, max_fetches: 6, max_tasks: 2, max_rounds: 1, max_model_calls: 15 };
 			if (!["SPIKE", "SOURCING"].includes(mode)) return json({ error: "invalid_run_mode" }, 422);
 			if (
 				!Number.isInteger(researchBudget.max_search_calls) || researchBudget.max_search_calls < 1 || researchBudget.max_search_calls > 12 ||

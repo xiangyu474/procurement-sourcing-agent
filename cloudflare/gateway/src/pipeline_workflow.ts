@@ -94,7 +94,9 @@ export class ProcurementPipelineWorkflow extends WorkflowEntrypoint<Env, Pipelin
 					try { await (await this.env.WORKFLOW.get(runId)).status(); } catch { throw error; }
 				}
 			});
-			for (let i = 0; i < 180; i++) {
+			// The research step itself stops after twenty minutes. Waiting longer
+			// here only leaves a visitor looking at a task that cannot finish.
+			for (let i = 0; i < 70; i++) {
 				const state = await step.do(`read-research-${i}`, { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "30 seconds" }, async () => {
 					const row = await this.env.DB.prepare("SELECT status FROM runs WHERE id = ?1 AND project_id = ?2").bind(runId, projectId).first<{ status: string }>();
 					return row?.status ?? "MISSING";
