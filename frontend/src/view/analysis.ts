@@ -12,6 +12,7 @@ import type {
 import {
 	MIXED_VERDICT,
 	checkViews,
+	distinctByText,
 	httpUrl,
 	technicalView,
 	type CandidateRowView,
@@ -58,12 +59,16 @@ export function decisionSummary(decision: AnalysisDecision | null): DecisionSumm
 	return {
 		code: display.summary_code,
 		summary: display.summary_zh,
-		gaps: display.gaps
-			.filter((gap) => Boolean(gap.text_zh))
-			.map((gap) => ({ text: gap.text_zh as string, importance: gap.importance, evidenceIds: gap.evidence_ids })),
-		nextActions: display.next_actions
-			.filter((action) => Boolean(action.text_zh))
-			.map((action) => ({ text: action.text_zh as string })),
+		gaps: distinctByText(
+			display.gaps
+				.filter((gap) => Boolean(gap.text_zh))
+				.map((gap) => ({ text: gap.text_zh as string, importance: gap.importance, evidenceIds: gap.evidence_ids })),
+		),
+		nextActions: distinctByText(
+			display.next_actions
+				.filter((action) => Boolean(action.text_zh))
+				.map((action) => ({ text: action.text_zh as string })),
+		),
 		untranslated: {
 			rationale: display.untranslated_originals.rationale,
 			gapCount: display.untranslated_originals.gap_count,
@@ -278,6 +283,11 @@ export function buildAnalysisRows(analysis: Analysis): CandidateRowView[] {
 		const groupStage = memberStages.size === 1 ? members[0].stage : MIXED_STAGE;
 		const memberCodes = new Set(members.map((member) => member.decision?.code ?? ""));
 		const groupSummary = memberCodes.size === 1 ? members[0].decision : null;
+		// One supplier can offer the same model more than once. The row counts the
+		// suppliers, not the candidate lines.
+		const supplierCount = new Set(
+			bucket.candidates.map((candidate) => candidate.supplier_id ?? candidate.supplier_name ?? candidate.candidate_id),
+		).size;
 
 		const groupEvidence = members.flatMap((member) =>
 			(member.evidenceId ? [{ id: member.evidenceId, title: member.sourceTitle || "来源" }] : []).concat(member.otherEvidence),
@@ -286,8 +296,8 @@ export function buildAnalysisRows(analysis: Analysis): CandidateRowView[] {
 
 		rows.push({
 			id: key,
-			supplier: members.length === 1 ? members[0].supplier : `${members.length} 家供应商`,
-			supplierCount: members.length,
+			supplier: supplierCount === 1 ? members[0].supplier : `${supplierCount} 家供应商`,
+			supplierCount,
 			model: bucket.model,
 			stage: groupStage,
 			technical,
@@ -315,9 +325,11 @@ export function buildAnalysisRows(analysis: Analysis): CandidateRowView[] {
 }
 
 /** The counts the backend published for this run. */
-export function analysisSummaryLine(summary: AnalysisSummary): string {
+export function analysisSummaryLine(summary: AnalysisSummary, modelNames: number): string {
 	const parts: string[] = [];
-	parts.push(`${summary.distinct_models} 个型号`);
+	// The number of models the buyer can see. The backend counts product records,
+	// so one model name can be counted twice.
+	parts.push(`${modelNames} 个型号`);
 	parts.push(`${summary.distinct_suppliers} 家供应来源`);
 	const verdicts = verdictText(summary.by_verdict);
 	if (verdicts) parts.push(`核验 ${summary.assessments} 条：${verdicts}`);

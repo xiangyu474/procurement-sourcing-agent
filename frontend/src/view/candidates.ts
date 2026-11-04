@@ -31,6 +31,16 @@ export type DecisionSummary = {
 	untranslated: { rationale: boolean; gapCount: number; nextActionCount: number } | null;
 };
 
+/** The same sentence for several constraints is shown once. */
+export function distinctByText<T extends { text: string }>(rows: T[]): T[] {
+	const seen = new Set<string>();
+	return rows.filter((row) => {
+		if (seen.has(row.text)) return false;
+		seen.add(row.text);
+		return true;
+	});
+}
+
 export type CandidateRowView = {
 	id: string;
 	supplier: string;

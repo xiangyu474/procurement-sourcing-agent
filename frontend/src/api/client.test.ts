@@ -281,7 +281,8 @@ describe("ApiClient", () => {
 			}),
 		);
 		const analysis = await client(fetchImpl).getAnalysis("p1", { runId: "run-1" });
-		expect(String(fetchImpl.mock.calls[0][0])).toBe("http://gateway.test/api/projects/p1/analysis?run_id=run-1");
+		const [analysisUrl] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+		expect(analysisUrl).toBe("http://gateway.test/api/projects/p1/analysis?run_id=run-1");
 		expect(analysis.summary.distinct_models).toBe(1);
 		expect(analysis.summary.by_verdict.PASS).toBe(1);
 		expect(analysis.decisions[0].display?.summary_zh).toBe("核验通过。");
@@ -293,8 +294,9 @@ describe("ApiClient", () => {
 		const fetchImpl = vi.fn(async () => jsonResponse({ project_id: "p1", pipeline_id: "pipe-1", run_id: "run-1", demand_revision: 1, research_status: "COMPLETED" }));
 		const api = client(fetchImpl);
 		await api.getAnalysis("p1", { pipelineId: "pipe-1" });
-		expect(String(fetchImpl.mock.calls[0][0])).toContain("pipeline_id=pipe-1");
-		expect(String(fetchImpl.mock.calls[0][0])).not.toContain("run_id");
+		const [pipelineUrl] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+		expect(pipelineUrl).toContain("pipeline_id=pipe-1");
+		expect(pipelineUrl).not.toContain("run_id");
 	});
 
 	it("lists the tasks of a project so a refresh can find the running one", async () => {
@@ -306,7 +308,8 @@ describe("ApiClient", () => {
 			}),
 		);
 		const items = await client(fetchImpl).listProjectPipelines("p1", { active: true, limit: 20 });
-		expect(String(fetchImpl.mock.calls[0][0])).toBe("http://gateway.test/api/projects/p1/pipelines?active=true&limit=20");
+		const [listUrl] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+		expect(listUrl).toBe("http://gateway.test/api/projects/p1/pipelines?active=true&limit=20");
 		expect(items[0].pipeline_id).toBe("pipe-1");
 		expect(items[0].report_status).toBe("NOT_STARTED");
 	});

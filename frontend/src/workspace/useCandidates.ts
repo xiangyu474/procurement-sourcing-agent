@@ -86,7 +86,8 @@ export function useCandidates(
 				if (signal.aborted) return;
 				const built = buildAnalysisRows(analysis);
 				setRows(built);
-				setSummaryLine(analysisSummaryLine(analysis.summary));
+				const modelNames = new Set(built.map((row) => row.model)).size;
+				setSummaryLine(analysisSummaryLine(analysis.summary, modelNames));
 				const recommendation = recommendationText(analysis.summary.by_recommendation);
 				setRecommendationLine(recommendation || null);
 				setWarnings(analysis.summary.coverage_warnings);

@@ -13,7 +13,7 @@ import {
 function candidate(patch: Partial<AnalysisCandidate> & Pick<AnalysisCandidate, "candidate_id">): AnalysisCandidate {
 	return {
 		requirement_id: "r1",
-		supplier_id: "s1",
+		supplier_id: `s-${patch.candidate_id}`,
 		product_id: "p1",
 		supplier_name: "供应商",
 		product_model: "型号A",
@@ -254,7 +254,7 @@ describe("analysis view", () => {
 			by_recommendation: { SHORTLIST: 22, INVESTIGATE: 1 },
 			evidence: 29,
 			coverage_warnings: [],
-		});
+		}, 3);
 		expect(line).toContain("3 个型号");
 		expect(line).toContain("23 家供应来源");
 		expect(line).toContain("满足 22");
