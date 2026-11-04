@@ -22,7 +22,11 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import ValidationError
 
-from procurement_agent.domain.attributes import attribute_terms, quote_names_the_quantity
+from procurement_agent.domain.attributes import (
+    attribute_terms,
+    canonical_attribute_key,
+    quote_names_the_quantity,
+)
 from procurement_agent.domain.requirements import ParseStatus, ValueType
 from procurement_agent.domain.sourcing import ClaimDraft, ClaimStatus
 from procurement_agent.domain.spec_alignment import (
@@ -259,8 +263,10 @@ def _value_is_quoted(value: Any, value_type: ValueType, unit: str | None, quote:
 
 
 def _canonical_attribute_key(value: str) -> str:
-    key = "_".join(part for part in "".join(ch if ch.isalnum() else " " for ch in value.casefold()).split())
-    return key[:120] or "attribute"
+    # The reviewed alias table writes one measurement under one key, so a claim
+    # that the model typed as "video_output_resolution" meets a requirement
+    # that says "output_resolution" instead of staying unpaired.
+    return canonical_attribute_key(value)
 
 
 def type_claims(

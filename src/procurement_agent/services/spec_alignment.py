@@ -29,6 +29,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import ValidationError
 
+from procurement_agent.domain.attributes import APPROVED_ALIASES as APPROVED_ALIAS_GROUPS
 from procurement_agent.domain.requirements import RequirementConstraint
 from procurement_agent.domain.spec_alignment import (
     AlignmentBatch,
@@ -41,23 +42,9 @@ from procurement_agent.domain.spec_alignment import (
 from procurement_agent.domain.units import unit_spec
 from procurement_agent.infra.llm import json_object_from_text, stream_tool_call
 
-# Attribute keys that are known to mean the same measurement. The groups are
-# small and reviewed by hand: a group only holds names of the same quantity.
-# "max_input_power" and "rated_output_power" are in different groups on
-# purpose, because they are not the same measurement.
-APPROVED_ALIASES: dict[str, frozenset[str]] = {
-    "output_resolution": frozenset(
-        {"output_resolution", "image_output_resolution", "video_output_resolution", "resolution", "image_resolution"}
-    ),
-    "rated_output_power": frozenset({"rated_output_power", "output_power"}),
-    "operating_temperature": frozenset(
-        {"operating_temperature", "working_temperature", "operating_temperature_range"}
-    ),
-    "ingress_rating": frozenset({"ingress_rating", "protection_rating", "ip_rating"}),
-    "supported_protocols": frozenset({"supported_protocols", "protocol_support", "protocols"}),
-    "lens_focal_length": frozenset({"lens_focal_length", "focal_length"}),
-    "max_input_power": frozenset({"max_input_power", "input_power"}),
-}
+# The reviewed alias groups live in the domain, so the typing and the alignment
+# read the same table.
+APPROVED_ALIASES: dict[str, frozenset[str]] = APPROVED_ALIAS_GROUPS
 
 
 def _alias_group_text() -> str:

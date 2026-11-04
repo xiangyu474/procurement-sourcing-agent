@@ -97,3 +97,38 @@ def quote_names_the_quantity(quote: str, terms: list[str] | tuple[str, ...]) -> 
         if candidate and candidate in folded:
             return True
     return False
+
+
+# Attribute keys that are known to mean the same measurement. The groups are
+# small and reviewed by hand: a group only holds names of the same quantity.
+# "max_input_power" and "rated_output_power" are in different groups on
+# purpose, because they are not the same measurement.
+APPROVED_ALIASES: dict[str, frozenset[str]] = {
+    "output_resolution": frozenset(
+        {"output_resolution", "image_output_resolution", "video_output_resolution", "resolution", "image_resolution"}
+    ),
+    "rated_output_power": frozenset({"rated_output_power", "output_power"}),
+    "operating_temperature": frozenset(
+        {"operating_temperature", "working_temperature", "operating_temperature_range"}
+    ),
+    "ingress_rating": frozenset({"ingress_rating", "protection_rating", "ip_rating"}),
+    "supported_protocols": frozenset({"supported_protocols", "protocol_support", "protocols"}),
+    "lens_focal_length": frozenset({"lens_focal_length", "focal_length"}),
+    "max_input_power": frozenset({"max_input_power", "input_power"}),
+}
+
+_ALIAS_CANONICAL: dict[str, str] = {
+    member: canonical for canonical, members in APPROVED_ALIASES.items() for member in members
+}
+
+
+def canonical_attribute_key(attribute_key: str) -> str:
+    """Write one attribute key in the canonical spelling of its group.
+
+    Two names of the same measurement are one measurement, so a claim that the
+    model typed as "video_output_resolution" and a requirement that says
+    "output_resolution" are the same quantity and must meet each other. A key
+    that is not in a reviewed group is left exactly as it is.
+    """
+    key = "_".join(part for part in "".join(ch if ch.isalnum() else " " for ch in attribute_key.casefold()).split())
+    return _ALIAS_CANONICAL.get(key, key[:120] or "attribute")
