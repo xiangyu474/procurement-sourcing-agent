@@ -52,7 +52,7 @@ export function CandidateTable(props: {
 								setOpenGroup(openGroup === row.id ? null : row.id);
 							}}
 						>
-							展开 {row.groupCount} 家
+							展开来源
 						</button>
 					) : null}
 					</span>

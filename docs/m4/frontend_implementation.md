@@ -1,0 +1,139 @@
+# M4 前端实现说明
+
+这份文件说明前端从哪个接口取哪块数据、页面上每个结论从哪来、前端刻意不做哪些事、哪些已经在真实网关上验过。接口事实以 `docs/m4/backend_contract_response.md` 为准。
+
+代码位置：`frontend/src/`。表格里的接口名就是代码里写的那个路径。
+
+## 1. 前端调用哪些接口
+
+| 接口 | 什么时候调 | 取什么 | 页面上对应哪一块 |
+| --- | --- | --- | --- |
+| `POST /api/session` | 打开页面 | `expires_at` | 不直接显示，只决定访客身份是否可用 |
+| `GET /api/session` | 标签页重新可见 | `expires_at` | 同上 |
+| `GET /api/projects?limit=50` | 打开页面 | `id`、`title`、`demand_revision`、`analysis_version`、`latest_run.status` | 左侧项目栏 |
+| `POST /api/projects` | 点「创建」 | `project_id` | 左侧项目栏 |
+| `GET /api/projects/{id}` | 选中项目 | `sources[]`、`demand_revision`、`analysis_version`、`history_availability` | 需求区、历史导入按钮 |
+| `GET /api/projects/{id}/requirement-text` | 选中项目 | `text`、`revision` | 需求文本框 |
+| `POST /api/projects/{id}/requirement-text` | 点「开始分析」且文字改过 | `revision` | 需求区 |
+| `POST /api/projects/{id}/upload-sessions` | 上传 PPTX 或 XLSX | `source_id`、`revision` | 「已接收」一行 |
+| `POST /api/projects/{id}/requirement-compile` | 需求有改动时 | `compile_id` | 「正在整理需求」 |
+| `GET /api/projects/{id}/requirement-compile/{compile_id}` | 轮询整理结果 | `status`、`error` | 「正在整理需求」「需求整理失败。」 |
+| `GET /api/projects/{id}/requirements` | 整理完成后 | `compilation.requirements`、`compilation.issues`、`compilation.unstructured_requirements` | 「已整理 N 条采购项」和整理提示 |
+| `POST /api/projects/{id}/history-imports` | 点「导入历史数据」 | `row_count`、`is_synthetic` | 「已导入历史数据，N 行」 |
+| `POST /api/projects/{id}/pipeline` | 点「开始分析」 | `pipeline_id`、`run_id`、`status`、`reused` | 进度行 |
+| `GET /api/projects/{id}/pipeline/{pipeline_id}` | 每 3 秒轮询 | `status`、`stage`、`stages[].error_code`、`report_status`、`error` | 进度行、失败原因 |
+| `GET /api/projects/{id}/pipelines?active=true&limit=20` | 选中项目、刷新之后 | `pipelines[]` | 找回上一次任务 |
+| `GET /api/projects/{id}/analysis?run_id=` | 运行结束后 | 见第 2 节 | 结果表、详情栏、摘要行 |
+| `GET /api/projects/{id}/runs` | 选中项目 | `runs[]` | 「过程记录」里的历史运行 |
+| `GET /api/runs/{id}` | 轮询运行 | `status`、`current_stage`、`created_at` | 「寻源已结束」等一行 |
+| `GET /api/runs/{id}/events` | 轮询运行 | `events[].stage`、`created_at` | 「过程记录」 |
+| `GET /api/projects/{id}/reports` | 分析完成后 | `reports[]` | 下载按钮与报告状态 |
+| `GET /api/projects/{id}/reports/{report_id}` | 报告生成中 | `status`、`download_path` | 「正在生成报告」 |
+| `GET /api/projects/{id}/reports/{report_id}/download` | 点「下载这一版」 | 文件字节 | 下载的 DOCX |
+| `POST /api/projects/{id}/reports` | 报告失败后点「重新生成」 | `report_id`、`status` | 报告状态 |
+| `GET /api/evidence/{id}` | 点「查看这条来源」 | `title`、`source_url`、`excerpt`、`snapshot_text` | 详情栏里的来源快照 |
+
+`frontend/src/api/client.ts` 里还留着 `listCandidates`、`listAssessments`、`listDecisions`、`getJobStatus`、`getStopReason`、`getResearchSummary`、`startRun` 七个方法。应用不再调用它们，项目级 `/spec-assessments`、`/decisions` 不再是页面的数据来源。
+
+## 2. 结果区的每个数字从哪来
+
+结果区只读 `GET /api/projects/{id}/analysis?run_id=` 这一个接口（点「查看这条来源」时另读 `GET /api/evidence/{id}`）。`?pipeline_id=` 与 `?run_id=` 二选一，前端用 `run_id`，因为「过程记录」里切换历史运行时换的就是运行 id。
+
+| 页面上写的 | 取自 |
+| --- | --- |
+| N 个型号 | 前端按页面上看得见的型号名去重。不是 `summary.distinct_models`，原因见第 8 节 |
+| N 家供应来源 | `summary.distinct_suppliers` |
+| 核验 N 条：满足 N · 不满足 N · 还不能判断 N | `summary.assessments` 与 `summary.by_verdict`，`PASS`/`FAIL`/`UNKNOWN` 依次显示为满足、不满足、还不能判断 |
+| 建议询价 N · 待补证 N · 已排除 N | `summary.by_recommendation`，`SHORTLIST`/`INVESTIGATE`/`EXCLUDE` 依次对应 |
+| N 份证据 | `summary.evidence` |
+| 覆盖提示 | `summary.coverage_warnings[]`，后端给的中文，原样显示 |
+| 型号 | `candidates[].product_model`，按 `requirement_id` 与型号名分组 |
+| N 家供应商 | 该组内 `supplier_id` 去重后的数量。只有一家时显示供应商名 |
+| 阶段 | `decisions[]` 的建议档位 |
+| 技术 | `assessments[].hard_spec_overall` |
+| 结论摘要 | `decisions[].display.summary_zh` |
+| 还差什么 | `decisions[].display.gaps[].text_zh`，同一句话只显示一次 |
+| 下一步 | `decisions[].display.next_actions[].text_zh` |
+| 还有原始信息待核对 | `decisions[].display.untranslated_originals` |
+| 判断句 | `assessments[].checks[]` 的 `constraint_id`、`status`、`reason_code`、`operation`、`normalized_actual`、`normalized_required`、`unit`、`evidence_ids` |
+| 来源与摘录 | `evidence[]` 的 `title`、`url`、`quote` |
+
+## 3. 前端不做的事
+
+**不重算结论。** 技术结论、价格口径、节支、建议档位都来自后端。前端唯一的加工是分组和去重，不产生新的判定。
+
+**不翻译原始文本。** `decisions[].rationale`、`decisions[].gaps[]`、`decisions[].next_actions[]` 是英文自由文本，后端没有逐条翻译。前端只显示 `display.*`，并按 `untranslated_originals` 提示还有多少原始内容没翻译。
+
+**不展示内部字段。** 页面上不出现 `r2_key`、`normalized_r2_key`、`snapshot_r2_key`、`locator`、`content_sha256`、`claim_ids`、`workflow_id`、`job_id`、内部阶段名（`SUPERVISOR:` 一类）和 `metrics` 里的 token 数与搜索次数。运行编号只出现在「过程记录」里。
+
+**不在浏览器里存凭证。** 生产构建不带 Bearer。凭证只存在于开发代理（`frontend/proxyAuth.ts`），浏览器包不引用这个模块。访客身份只有 Worker 签发的 HttpOnly Cookie。
+
+## 4. 按型号展示的口径
+
+结果表的一行是一个「需求 × 型号」。同一型号的多个供应来源收在这一行里，点「展开来源」才展开，不平铺成多行。这与 `docs/expected_behavior.md` 第 6 节「技术核验的最小单位是需求 × 型号」一致。
+
+型号组里的两个结论来自不同粒度：
+
+- **技术结论**取型号级核验。同一型号的各候选共享一条结论，前端用 `assessments[].product_model_ref` 关联。
+- **建议档位**按候选给定。`decisions[]` 带 `product_candidate_id`，同一型号下可能有「建议询价」也有「已排除」。
+
+所以档位不一致时前端不合并：该行显示「结论不一致」，展开后逐个供应来源显示各自的档位。一致时直接显示该档位。
+
+「建议询价」只在四个条件同时成立时出现：`accepted === true`、`recommendation === "SHORTLIST"`、`technical_verdict === "VERIFIED_PASS"`、`hard_spec_overall === "PASS"`。少一个就不显示。
+
+## 5. 会话怎么建立
+
+`frontend/src/session/useGuestSession.ts` 在运行时探测，不依赖构建环境变量：
+
+1. 打开页面发 `POST /api/session`。201 表示访客通道可用。
+2. 404 表示当前是运维通道（本地开发代理带了 Bearer），前端直接放行。
+3. 其他错误码显示一句中文。
+
+`VITE_GUEST_SESSION=0` 可以完全关掉探测。
+
+会话失效（401 `session_required` 或 `session_expired`）时，`frontend/src/api/client.ts` 自动重建一次会话并重试该请求一次，只重试一次。标签页重新可见时读一次 `GET /api/session`，401 就重建一次。
+
+## 6. 价格四行
+
+价格来自 `price_contexts[]`，按 `requirement_id` 关联。前端不自己算价格，也不自己算节支。
+
+| 页面上的名字 | 取自 |
+| --- | --- |
+| 计划预算 | `budget` 加 `budget_currency`、`budget_unit` |
+| 历史成交价 | `findings[]` 里 `lowest_basis` 为 `HISTORICAL_TRANSACTION` 的 `lowest_value` |
+| 公网参考价 | `findings[]` 里 `lowest_basis` 为 `PUBLIC_REFERENCE` 的 `lowest_value` |
+| 正式报价 | `findings[]` 里 `lowest_basis` 为 `FORMAL_QUOTATION` 的 `lowest_value` |
+
+`history_scope` 是 `TABLE_OVERVIEW`，或者 `overview_is_not_a_baseline` 为 true 时，界面上不出现「历史价」和「节支」，也不展示全表数字。`statistics` 只用来给历史成交价补货币和条数。
+
+## 7. 验收分级
+
+| 级别 | 怎么跑 | 能证明什么 |
+| --- | --- | --- |
+| 夹具 | `npm run e2e`，`frontend/e2e/fixture.ts` 拦截 `**/api/**` | 前端按发布出来的形状渲染。不证明公开链路 |
+| 真实浏览器 + 真实网关 | 本地构建，一个把 `/api` 转发到公开网关的同源代理 | 接口对得上，页面读的是真数据 |
+| 公开地址 | `https://procurement-sourcing-gateway.xiangyu474.workers.dev` | 评委走的那条链路 |
+
+已经在真实浏览器和真实网关上验过的（2026-11-04）：
+
+- 访客会话：页面打开无 401、无错误框。另一个访客读同一个项目与同一份分析都得到 404，项目列表为空。
+- 一次点击：建项目 → 填需求 → 点「开始分析」，进度依次是「正在整理需求」「正在寻找供应商」「正在核对技术与价格」「正在整理采购建议」「正在生成报告」「已完成」。没有 401。
+- 分析接口：结果表、判定分布、型号分组、中文摘要、价格口径都来自 `/analysis`。刷新之后仍是同一个冻结版本。
+- DOCX：点「下载这一版」得到 45,483 字节，文件名带项目名与运行时间。
+- 失败路径：任务失败时显示「这次分析没有完成，可以再试一次。」，不显示结果，不显示下载按钮，「再次分析」可点。
+- 页面正文没有 `r2_key`、内部 locator、内部阶段名和 token 数。
+
+还没有验的：
+
+- **公开地址上的完整流程。** 上面的验收跑在本地构建上。PR #5 合并并部署后要在公开地址上再跑一遍同一条链路。
+- **寻源质量。** 上面那次成功分析的 22 条判定全是「还不能判断」：需求文字在命令行里被编码损坏，模型没能对齐指标。这证明接口和展示对得上，不证明寻源质量。寻源质量的证据是后端自己的验收（22 条 PASS/SHORTLIST 加 1 条 UNKNOWN）。
+
+## 8. 已知差距
+
+**「计划预算」与「计划单价」共用一个值。** 容器里取的是 `planned_unit_price or planned_total_budget`，接口只给一个 `budget`。前端现在一律写「计划预算」，遇到实际是单价的需求会误导买家。等后端给 `budget_kind`，或者前端改用 `requirements[].planned_total_budget` 与 `requirements[].planned_unit_price` 判断。写在 `docs/m4/backend_contract_response.md` 第 6 节。
+
+**`summary.models[]` 按产品记录分组。** 同一个型号名挂在两个产品记录下会被算成两个型号，2026-11-04 的实跑就是这种情况：22 条候选只有一个型号名，后端给 `distinct_models=2`。前端因此显示页面上看得见的型号名个数，没有直接用 `distinct_models`。同一个原因让「只找到一个型号」的覆盖提示漏掉。
+
+**访客不能重试报告。** `POST /api/projects/{id}/pipeline/{pipeline_id}/report` 与 `POST /api/projects/{id}/reports` 对访客返回 503。前端在访客模式下点「重新生成」会得到一句「这次报告没有生成，暂时不能重新生成。」
+
+**契约缺口清单**在 `docs/m4/backend_contract_response.md` 第 6 节，不在这份文件里重复。

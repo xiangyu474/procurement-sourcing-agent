@@ -225,7 +225,7 @@ test("known case hides internal wording and groups identical models", async ({ p
 	await page.goto("/");
 	await page.getByRole("button", { name: /M3 cloud acceptance/ }).click();
 	await expect(page.getByText("已完成")).toBeVisible();
-	await expect(page.getByRole("button", { name: "展开 5 家" })).toBeVisible();
+	await expect(page.getByRole("button", { name: "展开来源" })).toBeVisible();
 	await page.getByRole("row", { name: /IPS05-R10-OIA4/ }).click();
 	const fail = page.getByRole("complementary", { name: "所选型号" });
 	await expect(fail).toContainText("已排除");
