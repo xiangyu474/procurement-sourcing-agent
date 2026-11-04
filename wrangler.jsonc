@@ -4,6 +4,12 @@
 	"main": "cloudflare/gateway/src/index.ts",
 	"compatibility_date": "2026-10-13",
 	"compatibility_flags": ["nodejs_compat"],
+	// The public demo is served from this Worker, so the page and the API
+	// share one origin and the guest session cookie works without a login.
+	"assets": {
+		"directory": "frontend/dist",
+		"not_found_handling": "single-page-application"
+	},
 	"observability": {
 		"enabled": true
 	},
