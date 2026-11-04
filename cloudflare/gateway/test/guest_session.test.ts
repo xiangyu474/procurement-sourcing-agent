@@ -167,11 +167,13 @@ describe("guest session and resource isolation", () => {
 		const session = await create(env);
 		db.prepare("INSERT INTO projects (id, created_at, session_id) VALUES (?, ?, ?)").run("p1", "2026", session.split("=")[1].split(".")[0]);
 		for (const path of ["/api/projects", "/api/projects/p1/requirement-text", "/api/projects/p1/upload-sessions",
-			"/api/projects/p1/requirement-compile", "/api/projects/p1/history-imports", "/api/projects/p1/pipeline"]) {
+			"/api/projects/p1/requirement-compile", "/api/projects/p1/history-imports", "/api/projects/p1/pipeline",
+			// A visitor may regenerate a report that failed; it never restarts the analysis.
+			"/api/projects/p1/pipeline/p1/report"]) {
 			assert.equal(await status(await authorizeGuest(req(path, "POST", session), env as never)), 200, path);
 		}
 		for (const path of ["/api/projects/p1/runs", "/api/projects/p1/spec-assessments", "/api/projects/p1/decisions",
-			"/api/projects/p1/reports", "/api/projects/p1/pipeline/p1/report"]) {
+			"/api/projects/p1/reports"]) {
 			assert.equal(await status(await authorizeGuest(req(path, "POST", session), env as never)), 503, path);
 		}
 	});

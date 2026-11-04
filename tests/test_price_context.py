@@ -164,3 +164,23 @@ def test_the_history_and_the_budget_report_a_saving():
     assert historical.lowest_value == "88.50"
     assert historical.saving == "11.5"
     assert historical.saving_percent == "11.5"
+
+
+def test_the_planned_budget_says_whether_it_is_a_unit_price_or_a_total():
+    unit = build_price_context(
+        requirement=requirement(
+            planned_unit_price=PlannedAmount(kind="PLANNED_PRICE", value="500", currency="CNY", unit="元/套", source_ref="text:1", source_quote="500")
+        ),
+        transactions=[transaction()],
+    )
+    assert unit.budget_kind == "PLANNED_UNIT_PRICE"
+    total = build_price_context(
+        requirement=requirement(
+            planned_unit_price=None,
+            planned_total_budget=PlannedAmount(kind="PLANNED_BUDGET", value="5000", currency="CNY", unit="元", source_ref="text:1", source_quote="5000"),
+        ),
+        transactions=[transaction()],
+    )
+    assert total.budget_kind == "PLANNED_TOTAL_BUDGET"
+    plain = build_price_context(requirement=requirement(planned_unit_price=None), transactions=[transaction()])
+    assert plain.budget_kind is None

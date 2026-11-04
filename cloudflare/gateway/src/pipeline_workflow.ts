@@ -5,6 +5,7 @@ import { recordPipelineStage, sha256, storePipelineSnapshot } from "./pipeline_s
 import { buildFinalContext } from "./pipeline_final";
 import { startPipelineReport } from "./pipeline_report";
 import { releaseGuestAdmission } from "./guest_admission";
+import { containerReasonCode, stageErrorCode } from "./stage_error";
 
 export interface PipelineRequest { pipelineId: string; projectId: string; runId: string; probeOnly?: boolean; researchBudget?: { max_search_calls: number; max_fetches: number; max_tasks: number; max_rounds: number; max_model_calls: number } }
 interface PipelineRow { id: string; run_id: string; demand_revision: number; history_dataset_id: string | null; history_r2_key: string | null }
@@ -32,7 +33,12 @@ async function callContainer(env: Env, path: string, payload: Record<string, unk
 	const response = await container.fetch(new Request(`http://container${path}`, {
 		method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload),
 	}));
-	if (!response.ok) throw new Error("STAGE_SERVICE_ERROR");
+	if (!response.ok) {
+		const body = await response.text().catch(() => "");
+		const code = containerReasonCode(body) ?? "STAGE_SERVICE_ERROR";
+		console.error("container stage failed", path, response.status, code, body.slice(0, 500));
+		throw new Error(`${code}:HTTP_${response.status}`);
+	}
 	return await response.json() as { status?: string; assessments?: number; decisions?: number };
 }
 function runtime(env: Env) {
@@ -219,12 +225,14 @@ export class ProcurementPipelineWorkflow extends WorkflowEntrypoint<Env, Pipelin
 		} catch (error) {
 			console.error("pipeline failed", pipelineId, activeStage, error);
 			if (analysisFrozen) return { status: researchStatus === "PARTIAL" ? "PARTIAL" : "COMPLETED", pipeline_id: pipelineId, run_id: runId, report_error: "REPORT_START_FAILED" };
+			// The stage keeps the reason; the task keeps the public failure code.
+			const code = stageErrorCode(error);
 			await step.do("record-pipeline-failure", { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "1 minute" }, async () => {
-				await recordPipelineStage(this.env.DB, pipelineId, activeStage, "FAILED", "PIPELINE_STAGE_FAILED");
+				await recordPipelineStage(this.env.DB, pipelineId, activeStage, "FAILED", code);
 				await update(this.env.DB, pipelineId, "FAILED", activeStage, "PIPELINE_STAGE_FAILED");
 				await releaseGuestAdmission(this.env.DB, pipelineId, "PIPELINE");
 			});
-			return { status: "FAILED", pipeline_id: pipelineId, stage: activeStage, error: "PIPELINE_STAGE_FAILED" };
+			return { status: "FAILED", pipeline_id: pipelineId, stage: activeStage, error: "PIPELINE_STAGE_FAILED", error_code: code };
 		}
 	}
 }

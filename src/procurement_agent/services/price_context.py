@@ -45,12 +45,23 @@ class PriceContext(BaseModel):
     budget_currency: str | None = None
     budget_unit: str | None = None
     budget_tax_basis: TaxBasis = TaxBasis.UNKNOWN
+    # Whether the planned budget is a unit price or the total of the line.
+    budget_kind: str | None = None
     history: HistoryAnalysis
     history_overview: HistoryAnalysis | None = None
     history_scope: HistoryScope = HistoryScope.NONE
     fused_groups: list[FusedGroup] = Field(default_factory=list)
     findings: list[PriceFinding] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+
+
+def budget_kind(requirement: Requirement) -> str | None:
+    """Say whether the planned budget is a unit price or the total."""
+    if requirement.planned_unit_price is not None:
+        return "PLANNED_UNIT_PRICE"
+    if requirement.planned_total_budget is not None:
+        return "PLANNED_TOTAL_BUDGET"
+    return None
 
 
 def budget_observation(requirement: Requirement) -> PriceObservation | None:
@@ -152,6 +163,7 @@ def build_price_context(
         budget_currency=budget.currency if budget is not None else None,
         budget_unit=budget.unit if budget is not None else None,
         budget_tax_basis=budget.tax_basis if budget is not None else TaxBasis.UNKNOWN,
+        budget_kind=budget_kind(requirement),
         history=history,
         history_overview=overview,
         history_scope=scope.scope,
@@ -173,6 +185,7 @@ def context_summary(context: PriceContext) -> dict[str, Any]:
         "history_overview_is_not_a_baseline": context.history_scope == HistoryScope.TABLE_OVERVIEW,
         "distinct_history_prices": context.history.statistics.count if context.history.statistics else 0,
         "budget": context.budget_value,
+        "budget_kind": context.budget_kind,
         "findings": [
             {
                 "basis": finding.lowest_basis.value if finding.lowest_basis else None,

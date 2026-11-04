@@ -12,7 +12,7 @@ export interface GuestTaskRequest {
 	sessionId: string;
 	projectId: string;
 	operationId: string;
-	kind: "COMPILE" | "PIPELINE";
+	kind: "COMPILE" | "PIPELINE" | "REPORT";
 	requestHash: string;
 	units: number;
 }
@@ -32,7 +32,7 @@ export async function reserveGuestTask(
 ): Promise<GuestAdmissionResult> {
 	if (![policy.globalConcurrent, policy.sessionConcurrent, policy.globalDailyUnits, policy.sessionDailyUnits, policy.sessionDailyStarts, request.units].every(positiveInteger) ||
 		!request.sessionId || !request.projectId || !/^[\x21-\x7e]{1,160}$/.test(request.operationId) ||
-		!/^[\x21-\x7e]{1,128}$/.test(request.requestHash) || !["COMPILE", "PIPELINE"].includes(request.kind)) {
+		!/^[\x21-\x7e]{1,128}$/.test(request.requestHash) || !["COMPILE", "PIPELINE", "REPORT"].includes(request.kind)) {
 		throw new Error("invalid_guest_admission");
 	}
 	const now = new Date();
@@ -72,12 +72,18 @@ export async function reserveGuestTask(
  * reserved units stay consumed: the model and search calls of a failed task
  * were still paid for. Do not expose this as a client endpoint.
  */
-export async function releaseGuestAdmission(db: D1Database, operationId: string, kind: "COMPILE" | "PIPELINE"): Promise<boolean> {
+export async function releaseGuestAdmission(db: D1Database, operationId: string, kind: "COMPILE" | "PIPELINE" | "REPORT"): Promise<boolean> {
 	const terminal = kind === "COMPILE"
 		? `EXISTS (SELECT 1 FROM project_jobs j WHERE j.id = ?1 AND j.status IN ('COMPLETED','FAILED'))`
-		: `EXISTS (SELECT 1 FROM project_pipelines p WHERE p.id = ?1 AND p.status IN ('COMPLETED','PARTIAL','FAILED'))`;
+		: kind === "REPORT"
+			? `EXISTS (SELECT 1 FROM project_reports r WHERE r.id = ?1 AND r.status IN ('COMPLETED','FAILED'))`
+			: `EXISTS (SELECT 1 FROM project_pipelines p WHERE p.id = ?1 AND p.status IN ('COMPLETED','PARTIAL','FAILED'))`;
+	// A report admission is held per attempt: "<report id>#<attempt>".
+	const match = kind === "REPORT"
+		? "operation_id LIKE ?1 || '#%' AND operation_kind = ?3"
+		: "operation_id = ?1 AND operation_kind = ?3";
 	const result = await db.prepare(`UPDATE guest_task_admissions SET state = 'RELEASED', released_at = ?2
-		WHERE operation_id = ?1 AND operation_kind = ?3 AND state = 'HELD' AND ${terminal}`)
+		WHERE ${match} AND state = 'HELD' AND ${terminal}`)
 		.bind(operationId, new Date().toISOString(), kind).run();
 	return result.meta.changes === 1;
 }

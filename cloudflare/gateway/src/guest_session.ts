@@ -165,7 +165,7 @@ export async function authorizeGuest(request: Request, env: GuestEnv): Promise<G
 		if (existing) {
 			const limited = await requestRateLimit(env, existing.id);
 			if (limited) return { response: limited };
-			return { response: Response.json({ expires_at: existing.expires_at }, { headers: { "cache-control": "no-store" } }) };
+			return { response: Response.json({ expires_at: existing.expires_at, mode: "guest" }, { headers: { "cache-control": "no-store" } }) };
 		}
 		if (request.method === "GET") return { response: error(cookieValue(request) ? "session_expired" : "session_required", 401) };
 		const limited = await creationRateLimit(request, env);
@@ -176,7 +176,7 @@ export async function authorizeGuest(request: Request, env: GuestEnv): Promise<G
 		await env.DB.prepare("INSERT INTO guest_sessions (id, created_at, expires_at, last_seen_at) VALUES (?1, ?2, ?3, ?2)")
 			.bind(id, now.toISOString(), expires).run();
 		const signature = await sign(id, env.GUEST_SESSION_SECRET);
-		return { response: Response.json({ expires_at: expires }, { status: 201, headers: {
+		return { response: Response.json({ expires_at: expires, mode: "guest" }, { status: 201, headers: {
 			"cache-control": "no-store",
 			"set-cookie": `${COOKIE}=${id}.${signature}; Path=/; Max-Age=86400; HttpOnly; Secure; SameSite=Lax`,
 		} }) };
@@ -215,7 +215,10 @@ export async function authorizeGuest(request: Request, env: GuestEnv): Promise<G
 	const allowedGuestWrite =
 		(url.pathname === "/api/projects" && request.method === "POST") ||
 		(project && request.method === "POST" && /\/(requirement-text|upload-sessions|requirement-compile|history-imports)$/.test(url.pathname)) ||
-		(project && request.method === "POST" && url.pathname.endsWith("/pipeline"));
+		(project && request.method === "POST" && url.pathname.endsWith("/pipeline")) ||
+		// A visitor may regenerate a report that failed. It never restarts the
+		// analysis and it costs its own budget unit.
+		(project && request.method === "POST" && /\/pipeline\/[^/]+\/report$/.test(url.pathname));
 	if (unsafe && !allowedGuestWrite) return { response: error("operation_unavailable", 503) };
 	return { sessionId: session.id };
 }

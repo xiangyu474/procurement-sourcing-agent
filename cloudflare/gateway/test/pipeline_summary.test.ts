@@ -25,9 +25,25 @@ it("reports models, suppliers, verdicts and the gaps of one run", () => {
 	assert.equal(summary.evidence, 1);
 	assert.deepEqual(summary.coverage_warnings, []);
 	assert.deepEqual(summary.models, [
-		{ product_model: "NBN-80052-BA", product_id: "p1", candidate_rows: 2, supplier_count: 2 },
-		{ product_model: "IPS05", product_id: "p2", candidate_rows: 1, supplier_count: 1 },
+		{ product_model: "NBN-80052-BA", product_id: "p1", product_ids: ["p1"], candidate_rows: 2, supplier_count: 2 },
+		{ product_model: "IPS05", product_id: "p2", product_ids: ["p2"], candidate_rows: 1, supplier_count: 1 },
 	]);
+});
+
+it("counts one model when the same name sits under two product records", () => {
+	const summary = sourcingSummary({
+		candidates: [
+			{ candidate_id: "c1", product_model: "NBN-80052-BA", product_id: "p1", supplier_id: "s1" },
+			{ candidate_id: "c2", product_model: "NBN-80052-BA", product_id: "p2", supplier_id: "s2" },
+		],
+		assessments: [{ hard_spec_overall: "PASS" }],
+		evidence: [{ evidence_id: "e1" }],
+	});
+	assert.equal(summary.distinct_models, 1);
+	assert.equal(summary.models.length, 1);
+	assert.deepEqual(summary.models[0].product_ids, ["p1", "p2"]);
+	assert.equal(summary.models[0].candidate_rows, 2);
+	assert.ok(summary.coverage_warnings.some(warning => warning.includes("只找到一个型号")));
 });
 
 it("warns when the run found one model only or no evidence", () => {

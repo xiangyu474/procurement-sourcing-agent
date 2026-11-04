@@ -13,13 +13,18 @@ export function sourcingSummary(final: Row): Row {
 	const evidence = rows(final.evidence);
 	const requirements = rows(final.requirements);
 
-	const models = new Map<string, { model: string; product: string; candidates: number; suppliers: Set<string> }>();
+	// A buyer counts the model names they can see. The same model offered by
+	// several suppliers is one model, even when the supplier intelligence
+	// stores it under two product records.
+	const models = new Map<string, { model: string; products: Set<string>; candidates: number; suppliers: Set<string> }>();
 	for (const candidate of candidates) {
-		const model = str(candidate.product_model) || "(型号未确认)";
-		const product = str(candidate.product_id) || str(candidate.supplier_id) || model;
-		const key = `${product}::${model}`;
-		const entry = models.get(key) ?? { model, product, candidates: 0, suppliers: new Set<string>() };
+		const raw = str(candidate.product_model).trim();
+		const model = raw || "(型号未确认)";
+		const key = raw ? raw.toUpperCase() : "";
+		const entry = models.get(key) ?? { model, products: new Set<string>(), candidates: 0, suppliers: new Set<string>() };
 		entry.candidates += 1;
+		const product = str(candidate.product_id);
+		if (product) entry.products.add(product);
 		const supplier = str(candidate.supplier_id);
 		if (supplier) entry.suppliers.add(supplier);
 		models.set(key, entry);
@@ -34,7 +39,7 @@ export function sourcingSummary(final: Row): Row {
 		const recommendation = str(decision.recommendation) || "INVESTIGATE";
 		byRecommendation[recommendation] = (byRecommendation[recommendation] ?? 0) + 1;
 	}
-	const distinctModels = new Set([...models.values()].map(entry => `${entry.product}::${entry.model}`)).size;
+	const distinctModels = [...models.values()].filter(entry => entry.model !== "(型号未确认)").length;
 	const distinctSuppliers = new Set(candidates.map(candidate => str(candidate.supplier_id)).filter(Boolean)).size;
 	const warnings: string[] = [];
 	if (!candidates.length) warnings.push("这次寻源没有找到可核对的候选。");
@@ -47,7 +52,8 @@ export function sourcingSummary(final: Row): Row {
 		distinct_models: distinctModels,
 		distinct_suppliers: distinctSuppliers,
 		models: [...models.values()].map(entry => ({
-			product_model: entry.model, product_id: entry.product,
+			product_model: entry.model, product_id: [...entry.products][0] ?? "",
+			product_ids: [...entry.products],
 			candidate_rows: entry.candidates, supplier_count: entry.suppliers.size,
 		})),
 		assessments: assessments.length,

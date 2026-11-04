@@ -181,6 +181,7 @@ const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
 // demand compilation, four units are a full sourcing and decision pipeline.
 const COMPILE_UNITS = 1;
 const PIPELINE_UNITS = 4;
+const REPORT_UNITS = 1;
 
 async function sha256Hex(bytes: ArrayBuffer | Uint8Array): Promise<string> {
 	const input = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
@@ -1383,6 +1384,7 @@ export class SourcingReportWorkflow extends WorkflowEntrypoint<Env, ReportReques
 			if (pipelineId) await this.env.DB.prepare(`UPDATE project_pipelines SET report_status = 'COMPLETED', report_error_code = NULL, updated_at = ?2
 				WHERE id = ?1 AND report_id = ?3 AND EXISTS (SELECT 1 FROM project_reports WHERE id = ?3 AND workflow_id = ?4 AND status = 'COMPLETED')`)
 				.bind(pipelineId, new Date().toISOString(), reportId, workflowId).run();
+			await releaseGuestAdmission(this.env.DB, reportId, "REPORT");
 			return { status: "COMPLETED", report_id: reportId };
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
@@ -1396,6 +1398,7 @@ export class SourcingReportWorkflow extends WorkflowEntrypoint<Env, ReportReques
 			if (pipelineId) await this.env.DB.prepare(`UPDATE project_pipelines SET report_status = 'FAILED', report_error_code = 'REPORT_GENERATION_FAILED', updated_at = ?2
 				WHERE id = ?1 AND report_id = ?3 AND EXISTS (SELECT 1 FROM project_reports WHERE id = ?3 AND workflow_id = ?4 AND status = 'FAILED')`)
 				.bind(pipelineId, new Date().toISOString(), reportId, workflowId).run();
+			await releaseGuestAdmission(this.env.DB, reportId, "REPORT");
 			return { status: "FAILED", error: pipelineId ? "REPORT_GENERATION_FAILED" : message.slice(0, 400) };
 		}
 	}
@@ -1529,6 +1532,10 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 					const access = await authorizeGuest(request, env);
 					if ("response" in access) return access.response;
 					guestSessionId = access.sessionId;
+				} else if (url.pathname === "/api/session" && request.method === "GET") {
+					// The server decides which identity is in play. A browser never
+					// has to guess from a status code.
+					return json({ mode: "operator", expires_at: null });
 				}
 			} else {
 				const unauthorized = await requireDemoAccess(request, env);
@@ -2633,9 +2640,28 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 
 		const pipelineReportMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/pipeline\/([^/]+)\/report$/);
 		if (pipelineReportMatch && request.method === "POST") {
-			if (env.PIPELINE_ENABLED !== "true" || guestSessionId) return json({ error: "operation_unavailable" }, 503);
-			const result = await startPipelineReport(env, decodeURIComponent(pipelineReportMatch[1]), decodeURIComponent(pipelineReportMatch[2]));
-			if (result.kind !== "OK") return json({ error: result.kind.toLowerCase() }, result.kind === "NOT_FOUND" ? 404 : result.kind === "DECISION_UNAVAILABLE" ? 409 : 503);
+			if (env.PIPELINE_ENABLED !== "true") return json({ error: "operation_unavailable" }, 503);
+			const reportProjectId = decodeURIComponent(pipelineReportMatch[1]);
+			const reportPipelineId = decodeURIComponent(pipelineReportMatch[2]);
+			// A visitor may regenerate a failed report. It never reruns the
+			// analysis and it costs one budget unit of its own.
+			if (guestSessionId) {
+				const policy = guestAdmissionPolicy(env);
+				if (!policy) return json({ error: "task_budget_not_configured" }, 503);
+				const attemptRow = await env.DB.prepare("SELECT attempt FROM project_reports WHERE pipeline_id = ?1 AND project_id = ?2")
+					.bind(reportPipelineId, reportProjectId).first<{ attempt: number }>();
+				const attempt = (attemptRow?.attempt ?? 0) + 1;
+				const admission = await reserveGuestTask(env.DB, { sessionId: guestSessionId, projectId: reportProjectId,
+					operationId: `pr_${reportPipelineId}#${attempt}`, kind: "REPORT",
+					requestHash: await sha256Hex(new TextEncoder().encode(`${reportPipelineId}:${attempt}`)), units: REPORT_UNITS }, policy);
+				if (admission.kind === "DENIED") return json({ error: "budget_exhausted" }, 429);
+				if (admission.kind === "CONFLICT") return json({ error: "report_retry_conflict" }, 409);
+			}
+			const result = await startPipelineReport(env, reportProjectId, reportPipelineId);
+			if (result.kind !== "OK") {
+				if (guestSessionId) await releaseGuestAdmission(env.DB, `pr_${reportPipelineId}`, "REPORT");
+				return json({ error: result.kind.toLowerCase() }, result.kind === "NOT_FOUND" ? 404 : result.kind === "DECISION_UNAVAILABLE" ? 409 : 503);
+			}
 			return json({ report_id: result.reportId, status: result.status, decision_version: result.decisionVersion }, result.status === "COMPLETED" ? 200 : 202);
 		}
 

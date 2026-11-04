@@ -38,6 +38,7 @@ export function shapePipelineAnalysis(final: Row, report: Row): Row {
 		const history = obj(row.history); const overview = obj(row.history_overview);
 		return {
 			requirement_id: row.requirement_id, product_name: row.product_name, budget: row.budget_value,
+			budget_kind: row.budget_kind ?? null,
 			budget_currency: row.budget_currency, budget_unit: row.budget_unit, budget_tax_basis: row.budget_tax_basis,
 			history_scope: row.history_scope, history_scope_note: history.scope_note, history_available: history.available,
 			history_rows: history.transaction_count, statistics: history.statistics ?? null,
