@@ -127,6 +127,7 @@ export type AnalysisPriceContext = {
 	budget: string | null;
 	budget_currency: string | null;
 	budget_unit: string | null;
+	budget_kind: string | null;
 	history_scope: string | null;
 	history_scope_note: string | null;
 	history_available: boolean;

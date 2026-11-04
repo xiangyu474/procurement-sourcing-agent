@@ -9,6 +9,7 @@ records what it had to adjust.
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
@@ -19,6 +20,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from procurement_agent.domain.requirements import (
     ConflictValue,
     DataConflict,
+    ParseStatus,
     PlannedAmount,
     Requirement,
     RequirementCompilation,
@@ -158,10 +160,22 @@ def compile_requirement_fragments(
             continue
         merged = merge_compilation_payloads(payloads)
         validated = _validated_compilation_payload(merged, project_id=project_id, revision=revision)
-        if validated.requirements or attempt == MAX_COMPILER_ATTEMPTS - 1:
+        # A demand that states a measurement must come back with a constraint to
+        # check. When the model drops it, one more attempt is made before the
+        # answer is accepted as it is.
+        worth_another_attempt = (
+            not validated.requirements
+            or (
+                validated.requirements
+                and not _has_measurable_constraint(validated)
+                and _source_states_a_measurement(fragments)
+            )
+        )
+        if not worth_another_attempt or attempt == MAX_COMPILER_ATTEMPTS - 1:
             break
-        # A nonempty raw list can still contain only schema-invalid items.
-        # Retry without inventing fields and retain source-backed gaps below.
+        # A nonempty raw list can still contain only schema-invalid items, or
+        # line items without a measurable constraint. Retry without inventing
+        # fields and retain source-backed gaps below.
         prior_attempts.append(validated)
     if not merged:
         return CompilerResult(
@@ -186,6 +200,20 @@ def compile_requirement_fragments(
         for question in prior.open_questions:
             if question not in raw.open_questions:
                 raw.open_questions.append(question)
+    if raw.requirements and not _has_measurable_constraint(raw):
+        # The answer names products but states nothing that can be checked. The
+        # gap is kept for the buyer; the analysis will say so instead of
+        # pretending the demand was verified.
+        for item in raw.requirements:
+            raw.unstructured_requirements.append(
+                UnstructuredRequirement(
+                    text=item.product_name or "Demand item without a measurable constraint",
+                    source_ref=(item.source_refs or [None])[0],
+                    source_quote=getattr(item, "source_quote", None),
+                    parse_status=ParseStatus.AMBIGUOUS,
+                    reason="No measurable constraint was extracted for this line item, so it cannot be checked.",
+                )
+            )
     if not raw.requirements:
         code = (
             "requirements_schema_unresolved"
@@ -293,6 +321,27 @@ def merge_compilation_payloads(payloads: list[dict[str, Any]]) -> dict[str, Any]
                     seen.append(item)
             merged[key] = seen
     return merged
+
+
+def _has_measurable_constraint(compilation: RequirementCompilation) -> bool:
+    """Whether at least one line item states something that can be checked."""
+    return any(item.constraints for item in compilation.requirements)
+
+
+_MEASURABLE_HINT = re.compile(
+    r"(?:不低于|不高于|不少于|不大于|至少|最多|≥|≤)\s*\d+"
+    r"|\d+(?:\.\d+)?\s*(?:MP|像素|米|毫米|MM|Gbps|Mbps|W|V|A|GB|TB|KB|年|个月|小时|%)",
+    re.IGNORECASE,
+)
+
+
+def _source_states_a_measurement(fragments: list[SourceFragment]) -> bool:
+    """Whether the buyer's own words contain something measurable.
+
+    It only decides whether the compile is worth one more attempt. A demand
+    without numbers is left exactly as the model read it.
+    """
+    return any(_MEASURABLE_HINT.search(fragment.text or "") for fragment in fragments)
 
 
 def _validated_compilation_payload(

@@ -53,6 +53,9 @@ export type ApiClientOptions = {
 	timeoutMs?: number;
 };
 
+/** The identity the gateway gives the caller. */
+export type SessionInfo = { mode: "guest" | "operator"; expiresAt: string | null };
+
 /** The research depth of one pipeline. The backend owns the limits. */
 export type ResearchBudget = {
 	max_search_calls?: number;
@@ -638,15 +641,36 @@ export class ApiClient {
 	}
 
 	/** 201 creates a session; 200 repeats the same expiry. Both bodies are `{ expires_at }`. Nothing is stored. */
-	openSession(call?: CallOptions): Promise<void> {
+	openSession(call?: CallOptions): Promise<SessionInfo> {
 		return this.request("/api/session", { method: "POST", json: {}, call, skipSessionRetry: true }).then((payload) => {
-			assertExpiresAt(payload);
+			return readSessionInfo(payload);
 		});
 	}
 
-	readSession(call?: CallOptions): Promise<void> {
+	readSession(call?: CallOptions): Promise<SessionInfo> {
 		return this.request("/api/session", { call, skipSessionRetry: true }).then((payload) => {
-			assertExpiresAt(payload);
+			return readSessionInfo(payload);
+		});
+	}
+
+	/** The guest may ask for a new report of a finished task. It costs one budget unit. */
+	retryPipelineReport(projectId: string, pipelineId: string, call?: CallOptions): Promise<Report> {
+		return this.request(`/api/projects/${encodeURIComponent(projectId)}/pipeline/${encodeURIComponent(pipelineId)}/report`, {
+			method: "POST",
+			json: {},
+			call,
+		}).then((payload) => {
+			const row = asRecord(payload, "report");
+			return {
+				report_id: asString(row, "report_id"),
+				run_id: asOptionalString(row.run_id),
+				status: asString(row, "status"),
+				decision_version: asOptionalString(row.decision_version),
+				error: asOptionalString(row.error),
+				download_path: asOptionalString(row.download_path),
+				created_at: asOptionalString(row.created_at),
+				updated_at: asOptionalString(row.updated_at),
+			};
 		});
 	}
 
@@ -764,11 +788,14 @@ function canRenewSession(error: ApiError, skip: boolean | undefined): boolean {
 	return error.status === 401 && (error.code === "session_required" || error.code === "session_expired");
 }
 
-function assertExpiresAt(value: unknown): void {
+function readSessionInfo(value: unknown): SessionInfo {
 	const row = asRecord(value, "session");
-	if (typeof row.expires_at !== "string" || row.expires_at.length === 0) {
+	if (row.mode === "operator") return { mode: "operator", expiresAt: null };
+	const expiresAt = row.expires_at;
+	if (typeof expiresAt !== "string" || expiresAt.length === 0) {
 		throw new ApiError(0, "invalid_response", { key: "expires_at" });
 	}
+	return { mode: "guest", expiresAt };
 }
 
 function asPipelineStage(value: unknown): PipelineStage | null {
@@ -983,6 +1010,7 @@ function asPriceContext(value: unknown): AnalysisPriceContext {
 		budget: asOptionalString(row.budget),
 		budget_currency: asOptionalString(row.budget_currency),
 		budget_unit: asOptionalString(row.budget_unit),
+		budget_kind: asOptionalString(row.budget_kind),
 		history_scope: asOptionalString(row.history_scope),
 		history_scope_note: asOptionalString(row.history_scope_note),
 		history_available: row.history_available === true,

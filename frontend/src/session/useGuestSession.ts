@@ -25,12 +25,12 @@ export type GuestSession = {
 };
 
 /**
- * POST /api/session once, then GET only when the page is shown again.
- * The cookie stays HttpOnly. This hook stores no token.
+ * The gateway tells the caller who it is. `GET /api/session` answers
+ * `{ mode: "guest" }` for a visitor and `{ mode: "operator" }` for the server
+ * side bearer path, so the frontend does not have to guess from a status code.
  *
- * A backend without the session route answers 404. That is the operator path:
- * the request carried the server side credential, so there is nothing to
- * create and the workspace may start right away.
+ * A visitor without a cookie gets 401 first. Then one session is created and
+ * the cookie stays HttpOnly. This hook stores no token.
  */
 export function useGuestSession(clientRef: MutableRefObject<ApiClient>): GuestSession {
 	const [ready, setReady] = useState(!guestSessionEnabled());
@@ -43,19 +43,23 @@ export function useGuestSession(clientRef: MutableRefObject<ApiClient>): GuestSe
 		const fail = (caught: unknown) => {
 			if (!cancelled) setError(messageForApiError(caught).summary);
 		};
-		void clientRef.current.openSession().then(
-			() => {
-				if (cancelled) return;
-				setMode("guest");
-				setReady(true);
-			},
+		const known = (info: { mode: "guest" | "operator" }) => {
+			if (cancelled) return;
+			setMode(info.mode);
+			setReady(true);
+		};
+		void clientRef.current.readSession().then(
+			known,
 			(caught: unknown) => {
 				if (cancelled) return;
-				// The route is not published here. The dev proxy already carries the
-				// operator credential, so the workspace can run without a session.
 				if (caught instanceof ApiError && caught.status === 404) {
-					setMode("operator");
-					setReady(true);
+					// The route is not published here. The dev proxy already carries
+					// the operator credential, so the workspace can run without one.
+					known({ mode: "operator" });
+					return;
+				}
+				if (caught instanceof ApiError && caught.status === 401) {
+					void clientRef.current.openSession().then(known, fail);
 					return;
 				}
 				fail(caught);
@@ -70,7 +74,7 @@ export function useGuestSession(clientRef: MutableRefObject<ApiClient>): GuestSe
 					if (caught instanceof ApiError && caught.status === 401) {
 						// The session expired while the tab was hidden. Create a new one
 						// so the next action does not fail on the first request.
-						void clientRef.current.openSession().catch(fail);
+						void clientRef.current.openSession().then(known, fail);
 						return;
 					}
 					fail(caught);

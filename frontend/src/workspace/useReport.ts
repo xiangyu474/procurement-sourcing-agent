@@ -44,6 +44,7 @@ export function useReport(
 	run: Run | null,
 	decisionsReady: boolean,
 	analysisReport: AnalysisReport | null,
+	pipelineId: string | null,
 	canRequestReport: boolean,
 ): ReportModel {
 	const [report, setReport] = useState<Report | null>(null);
@@ -130,7 +131,11 @@ export function useReport(
 		abortRef.current?.abort();
 		abortRef.current = controller;
 		try {
-			const queued = await clientRef.current.createReport(projectId, run.id, { signal: controller.signal });
+			// A visitor may ask for a new report of a finished task. The task route
+			// is the one a visitor is allowed to use.
+			const queued = pipelineId
+				? await clientRef.current.retryPipelineReport(projectId, pipelineId, { signal: controller.signal })
+				: await clientRef.current.createReport(projectId, run.id, { signal: controller.signal });
 			setReport(queued);
 			const done = await pollUntil<Report>({
 				intervalMs: POLL_INTERVAL_MS,

@@ -670,6 +670,7 @@ export function installReview(page: Page, variant: "mixed" | "none" = "mixed"): 
 			budget: "100",
 			budget_currency: "CNY",
 			budget_unit: "元/套",
+			budget_kind: "PLANNED_UNIT_PRICE",
 			history_scope: "NONE",
 			history_available: false,
 			history_rows: 0,
@@ -685,6 +686,7 @@ export function installReview(page: Page, variant: "mixed" | "none" = "mixed"): 
 			budget: null,
 			budget_currency: null,
 			budget_unit: null,
+			budget_kind: null,
 			history_scope: "TABLE_OVERVIEW",
 			history_available: false,
 			history_rows: 0,
@@ -953,6 +955,7 @@ export function installKnownCase(page: Page): Promise<unknown> {
 					budget: "100",
 					budget_currency: "CNY",
 					budget_unit: "元/套",
+					budget_kind: "PLANNED_UNIT_PRICE",
 					history_scope: "NONE",
 					history_available: false,
 					history_rows: 0,
@@ -1105,6 +1108,11 @@ export function installReportFlow(page: Page, mode: "generate" | "completed" | "
 		if (request.method() === "POST" && path === `/api/projects/${REPORT_PROJECT}/reports`) {
 			posts.push(request.postData() ?? "");
 			await fulfill(202, { report_id: "report-1", run_id: REPORT_RUN, status: "QUEUED", workflow_id: "cf-hidden" });
+			return;
+		}
+		if (request.method() === "POST" && path === `/api/projects/${REPORT_PROJECT}/pipeline/pipe-report/report`) {
+			posts.push(`pipeline:${request.postData() ?? ""}`);
+			await fulfill(202, { report_id: "report-1", run_id: REPORT_RUN, status: "QUEUED", decision_version: "3f2a9c1b7d0e4a55" });
 			return;
 		}
 		if (request.method() === "GET" && path === `/api/projects/${REPORT_PROJECT}/reports/report-1`) {

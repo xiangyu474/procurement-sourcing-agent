@@ -30,7 +30,8 @@
 | `GET /api/projects/{id}/reports` | 分析完成后 | `reports[]` | 下载按钮与报告状态 |
 | `GET /api/projects/{id}/reports/{report_id}` | 报告生成中 | `status`、`download_path` | 「正在生成报告」 |
 | `GET /api/projects/{id}/reports/{report_id}/download` | 点「下载这一版」 | 文件字节 | 下载的 DOCX |
-| `POST /api/projects/{id}/reports` | 报告失败后点「重新生成」 | `report_id`、`status` | 报告状态 |
+| `POST /api/projects/{id}/reports` | 报告失败后点「重新生成」（运维通道） | `report_id`、`status` | 报告状态 |
+| `POST /api/projects/{id}/pipeline/{pipeline_id}/report` | 报告失败后点「重新生成」（访客通道） | `report_id`、`status`、`decision_version` | 报告状态 |
 | `GET /api/evidence/{id}` | 点「查看这条来源」 | `title`、`source_url`、`excerpt`、`snapshot_text` | 详情栏里的来源快照 |
 
 `frontend/src/api/client.ts` 里还留着 `listCandidates`、`listAssessments`、`listDecisions`、`getJobStatus`、`getStopReason`、`getResearchSummary`、`startRun` 七个方法。应用不再调用它们，项目级 `/spec-assessments`、`/decisions` 不再是页面的数据来源。
@@ -41,7 +42,7 @@
 
 | 页面上写的 | 取自 |
 | --- | --- |
-| N 个型号 | 前端按页面上看得见的型号名去重。不是 `summary.distinct_models`，原因见第 8 节 |
+| N 个型号 | `summary.distinct_models`。后端按型号名聚合，一个型号名不会再被数成两个 |
 | N 家供应来源 | `summary.distinct_suppliers` |
 | 核验 N 条：满足 N · 不满足 N · 还不能判断 N | `summary.assessments` 与 `summary.by_verdict`，`PASS`/`FAIL`/`UNKNOWN` 依次显示为满足、不满足、还不能判断 |
 | 建议询价 N · 待补证 N · 已排除 N | `summary.by_recommendation`，`SHORTLIST`/`INVESTIGATE`/`EXCLUDE` 依次对应 |
@@ -66,6 +67,8 @@
 
 **不展示内部字段。** 页面上不出现 `r2_key`、`normalized_r2_key`、`snapshot_r2_key`、`locator`、`content_sha256`、`claim_ids`、`workflow_id`、`job_id`、内部阶段名（`SUPERVISOR:` 一类）和 `metrics` 里的 token 数与搜索次数。运行编号只出现在「过程记录」里。
 
+**不显示原始错误文本。** 任务失败时，阶段里的 `error_code` 决定一句中文（`RESEARCH_FAILED` → 「寻源没有完成。」、`MODEL_TIMEOUT` → 「分析超时。」、`DECISION_FAILED` → 「采购建议没有生成，可以再试一次。」、`STAGE_SERVICE_ERROR` → 「这一步没有完成，可以再试一次。」、`SNAPSHOT_MISSING` → 「这次结果没有保存下来，可以再试一次。」）。阶段码优先于任务顶层的 `PIPELINE_STAGE_FAILED`，后者只是笼统的结论。
+
 **不在浏览器里存凭证。** 生产构建不带 Bearer。凭证只存在于开发代理（`frontend/proxyAuth.ts`），浏览器包不引用这个模块。访客身份只有 Worker 签发的 HttpOnly Cookie。
 
 ## 4. 按型号展示的口径
@@ -83,11 +86,11 @@
 
 ## 5. 会话怎么建立
 
-`frontend/src/session/useGuestSession.ts` 在运行时探测，不依赖构建环境变量：
+`frontend/src/session/useGuestSession.ts` 不依赖构建环境变量：
 
-1. 打开页面发 `POST /api/session`。201 表示访客通道可用。
-2. 404 表示当前是运维通道（本地开发代理带了 Bearer），前端直接放行。
-3. 其他错误码显示一句中文。
+1. 打开页面发 `GET /api/session`。200 就能读到身份：访客通道是 `{"mode":"guest"}`，运维通道是 `{"mode":"operator"}`。
+2. 访客通道还没有会话时返回 401，这时才发一次 `POST /api/session` 创建。
+3. 运维通道下 `POST /api/session` 返回 404。部署里没有这个路由时，前端也按 404 当运维通道处理。
 
 `VITE_GUEST_SESSION=0` 可以完全关掉探测。
 
@@ -99,7 +102,7 @@
 
 | 页面上的名字 | 取自 |
 | --- | --- |
-| 计划预算 | `budget` 加 `budget_currency`、`budget_unit` |
+| 计划预算 或 计划单价 | `budget` 加 `budget_currency`、`budget_unit`。`budget_kind` 是 `PLANNED_UNIT_PRICE` 时写「计划单价」，是 `PLANNED_TOTAL_BUDGET` 时写「计划预算」 |
 | 历史成交价 | `findings[]` 里 `lowest_basis` 为 `HISTORICAL_TRANSACTION` 的 `lowest_value` |
 | 公网参考价 | `findings[]` 里 `lowest_basis` 为 `PUBLIC_REFERENCE` 的 `lowest_value` |
 | 正式报价 | `findings[]` 里 `lowest_basis` 为 `FORMAL_QUOTATION` 的 `lowest_value` |
@@ -130,10 +133,6 @@
 
 ## 8. 已知差距
 
-**「计划预算」与「计划单价」共用一个值。** 容器里取的是 `planned_unit_price or planned_total_budget`，接口只给一个 `budget`。前端现在一律写「计划预算」，遇到实际是单价的需求会误导买家。等后端给 `budget_kind`，或者前端改用 `requirements[].planned_total_budget` 与 `requirements[].planned_unit_price` 判断。写在 `docs/m4/backend_contract_response.md` 第 6 节。
-
-**`summary.models[]` 按产品记录分组。** 同一个型号名挂在两个产品记录下会被算成两个型号，2026-11-04 的实跑就是这种情况：22 条候选只有一个型号名，后端给 `distinct_models=2`。前端因此显示页面上看得见的型号名个数，没有直接用 `distinct_models`。同一个原因让「只找到一个型号」的覆盖提示漏掉。
-
-**访客不能重试报告。** `POST /api/projects/{id}/pipeline/{pipeline_id}/report` 与 `POST /api/projects/{id}/reports` 对访客返回 503。前端在访客模式下点「重新生成」会得到一句「这次报告没有生成，暂时不能重新生成。」
+**报告重试在访客通道。** `POST /api/projects/{id}/pipeline/{pipeline_id}/report` 对访客开放，一次重试计一个预算单位。前端在访客模式下用这个入口，运维通道仍用 `POST /api/projects/{id}/reports`。
 
 **契约缺口清单**在 `docs/m4/backend_contract_response.md` 第 6 节，不在这份文件里重复。

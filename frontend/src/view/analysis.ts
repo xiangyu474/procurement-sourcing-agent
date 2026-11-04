@@ -140,6 +140,7 @@ export function priceRows(context: AnalysisPriceContext | null): PriceRow[] {
 	}
 	const statistics = statisticText(context.statistics);
 	const budget = amountText(context.budget, context.budget_currency, context.budget_unit);
+	const budgetLabel: PriceRow["label"] = context.budget_kind === "PLANNED_UNIT_PRICE" ? "计划单价" : "计划预算";
 	const history = findingFor(context, "历史成交价");
 	const publicPrice = findingFor(context, "公网参考价");
 	const formal = findingFor(context, "正式报价");
@@ -171,7 +172,7 @@ export function priceRows(context: AnalysisPriceContext | null): PriceRow[] {
 	}
 
 	return [
-		{ label: "计划预算", text: budget ?? "还没有" },
+		{ label: budgetLabel, text: budget ?? "还没有" },
 		{ label: "历史成交价", text: historyText },
 		{ label: "公网参考价", text: publicText },
 		{ label: "正式报价", text: formalText },
@@ -325,11 +326,10 @@ export function buildAnalysisRows(analysis: Analysis): CandidateRowView[] {
 }
 
 /** The counts the backend published for this run. */
-export function analysisSummaryLine(summary: AnalysisSummary, modelNames: number): string {
+export function analysisSummaryLine(summary: AnalysisSummary): string {
 	const parts: string[] = [];
-	// The number of models the buyer can see. The backend counts product records,
-	// so one model name can be counted twice.
-	parts.push(`${modelNames} 个型号`);
+	// The backend counts the model names a buyer can see.
+	parts.push(`${summary.distinct_models} 个型号`);
 	parts.push(`${summary.distinct_suppliers} 家供应来源`);
 	const verdicts = verdictText(summary.by_verdict);
 	if (verdicts) parts.push(`核验 ${summary.assessments} 条：${verdicts}`);

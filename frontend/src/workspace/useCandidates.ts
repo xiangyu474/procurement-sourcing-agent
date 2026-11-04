@@ -12,6 +12,7 @@ export type CandidateModel = {
 	recommendationLine: string | null;
 	warnings: string[];
 	analysisReport: AnalysisReport | null;
+	analysisPipelineId: string | null;
 	loading: boolean;
 	loadError: string | null;
 	decisionsReady: boolean;
@@ -46,6 +47,7 @@ export function useCandidates(
 	const [recommendationLine, setRecommendationLine] = useState<string | null>(null);
 	const [warnings, setWarnings] = useState<string[]>([]);
 	const [analysisReport, setAnalysisReport] = useState<AnalysisReport | null>(null);
+	const [analysisPipelineId, setAnalysisPipelineId] = useState<string | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [loadError, setLoadError] = useState<string | null>(null);
 	const [decisionsReady, setDecisionsReady] = useState(false);
@@ -75,6 +77,7 @@ export function useCandidates(
 		setRecommendationLine(null);
 		setWarnings([]);
 		setAnalysisReport(null);
+		setAnalysisPipelineId(null);
 		if (!projectId || !runId || !runStatus) {
 			setLoading(false);
 			return;
@@ -96,12 +99,12 @@ export function useCandidates(
 				if (signal.aborted) return;
 				const built = buildAnalysisRows(analysis);
 				setRows(built);
-				const modelNames = new Set(built.map((row) => row.model)).size;
-				setSummaryLine(analysisSummaryLine(analysis.summary, modelNames));
+				setSummaryLine(analysisSummaryLine(analysis.summary));
 				const recommendation = recommendationText(analysis.summary.by_recommendation);
 				setRecommendationLine(recommendation || null);
 				setWarnings(analysis.summary.coverage_warnings);
 				setAnalysisReport(analysis.report);
+				setAnalysisPipelineId(analysis.pipeline_id || null);
 				setDecisionsReady(analysis.decisions.length > 0);
 				setReportBlockReason(analysis.decisions.length > 0 ? null : "报告还没有生成");
 				setLoading(false);
@@ -162,6 +165,7 @@ export function useCandidates(
 		recommendationLine,
 		warnings,
 		analysisReport,
+		analysisPipelineId,
 		loading,
 		loadError,
 		decisionsReady,

@@ -37,6 +37,7 @@ export function useWorkspace(client: ApiClient = createApiClient()): WorkspaceMo
 		run,
 		candidates.decisionsReady,
 		candidates.analysisReport,
+		candidates.analysisPipelineId,
 		session.mode !== "guest",
 	);
 	return {

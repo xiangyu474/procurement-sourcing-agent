@@ -195,6 +195,7 @@ describe("analysis view", () => {
 			budget: "200000",
 			budget_currency: "CNY",
 			budget_unit: "元",
+			budget_kind: "PLANNED_TOTAL_BUDGET",
 			history_scope: "TABLE_OVERVIEW",
 			history_scope_note: "…",
 			history_available: false,
@@ -223,6 +224,7 @@ describe("analysis view", () => {
 			budget: "200000",
 			budget_currency: "CNY",
 			budget_unit: "元",
+			budget_kind: "PLANNED_TOTAL_BUDGET",
 			history_scope: "ITEM",
 			history_scope_note: null,
 			history_available: true,
@@ -241,6 +243,46 @@ describe("analysis view", () => {
 		expect(rows[1].text).not.toMatch(/历史价/);
 	});
 
+	it("names the budget by the kind the backend published", () => {
+		const unit = priceRows({
+			requirement_id: "r1",
+			product_name: "摄像机",
+			budget: "500",
+			budget_currency: "CNY",
+			budget_unit: "元/套",
+			budget_kind: "PLANNED_UNIT_PRICE",
+			history_scope: "NONE",
+			history_scope_note: null,
+			history_available: false,
+			history_rows: 0,
+			statistics: null,
+			overview_statistics: null,
+			overview_is_not_a_baseline: false,
+			findings: [],
+			notes: [],
+		});
+		expect(unit[0].label).toBe("计划单价");
+		expect(unit[0].text).toBe("500 CNY 元/套");
+		const total = priceRows({
+			requirement_id: "r1",
+			product_name: "摄像机",
+			budget: "5000",
+			budget_currency: "CNY",
+			budget_unit: "元",
+			budget_kind: "PLANNED_TOTAL_BUDGET",
+			history_scope: "NONE",
+			history_scope_note: null,
+			history_available: false,
+			history_rows: 0,
+			statistics: null,
+			overview_statistics: null,
+			overview_is_not_a_baseline: false,
+			findings: [],
+			notes: [],
+		});
+		expect(total[0].label).toBe("计划预算");
+	});
+
 	it("reads the published counts", () => {
 		const line = analysisSummaryLine({
 			requirements: 1,
@@ -254,7 +296,7 @@ describe("analysis view", () => {
 			by_recommendation: { SHORTLIST: 22, INVESTIGATE: 1 },
 			evidence: 29,
 			coverage_warnings: [],
-		}, 3);
+		});
 		expect(line).toContain("3 个型号");
 		expect(line).toContain("23 家供应来源");
 		expect(line).toContain("满足 22");

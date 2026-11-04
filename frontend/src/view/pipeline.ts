@@ -30,7 +30,9 @@ export function pipelineProgressLine(status: string, stage: string | null, repor
 /** A short Chinese line from the public code. Raw error text is never returned. */
 export function pipelineProblemLine(status: string, error: string | null, stages: Pick<PipelineStage, "error_code">[]): string | null {
 	if (status !== "PARTIAL" && status !== "FAILED") return null;
-	const codes = [error, ...stages.map((stage) => stage.error_code)].filter((code): code is string => Boolean(code));
+	// The stage keeps the reason. The top level code is the same for every
+	// failure, so the stage code comes first.
+	const codes = [...stages.map((stage) => stage.error_code), error].filter((code): code is string => Boolean(code));
 	for (const code of codes) {
 		const known = publicReason(code);
 		if (known) return known;

@@ -231,7 +231,7 @@ test("known case hides internal wording and groups identical models", async ({ p
 	await expect(fail).toContainText("已排除");
 	await expect(fail).toContainText("不满足");
 	await expect(fail).toContainText("要求 ≥ 5 MP，读到 4.9152 MP");
-	await expect(fail).toContainText("计划预算");
+	await expect(fail).toContainText("计划单价");
 	await expect(fail).not.toContainText("output_resolution");
 	await expect(fail).not.toContainText("GTE");
 	await expect(fail).not.toContainText("ev_");

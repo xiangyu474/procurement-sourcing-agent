@@ -150,8 +150,8 @@ function client(methods: Partial<ApiClient>): ApiClient {
 		getPipeline: async () => {
 			throw new Error("getPipeline was not expected");
 		},
-		openSession: async () => undefined,
-		readSession: async () => undefined,
+		openSession: async () => ({ mode: "guest" as const, expiresAt: null }),
+		readSession: async () => ({ mode: "guest" as const, expiresAt: null }),
 		listReports: async () => [],
 		createReport: async () => {
 			throw new Error("createReport was not expected");

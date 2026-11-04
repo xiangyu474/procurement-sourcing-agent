@@ -205,9 +205,14 @@ describe("ApiClient", () => {
 			.mockResolvedValueOnce(jsonResponse({ expires_at: "2026-11-03T00:00:00.000Z" }, 200))
 			.mockResolvedValueOnce(jsonResponse({}, 200));
 		const api = client(fetchImpl);
-		await expect(api.openSession()).resolves.toBeUndefined();
-		await expect(api.readSession()).resolves.toBeUndefined();
+		await expect(api.openSession()).resolves.toEqual({ mode: "guest", expiresAt: "2026-11-03T00:00:00.000Z" });
+		await expect(api.readSession()).resolves.toEqual({ mode: "guest", expiresAt: "2026-11-03T00:00:00.000Z" });
 		await expect(api.openSession()).rejects.toMatchObject({ code: "invalid_response" });
+	});
+
+	it("reads the identity the gateway publishes", async () => {
+		const fetchImpl = vi.fn(async () => jsonResponse({ mode: "operator", expires_at: null }));
+		await expect(client(fetchImpl).readSession()).resolves.toEqual({ mode: "operator", expiresAt: null });
 	});
 
 	it("renews a session once after session_expired and then surfaces the failure", async () => {
