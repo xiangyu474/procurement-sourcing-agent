@@ -17,13 +17,13 @@ log("session loading shown:", await page.getByTestId("session-loading").count())
 log("alerts on open:", await page.getByRole("alert").allInnerTexts());
 await page.screenshot({ path: `${SHOTS}/00-open.png`, fullPage: true });
 
-await page.getByLabel("新项目名称").fill("公开链路验收");
+await page.getByLabel("新项目名称").fill("公开链路验收二");
 await page.getByRole("button", { name: "创建" }).click();
 await page.waitForTimeout(1500);
 log("heading after create:", await page.getByRole("heading").first().innerText());
 
 await page.getByLabel("需求文字").fill(
-	"采购 10 套 5MP 工业网络摄像机，要求像素不低于 5MP，防护等级 IP67，支持 PoE 供电，质保不少于 2 年，单价不超过 500 元/套。",
+	"采购5MP工业网络摄像机，数量10套，预计单价100元/套，输出分辨率不低于5MP。",
 );
 await page.screenshot({ path: `${SHOTS}/01-input.png`, fullPage: true });
 await page.getByRole("button", { name: "开始分析" }).click();

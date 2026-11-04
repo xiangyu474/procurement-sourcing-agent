@@ -1,6 +1,7 @@
 import { getContainer } from "@cloudflare/containers";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import type { Env, RunRequest } from "./index";
+import { waitForContainer } from "./index";
 import { recordPipelineStage, sha256, storePipelineSnapshot } from "./pipeline_store";
 import { buildFinalContext } from "./pipeline_final";
 import { startPipelineReport } from "./pipeline_report";
@@ -30,6 +31,9 @@ async function update(db: D1Database, id: string, status: string, stage: string,
 async function callContainer(env: Env, path: string, payload: Record<string, unknown>) {
 	const container = getContainer(env.SOURCING_CONTAINER, env.CONTAINER_INSTANCE_NAME);
 	await container.start();
+	// The container may still be restarting after a crash. Sending work to a
+	// closed port would fail the stage for the wrong reason.
+	if (!await waitForContainer(container)) throw new Error("STAGE_SERVICE_ERROR:CONTAINER_NOT_READY");
 	const response = await container.fetch(new Request(`http://container${path}`, {
 		method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload),
 	}));

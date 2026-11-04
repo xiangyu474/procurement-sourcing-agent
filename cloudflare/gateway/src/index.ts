@@ -871,7 +871,7 @@ function _parseStages(value: string | undefined): Record<string, unknown> {
  * acceptance round.
  */
 /** A container that is still waking up refuses connections. Wait for it. */
-async function waitForContainer(
+export async function waitForContainer(
 	container: { fetch: (request: Request) => Promise<Response> },
 	attempts = 40,
 ): Promise<boolean> {
