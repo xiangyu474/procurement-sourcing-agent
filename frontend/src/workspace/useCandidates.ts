@@ -25,6 +25,7 @@ export type CandidateModel = {
 
 const ANALYSIS_NOT_READY = "这次分析还没有出结果。";
 const ANALYSIS_VERSION_MISSING = "这次运行没有可用的分析结果。";
+const ANALYSIS_MISSING = "这次运行没有分析结果。";
 
 /**
  * The frozen analysis of the selected run. It is the only source for a
@@ -102,6 +103,14 @@ export function useCandidates(
 					setLoadError(null);
 					setRows([]);
 					setReportBlockReason(ANALYSIS_VERSION_MISSING);
+					setLoading(false);
+					return;
+				}
+				if (caught instanceof ApiError && caught.status === 404) {
+					// There is no task for this run. That is not a broken page.
+					setLoadError(ANALYSIS_MISSING);
+					setRows([]);
+					setReportBlockReason(ANALYSIS_MISSING);
 					setLoading(false);
 					return;
 				}
