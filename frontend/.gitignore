@@ -5,3 +5,8 @@ playwright-report/
 blob-report/
 .vite/
 *.local
+
+# Local verification scripts
+m4-*.mjs
+live-*.mjs
+dbg.mjs
