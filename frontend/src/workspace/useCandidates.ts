@@ -26,6 +26,8 @@ export type CandidateModel = {
 const ANALYSIS_NOT_READY = "这次分析还没有出结果。";
 const ANALYSIS_VERSION_MISSING = "这次运行没有可用的分析结果。";
 const ANALYSIS_MISSING = "这次运行没有分析结果。";
+/** How long to wait before asking again for a snapshot that is not written yet. */
+const ANALYSIS_RETRY_MS = 5_000;
 
 /**
  * The frozen analysis of the selected run. It is the only source for a
@@ -37,6 +39,7 @@ export function useCandidates(
 	projectId: string | null,
 	runId: string | null,
 	runStatus: string | null,
+	pipelineActive: boolean,
 ): CandidateModel {
 	const [rows, setRows] = useState<CandidateRowView[]>([]);
 	const [summaryLine, setSummaryLine] = useState<string | null>(null);
@@ -52,9 +55,15 @@ export function useCandidates(
 	const [evidenceError, setEvidenceError] = useState<string | null>(null);
 	const abortRef = useRef<AbortController | null>(null);
 	const evidenceAbortRef = useRef<AbortController | null>(null);
+	const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const [attempt, setAttempt] = useState(0);
 
 	useEffect(() => {
 		abortRef.current?.abort();
+		if (retryRef.current) {
+			clearTimeout(retryRef.current);
+			retryRef.current = null;
+		}
 		setSelectedId(null);
 		setEvidence(null);
 		setEvidenceError(null);
@@ -99,11 +108,15 @@ export function useCandidates(
 			} catch (caught) {
 				if (isAbort(caught) || signal.aborted) return;
 				if (caught instanceof ApiError && caught.status === 409) {
-					// The run has no frozen snapshot. Nothing is filled in from a later run.
+					// The run row turns terminal before the decision snapshot is
+					// written. Ask again while the task is still running.
 					setLoadError(null);
 					setRows([]);
 					setReportBlockReason(ANALYSIS_VERSION_MISSING);
 					setLoading(false);
+					if (pipelineActive) {
+						retryRef.current = setTimeout(() => setAttempt((value) => value + 1), ANALYSIS_RETRY_MS);
+					}
 					return;
 				}
 				if (caught instanceof ApiError && caught.status === 404) {
@@ -120,7 +133,7 @@ export function useCandidates(
 			}
 		})();
 		return () => controller.abort();
-	}, [clientRef, projectId, runId, runStatus]);
+	}, [clientRef, projectId, runId, runStatus, pipelineActive, attempt]);
 
 	const select = (id: string) => {
 		setSelectedId(id);

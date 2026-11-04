@@ -21,7 +21,6 @@ type FixtureCandidate = {
 	product_model: string;
 	evidence_ids?: string[];
 };
-
 type FixtureAssessment = {
 	assessment_id: string;
 	requirement_id: string;
@@ -788,8 +787,7 @@ export function installReview(page: Page, variant: "mixed" | "none" = "mixed"): 
 	});
 }
 
-const KNOWN_PROJECT = "a54edd18-0000-4000-8000-000000000001";
-const KNOWN_RUN = "a54edd18-0000-4000-8000-000000000002";
+const KNOWN_PROJECT = "a54edd18-0000-4000-8000-000000000001";const KNOWN_RUN = "a54edd18-0000-4000-8000-000000000002";
 
 export function installKnownCase(page: Page): Promise<unknown> {
 	const longSupplier = "华北区域工业视觉设备联合体（含多园区超长供应商名称不应撑破表格）";
@@ -1353,4 +1351,79 @@ export function installPipeline(page: Page, script: PipelineScript): Promise<Arr
 		}
 		await fulfill(404, { error: "not_found" });
 	}).then(() => posts);
+}
+
+const LATE_PROJECT = "99999999-9999-4999-8999-999999999999";
+const LATE_RUN = "88888888-8888-4888-8888-888888888888";
+
+/**
+ * The run row turns terminal before the decision snapshot is written. The
+ * analysis answers 409 until the snapshot exists.
+ */
+export function installLateSnapshot(page: Page, readsBeforeSnapshot = 2): Promise<unknown> {
+	let reads = 0;
+	const project = {
+		id: LATE_PROJECT,
+		title: "快照晚到项目",
+		history_availability: "NOT_PROVIDED",
+		demand_revision: 1,
+		analysis_version: 1,
+		created_at: "2026-11-04T00:00:00.000Z",
+		latest_run: { id: LATE_RUN, status: "COMPLETED", current_stage: "COMPLETED", updated_at: "2026-11-04T00:10:00.000Z" },
+	};
+	return page.route("**/api/**", async (route: Route) => {
+		const request = route.request();
+		const path = new URL(request.url()).pathname;
+		const fulfill = (status: number, body: unknown) =>
+			route.fulfill({ status, contentType: "application/json; charset=utf-8", body: JSON.stringify(body) });
+		if (await serveSessionAndPipelines(route, LATE_PROJECT, [
+			{ pipeline_id: "pipe-late", run_id: LATE_RUN, demand_revision: 1, status: "RUNNING", stage: "DECIDING", decision_version: null, report_id: null, report_status: "NOT_STARTED", created_at: "2026-11-04T00:00:00.000Z", updated_at: "2026-11-04T00:10:00.000Z" },
+		])) return;
+		if (request.method() === "GET" && path === "/api/projects") {
+			await fulfill(200, { projects: [project] });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${LATE_PROJECT}`) {
+			await fulfill(200, { ...project, sources: [] });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${LATE_PROJECT}/runs`) {
+			await fulfill(200, { runs: [{ id: LATE_RUN, status: "COMPLETED", current_stage: "COMPLETED", last_error: null, stop_reason_code: null, artifact_key_present: false, created_at: "2026-11-04T00:00:00.000Z", updated_at: "2026-11-04T00:10:00.000Z" }] });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${LATE_PROJECT}/requirement-text`) {
+			await fulfill(404, { error: "not_found" });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${LATE_PROJECT}/requirements`) {
+			await fulfill(404, { error: "not_compiled" });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${LATE_PROJECT}/analysis`) {
+			reads += 1;
+			if (reads <= readsBeforeSnapshot) {
+				await fulfill(409, { error: "analysis_version_unavailable" });
+				return;
+			}
+			await fulfill(200, analysisPayload({
+				projectId: LATE_PROJECT,
+				pipelineId: "pipe-late",
+				runId: LATE_RUN,
+				requirements: [{ requirement_id: "r1", product_name: "工业摄像机", product_category: null, quantity: 1, quantity_unit: "台", constraints: [] }],
+				candidates: [{ candidate_id: "c1", requirement_id: "r1", supplier_name: "海康威视", product_model: "DS-1", evidence_ids: [] }],
+				assessments: [{ assessment_id: "a1", requirement_id: "r1", product_candidate_id: "c1", product_model_ref: "DS-1", hard_spec_overall: "PASS", checks: [] }],
+				decisions: [{ decision_id: "d1", requirement_id: "r1", product_candidate_id: "c1", product_model_ref: "DS-1", recommendation: "SHORTLIST", technical_verdict: "VERIFIED_PASS", hard_spec_overall: "PASS", accepted: true }],
+			}));
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/runs/${LATE_RUN}`) {
+			await fulfill(200, { id: LATE_RUN, project_id: LATE_PROJECT, status: "COMPLETED", current_stage: "COMPLETED", artifact_key: null, last_error: null, created_at: "2026-11-04T00:00:00.000Z", updated_at: "2026-11-04T00:10:00.000Z" });
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/runs/${LATE_RUN}/events`) {
+			await fulfill(200, { events: [] });
+			return;
+		}
+		await fulfill(404, { error: "not_found" });
+	});
 }

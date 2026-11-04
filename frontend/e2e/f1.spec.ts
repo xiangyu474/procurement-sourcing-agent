@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { installCatalogue, installFixture, installKnownCase, installReportFlow, installReview, LONG_PPTX, LONG_TITLE } from "./fixture";
+import { installCatalogue, installFixture, installKnownCase, installLateSnapshot, installReportFlow, installReview, LONG_PPTX, LONG_TITLE } from "./fixture";
 
 const screenshots = "/opt/cursor/artifacts/screenshots";
 
@@ -331,6 +331,18 @@ test("an older run can be opened from the process log", async ({ page }) => {
 	await page.getByRole("button", { name: /的寻源$/ }).last().click();
 	await expect(page.getByRole("cell", { name: "海康威视" })).toBeVisible();
 	await expect(page.getByRole("button", { name: "下载这一版" })).toBeEnabled();
+});
+
+test("the results appear when the snapshot arrives late", async ({ page }) => {
+	// The run row turns terminal before the decision snapshot is written. The
+	// page has to ask again instead of waiting for a reload.
+	await installLateSnapshot(page);
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto("/");
+	await page.getByRole("button", { name: /快照晚到项目/ }).click();
+	await expect(page.getByRole("row", { name: /DS-1/ })).toBeVisible({ timeout: 30_000 });
+	await expect(page.getByTestId("analysis-summary")).toContainText("1 个型号");
+	await page.screenshot({ path: `${screenshots}/f2-late-snapshot.png`, fullPage: true });
 });
 
 test("the public gateway accepts a visitor without a credential", async ({ page }) => {
