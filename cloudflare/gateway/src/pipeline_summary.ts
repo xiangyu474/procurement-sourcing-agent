@@ -43,6 +43,8 @@ export function sourcingSummary(final: Row): Row {
 	const distinctSuppliers = new Set(candidates.map(candidate => str(candidate.supplier_id)).filter(Boolean)).size;
 	const warnings: string[] = [];
 	if (!candidates.length) warnings.push("这次寻源没有找到可核对的候选。");
+	// A run that ran out of research budget explains why many verdicts are thin.
+	if (str(final.research_status) === "PARTIAL") warnings.push("这次研究用完了预算，部分约束没有取到来源快照，结论多为证据不足。");
 	if (candidates.length > 0 && distinctModels <= 1) warnings.push("这次只找到一个型号，候选行来自不同供应商，而不是不同型号。");
 	if (byVerdict.PASS === undefined && assessments.length > 0) warnings.push("没有任何候选通过硬性核验，结论多为证据不足。");
 	if (evidence.length === 0) warnings.push("没有取到公开来源快照，结论无法复核。");

@@ -1450,7 +1450,11 @@ export class SourcingWorkflow extends WorkflowEntrypoint<Env, RunRequest> {
 									gateway_url: this.env.CONTAINER_GATEWAY_URL,
 									token: this.env.INTERNAL_GATEWAY_TOKEN,
 									runtime_config: runtimeConfig,
-									research_budget: event.payload.researchBudget ?? { max_search_calls: 4, max_fetches: 4, max_tasks: 2, max_rounds: 1, max_model_calls: 12 },
+									// The default budget has to cover a real buyer demand with several
+									// constraints: with too little research the claims stay thin and
+									// every verdict falls back to UNKNOWN. A visitor may ask for a
+									// shorter run, but the default is the quality of the answer.
+									research_budget: event.payload.researchBudget ?? { max_search_calls: 6, max_fetches: 8, max_tasks: 3, max_rounds: 2, max_model_calls: 18 },
 								}
 								: {
 									run_id: runId,
@@ -3455,7 +3459,7 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 			};
 			const durationSeconds = body.duration_seconds ?? 150;
 			const mode = body.mode ?? "SOURCING";
-			const researchBudget = body.research_budget ?? { max_search_calls: 4, max_fetches: 4, max_tasks: 2, max_rounds: 2, max_model_calls: 15 };
+			const researchBudget = body.research_budget ?? { max_search_calls: 6, max_fetches: 8, max_tasks: 3, max_rounds: 2, max_model_calls: 18 };
 			if (!["SPIKE", "SOURCING"].includes(mode)) return json({ error: "invalid_run_mode" }, 422);
 			if (
 				!Number.isInteger(researchBudget.max_search_calls) || researchBudget.max_search_calls < 1 || researchBudget.max_search_calls > 12 ||
