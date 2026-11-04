@@ -1,5 +1,5 @@
 import { sanitizePublicText } from "../api/adapter";
-import type { Report } from "../api/types";
+import type { AnalysisReport, Report } from "../api/types";
 
 export type ReportPhase = "hidden" | "blocked" | "ready" | "generating" | "failed";
 
@@ -26,6 +26,7 @@ export function reportFileName(title: string, runCreatedAt: string): string {
 
 export const PRIOR_REPORT_FAILURE = "上次生成失败，可以重新生成。";
 export const REPORT_NETWORK_FAILURE = "网络中断，没有生成。";
+export const REPORT_NOT_ALLOWED = "这次报告没有生成，暂时不能重新生成。";
 
 /** A short Chinese sentence from the backend. Internal logs stay off the page. */
 export function isPublicReportError(error: string | null): boolean {
@@ -63,13 +64,61 @@ export function reportButtonLabel(phase: ReportPhase, hasFile: boolean): string 
 	return "下载这一版";
 }
 
-/** The download control. A long list cannot start a report. */
-export function reportPhase(input: { runStatus: string | null; decisionsReady: boolean; report: Report | null; pending: boolean }): ReportPhase {
+/**
+ * The download control. A long list cannot start a report.
+ *
+ * The analysis carries the report status of the frozen run, so the button
+ * follows the report of the version the user is looking at.
+ */
+export function reportPhase(input: {
+	runStatus: string | null;
+	decisionsReady: boolean;
+	report: Report | null;
+	analysisReport: AnalysisReport | null;
+	pending: boolean;
+}): ReportPhase {
 	const finished = input.runStatus === "COMPLETED" || input.runStatus === "PARTIAL";
 	if (!finished) return "hidden";
 	if (!input.decisionsReady) return "blocked";
-	if (input.pending || input.report?.status === "QUEUED" || input.report?.status === "RUNNING") return "generating";
-	if (input.report?.status === "COMPLETED" && input.report.download_path) return "ready";
-	if (input.report?.status === "FAILED") return "failed";
+	if (input.report) {
+		if (input.report.status === "COMPLETED" && input.report.download_path) return "ready";
+		if (input.report.status === "FAILED") return "failed";
+		if (input.report.status === "QUEUED" || input.report.status === "RUNNING") return "generating";
+	}
+	const status = input.analysisReport?.status ?? null;
+	if (status === "FAILED") return "failed";
+	if (status === "COMPLETED" && input.analysisReport?.download_path) return "ready";
+	if (status === "QUEUED" || status === "RUNNING" || status === "NOT_STARTED") return "generating";
+	if (input.pending) return "generating";
 	return "ready";
+}
+
+/** The report of the frozen run, when the analysis already knows it. */
+export function reportFromAnalysis(analysisReport: AnalysisReport | null, runId: string): Report | null {
+	if (!analysisReport) return null;
+	if (analysisReport.status === "COMPLETED" && analysisReport.download_path) {
+		return {
+			report_id: analysisReport.report_id ?? "",
+			run_id: runId,
+			status: "COMPLETED",
+			decision_version: analysisReport.decision_version,
+			error: null,
+			download_path: analysisReport.download_path,
+			created_at: null,
+			updated_at: null,
+		};
+	}
+	if (analysisReport.status === "FAILED") {
+		return {
+			report_id: analysisReport.report_id ?? "",
+			run_id: runId,
+			status: "FAILED",
+			decision_version: analysisReport.decision_version,
+			error: analysisReport.error_code ? "报告生成失败，请重试。" : null,
+			download_path: null,
+			created_at: null,
+			updated_at: null,
+		};
+	}
+	return null;
 }

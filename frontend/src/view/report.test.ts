@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { Report } from "../api/types";
-import { decisionCoversRun, reportFailure, reportFileName, reportPhase, selectReport } from "./report";
+import type { AnalysisReport, Report } from "../api/types";
+import { decisionCoversRun, reportFailure, reportFileName, reportFromAnalysis, reportPhase, selectReport } from "./report";
 
 function report(patch: Partial<Report>): Report {
 	return {
@@ -12,6 +12,18 @@ function report(patch: Partial<Report>): Report {
 		download_path: "/api/projects/p1/reports/rep-1/download",
 		created_at: "2026-11-02T02:00:00.000Z",
 		updated_at: "2026-11-02T02:05:00.000Z",
+		...patch,
+	};
+}
+
+function analysisReport(patch: Partial<AnalysisReport>): AnalysisReport {
+	return {
+		report_id: "rep-1",
+		status: "COMPLETED",
+		error_code: null,
+		decision_version: "abc123",
+		download_path: "/api/projects/p1/reports/rep-1/download",
+		warning_codes: [],
 		...patch,
 	};
 }
@@ -35,17 +47,27 @@ describe("report download", () => {
 	});
 
 	it("keeps a long list from generating a report", () => {
-		expect(reportPhase({ runStatus: "RUNNING", decisionsReady: false, report: null, pending: false })).toBe("hidden");
-		expect(reportPhase({ runStatus: "FAILED", decisionsReady: true, report: null, pending: false })).toBe("hidden");
-		expect(reportPhase({ runStatus: "COMPLETED", decisionsReady: false, report: null, pending: false })).toBe("blocked");
-		expect(reportPhase({ runStatus: "PARTIAL", decisionsReady: true, report: null, pending: false })).toBe("ready");
-		expect(reportPhase({ runStatus: "COMPLETED", decisionsReady: true, report: report({ status: "RUNNING", download_path: null }), pending: false })).toBe("generating");
-		expect(reportPhase({ runStatus: "COMPLETED", decisionsReady: true, report: report({ status: "FAILED", error: "没有可写入的决策。", download_path: null }), pending: false })).toBe("failed");
+		expect(reportPhase({ runStatus: "RUNNING", decisionsReady: false, report: null, analysisReport: null, pending: false })).toBe("hidden");
+		expect(reportPhase({ runStatus: "FAILED", decisionsReady: true, report: null, analysisReport: null, pending: false })).toBe("hidden");
+		expect(reportPhase({ runStatus: "COMPLETED", decisionsReady: false, report: null, analysisReport: null, pending: false })).toBe("blocked");
+		expect(reportPhase({ runStatus: "PARTIAL", decisionsReady: true, report: null, analysisReport: null, pending: false })).toBe("ready");
+		expect(reportPhase({ runStatus: "COMPLETED", decisionsReady: true, report: report({ status: "RUNNING", download_path: null }), analysisReport: null, pending: false })).toBe("generating");
+		expect(reportPhase({ runStatus: "COMPLETED", decisionsReady: true, report: report({ status: "FAILED", error: "没有可写入的决策。", download_path: null }), analysisReport: null, pending: false })).toBe("failed");
 		const failed = reportFailure("Supervisor timeout token");
 		expect(failed).toBe("生成失败。");
 		expect(failed).not.toMatch(/Supervisor|token/i);
 		expect(reportFailure("report generation failed with status 500: Error proxying request to container: The container is not running")).toBe("生成失败。");
 		expect(reportFailure("没有可写入的决策。")).toBe("生成失败。没有可写入的决策。");
+	});
+
+	it("follows the report of the frozen version", () => {
+		expect(reportPhase({ runStatus: "COMPLETED", decisionsReady: true, report: null, analysisReport: analysisReport({ status: "NOT_STARTED" }), pending: false })).toBe("generating");
+		expect(reportPhase({ runStatus: "COMPLETED", decisionsReady: true, report: null, analysisReport: analysisReport({ status: "QUEUED" }), pending: false })).toBe("generating");
+		expect(reportPhase({ runStatus: "COMPLETED", decisionsReady: true, report: null, analysisReport: analysisReport({ status: "FAILED", download_path: null }), pending: false })).toBe("failed");
+		const known = reportFromAnalysis(analysisReport({}), "run-1");
+		expect(known?.status).toBe("COMPLETED");
+		expect(known?.download_path).toBe("/api/projects/p1/reports/rep-1/download");
+		expect(reportFromAnalysis(analysisReport({ status: "QUEUED", download_path: null }), "run-1")).toBeNull();
 	});
 
 	it("enables a report only when the decision job finished after this run", () => {

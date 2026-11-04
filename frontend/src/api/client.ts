@@ -23,17 +23,43 @@ import {
 	type SpecAssessment,
 	type SpecCheck,
 	type Pipeline,
+	type PipelineListItem,
 	type PipelineStage,
 	type StartedPipeline,
 	type StartedRun,
 	type TextRevision,
 	type UploadedSource,
+	type Analysis,
+	type AnalysisAssessment,
+	type AnalysisCandidate,
+	type AnalysisCheck,
+	type AnalysisConstraint,
+	type AnalysisDecision,
+	type AnalysisDecisionDisplay,
+	type AnalysisDisplayAction,
+	type AnalysisDisplayGap,
+	type AnalysisEvidence,
+	type AnalysisPriceContext,
+	type AnalysisPriceFinding,
+	type AnalysisReport,
+	type AnalysisRequirement,
+	type AnalysisSummary,
+	type AnalysisSummaryModel,
 } from "./types";
 
 export type ApiClientOptions = {
 	baseUrl?: string;
 	fetch?: typeof fetch;
 	timeoutMs?: number;
+};
+
+/** The research depth of one pipeline. The backend owns the limits. */
+export type ResearchBudget = {
+	max_search_calls?: number;
+	max_fetches?: number;
+	max_tasks?: number;
+	max_rounds?: number;
+	max_model_calls?: number;
 };
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
@@ -65,6 +91,12 @@ function asRecord(value: unknown, label: string): Record<string, unknown> {
 	return value as Record<string, unknown>;
 }
 
+/** A nested object that may be missing. A missing part is not a broken answer. */
+function asOptionalRecord(value: unknown): Record<string, unknown> {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+	return value as Record<string, unknown>;
+}
+
 function asString(row: Record<string, unknown>, key: string): string {
 	const value = row[key];
 	if (typeof value !== "string") throw new ApiError(0, "invalid_response", { key });
@@ -83,6 +115,15 @@ function asOptionalString(value: unknown): string | null {
 
 function asOptionalNumber(value: unknown): number | null {
 	return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function asCountMap(value: unknown): Record<string, number> {
+	const out: Record<string, number> = {};
+	if (!value || typeof value !== "object" || Array.isArray(value)) return out;
+	for (const [key, count] of Object.entries(value as Record<string, unknown>)) {
+		if (typeof count === "number" && Number.isFinite(count)) out[key] = count;
+	}
+	return out;
 }
 
 function asListedRun(value: unknown): ProjectSummary["latest_run"] {
@@ -449,10 +490,18 @@ export class ApiClient {
 		});
 	}
 
-	startPipeline(projectId: string, idempotencyKey: string, demandRevision: number, call?: CallOptions): Promise<StartedPipeline> {
+	startPipeline(
+		projectId: string,
+		idempotencyKey: string,
+		demandRevision: number,
+		call?: CallOptions,
+		researchBudget?: ResearchBudget,
+	): Promise<StartedPipeline> {
+		const body: { demand_revision: number; research_budget?: ResearchBudget } = { demand_revision: demandRevision };
+		if (researchBudget) body.research_budget = researchBudget;
 		return this.request(`/api/projects/${encodeURIComponent(projectId)}/pipeline`, {
 			method: "POST",
-			json: { demand_revision: demandRevision },
+			json: body,
 			headers: { "Idempotency-Key": idempotencyKey },
 			call,
 		}).then((payload) => {
@@ -469,6 +518,34 @@ export class ApiClient {
 
 	getPipeline(projectId: string, pipelineId: string, call?: CallOptions): Promise<Pipeline> {
 		return this.request(`/api/projects/${encodeURIComponent(projectId)}/pipeline/${encodeURIComponent(pipelineId)}`, { call }).then(asPipeline);
+	}
+
+	/**
+	 * The tasks of a project. `active=true` returns the tasks that are still running
+	 * or whose report is still generating. It replaces the session storage memory
+	 * of the last pipeline id: a refresh must find the task again.
+	 */
+	listProjectPipelines(projectId: string, options: { active?: boolean; limit?: number } = {}, call?: CallOptions): Promise<PipelineListItem[]> {
+		const query = new URLSearchParams();
+		if (options.active !== undefined) query.set("active", options.active ? "true" : "false");
+		query.set("limit", String(options.limit ?? 20));
+		return this.request(`/api/projects/${encodeURIComponent(projectId)}/pipelines?${query}`, { call }).then((payload) => {
+			const row = asRecord(payload, "pipelines");
+			if (!Array.isArray(row.pipelines)) throw new ApiError(0, "invalid_response", { key: "pipelines" });
+			return row.pipelines.map(asPipelineListItem);
+		});
+	}
+
+	/**
+	 * The frozen analysis of one run. Exactly one of `pipelineId` and `runId`
+	 * may be given; the backend refuses a request that carries both or neither.
+	 * The result never mixes two runs.
+	 */
+	getAnalysis(projectId: string, selector: { pipelineId?: string; runId?: string }, call?: CallOptions): Promise<Analysis> {
+		const query = new URLSearchParams();
+		if (selector.pipelineId) query.set("pipeline_id", selector.pipelineId);
+		if (selector.runId) query.set("run_id", selector.runId);
+		return this.request(`/api/projects/${encodeURIComponent(projectId)}/analysis?${query}`, { call }).then(asAnalysis);
 	}
 
 	startRun(projectId: string, idempotencyKey: string, call?: CallOptions): Promise<StartedRun> {
@@ -721,9 +798,271 @@ function asPipeline(value: unknown): Pipeline {
 		status: asString(row, "status"),
 		stage: asOptionalString(row.stage),
 		error: asOptionalString(row.error),
+		decision_version: asOptionalString(row.decision_version),
+		report_id: asOptionalString(row.report_id),
+		report_status: asOptionalString(row.report_status),
+		report_error_code: asOptionalString(row.report_error_code),
+		download_path: asOptionalString(row.download_path),
+		candidates_found: asOptionalNumber(row.candidates_found) ?? 0,
+		models_found: asOptionalNumber(row.models_found) ?? 0,
+		evidence_found: asOptionalNumber(row.evidence_found) ?? 0,
 		stages,
 		created_at: asString(row, "created_at"),
 		updated_at: asString(row, "updated_at"),
+	};
+}
+
+function asPipelineListItem(value: unknown): PipelineListItem {
+	const row = asRecord(value, "pipeline_item");
+	return {
+		pipeline_id: asString(row, "pipeline_id"),
+		run_id: asOptionalString(row.run_id),
+		demand_revision: asOptionalNumber(row.demand_revision),
+		status: asOptionalString(row.status) ?? "",
+		stage: asOptionalString(row.stage),
+		decision_version: asOptionalString(row.decision_version),
+		report_id: asOptionalString(row.report_id),
+		report_status: asOptionalString(row.report_status),
+		created_at: asOptionalString(row.created_at) ?? "",
+		updated_at: asOptionalString(row.updated_at) ?? "",
+	};
+}
+
+function asAnalysisConstraint(value: unknown): AnalysisConstraint {
+	const row = asRecord(value, "constraint");
+	return {
+		constraint_id: asOptionalString(row.constraint_id),
+		attribute_key: asOptionalString(row.attribute_key),
+		attribute_definition: asOptionalString(row.attribute_definition),
+		operator: asOptionalString(row.operator),
+		value: asOptionalString(row.value),
+		unit: asOptionalString(row.unit),
+		importance: asOptionalString(row.importance),
+		source_quote: asOptionalString(row.source_quote),
+	};
+}
+
+function asAnalysisRequirement(value: unknown): AnalysisRequirement {
+	const row = asRecord(value, "analysis_requirement");
+	return {
+		requirement_id: asString(row, "requirement_id"),
+		product_name: asOptionalString(row.product_name),
+		product_category: asOptionalString(row.product_category),
+		quantity: asOptionalNumber(row.quantity),
+		quantity_unit: asOptionalString(row.quantity_unit),
+		constraints: Array.isArray(row.constraints) ? row.constraints.map(asAnalysisConstraint) : [],
+	};
+}
+
+function asAnalysisCandidate(value: unknown): AnalysisCandidate {
+	const row = asRecord(value, "analysis_candidate");
+	return {
+		candidate_id: asString(row, "candidate_id"),
+		requirement_id: asOptionalString(row.requirement_id),
+		supplier_id: asOptionalString(row.supplier_id),
+		product_id: asOptionalString(row.product_id),
+		supplier_name: asOptionalString(row.supplier_name),
+		product_model: asOptionalString(row.product_model),
+		product_name: asOptionalString(row.product_name),
+		stage: asOptionalString(row.stage),
+		evidence_ids: asStringList(row.evidence_ids),
+	};
+}
+
+function asAnalysisCheck(value: unknown): AnalysisCheck {
+	const row = asRecord(value, "analysis_check");
+	return {
+		constraint_id: asOptionalString(row.constraint_id),
+		requirement_id: asOptionalString(row.requirement_id),
+		claim_ids: asStringList(row.claim_ids),
+		status: asOptionalString(row.status),
+		reason_code: asOptionalString(row.reason_code),
+		operation: asOptionalString(row.operation),
+		normalized_actual: asOptionalString(row.normalized_actual),
+		normalized_required: asOptionalString(row.normalized_required),
+		unit: asOptionalString(row.unit),
+		evidence_ids: asStringList(row.evidence_ids),
+		importance: asOptionalString(row.importance),
+	};
+}
+
+function asAnalysisAssessment(value: unknown): AnalysisAssessment {
+	const row = asRecord(value, "analysis_assessment");
+	return {
+		assessment_id: asString(row, "assessment_id"),
+		requirement_id: asOptionalString(row.requirement_id),
+		product_candidate_id: asOptionalString(row.product_candidate_id),
+		product_model_ref: asOptionalString(row.product_model_ref),
+		hard_spec_overall: asOptionalString(row.hard_spec_overall),
+		overall_reason_codes: asStringList(row.overall_reason_codes),
+		hard_constraint_count: asOptionalNumber(row.hard_constraint_count),
+		unresolved_question_ids: asStringList(row.unresolved_question_ids),
+		evaluated_at: asOptionalString(row.evaluated_at),
+		checks: Array.isArray(row.checks) ? row.checks.map(asAnalysisCheck) : [],
+	};
+}
+
+function asDisplayGap(value: unknown): AnalysisDisplayGap {
+	const row = asRecord(value, "display_gap");
+	return {
+		code: asOptionalString(row.code),
+		constraint_id: asOptionalString(row.constraint_id),
+		importance: asOptionalString(row.importance),
+		evidence_ids: asStringList(row.evidence_ids),
+		text_zh: asOptionalString(row.text_zh),
+	};
+}
+
+function asDisplayAction(value: unknown): AnalysisDisplayAction {
+	const row = asRecord(value, "display_action");
+	return {
+		code: asOptionalString(row.code),
+		constraint_id: asOptionalString(row.constraint_id),
+		text_zh: asOptionalString(row.text_zh),
+	};
+}
+
+function asDecisionDisplay(value: unknown): AnalysisDecisionDisplay | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	const row = value as Record<string, unknown>;
+	const originals = asOptionalRecord(row.untranslated_originals);
+	return {
+		version: asOptionalString(row.version),
+		basis: asOptionalString(row.basis),
+		summary_code: asOptionalString(row.summary_code),
+		summary_zh: asOptionalString(row.summary_zh),
+		gaps: Array.isArray(row.gaps) ? row.gaps.map(asDisplayGap) : [],
+		next_actions: Array.isArray(row.next_actions) ? row.next_actions.map(asDisplayAction) : [],
+		unresolved_question_ids: asStringList(row.unresolved_question_ids),
+		untranslated_originals: {
+			rationale: originals.rationale === true,
+			gap_count: asOptionalNumber(originals.gap_count) ?? 0,
+			next_action_count: asOptionalNumber(originals.next_action_count) ?? 0,
+		},
+	};
+}
+
+function asAnalysisDecision(value: unknown): AnalysisDecision {
+	const row = asRecord(value, "analysis_decision");
+	return {
+		decision_id: asString(row, "decision_id"),
+		requirement_id: asOptionalString(row.requirement_id),
+		product_candidate_id: asOptionalString(row.product_candidate_id),
+		product_model_ref: asOptionalString(row.product_model_ref),
+		recommendation: asOptionalString(row.recommendation),
+		technical_verdict: asOptionalString(row.technical_verdict),
+		hard_spec_overall: asOptionalString(row.hard_spec_overall),
+		accepted: row.accepted === true,
+		rationale: asOptionalString(row.rationale),
+		evidence_ids: asStringList(row.evidence_ids),
+		decided_at: asOptionalString(row.decided_at),
+		display: asDecisionDisplay(row.display),
+	};
+}
+
+function asPriceFinding(value: unknown): AnalysisPriceFinding {
+	const row = asRecord(value, "price_finding");
+	return {
+		lowest_basis: asOptionalString(row.lowest_basis),
+		lowest_value: asOptionalString(row.lowest_value),
+		saving: asOptionalString(row.saving),
+		saving_percent: asOptionalString(row.saving_percent),
+		comparability: asOptionalString(row.comparability),
+		explanation: asOptionalString(row.explanation),
+		lowest_observation_id: asOptionalString(row.lowest_observation_id),
+	};
+}
+
+function asPriceContext(value: unknown): AnalysisPriceContext {
+	const row = asRecord(value, "price_context");
+	const statistics = row.statistics;
+	const overview = row.overview_statistics;
+	return {
+		requirement_id: asOptionalString(row.requirement_id),
+		product_name: asOptionalString(row.product_name),
+		budget: asOptionalString(row.budget),
+		budget_currency: asOptionalString(row.budget_currency),
+		budget_unit: asOptionalString(row.budget_unit),
+		history_scope: asOptionalString(row.history_scope),
+		history_scope_note: asOptionalString(row.history_scope_note),
+		history_available: row.history_available === true,
+		history_rows: asOptionalNumber(row.history_rows),
+		statistics: statistics && typeof statistics === "object" && !Array.isArray(statistics) ? (statistics as Record<string, unknown>) : null,
+		overview_statistics: overview && typeof overview === "object" && !Array.isArray(overview) ? (overview as Record<string, unknown>) : null,
+		overview_is_not_a_baseline: row.overview_is_not_a_baseline === true,
+		findings: Array.isArray(row.findings) ? row.findings.map(asPriceFinding) : [],
+		notes: asStringList(row.notes),
+	};
+}
+
+function asAnalysisEvidence(value: unknown): AnalysisEvidence {
+	const row = asRecord(value, "analysis_evidence");
+	return {
+		evidence_id: asString(row, "evidence_id"),
+		title: asOptionalString(row.title),
+		url: asOptionalString(row.url),
+		content_sha256: asOptionalString(row.content_sha256),
+		quote: asOptionalString(row.quote),
+		quote_status: asOptionalString(row.quote_status),
+	};
+}
+
+function asSummaryModel(value: unknown): AnalysisSummaryModel {
+	const row = asRecord(value, "summary_model");
+	return {
+		product_model: asOptionalString(row.product_model) ?? "",
+		product_id: asOptionalString(row.product_id) ?? "",
+		candidate_rows: asOptionalNumber(row.candidate_rows) ?? 0,
+		supplier_count: asOptionalNumber(row.supplier_count) ?? 0,
+	};
+}
+
+function asAnalysisSummary(value: unknown): AnalysisSummary {
+	const row = asOptionalRecord(value);
+	return {
+		requirements: asOptionalNumber(row.requirements) ?? 0,
+		candidate_rows: asOptionalNumber(row.candidate_rows) ?? 0,
+		distinct_models: asOptionalNumber(row.distinct_models) ?? 0,
+		distinct_suppliers: asOptionalNumber(row.distinct_suppliers) ?? 0,
+		models: Array.isArray(row.models) ? row.models.map(asSummaryModel) : [],
+		assessments: asOptionalNumber(row.assessments) ?? 0,
+		by_verdict: asCountMap(row.by_verdict),
+		decisions: asOptionalNumber(row.decisions) ?? 0,
+		by_recommendation: asCountMap(row.by_recommendation),
+		evidence: asOptionalNumber(row.evidence) ?? 0,
+		coverage_warnings: asStringList(row.coverage_warnings),
+	};
+}
+
+function asAnalysisReport(value: unknown): AnalysisReport {
+	const row = asOptionalRecord(value);
+	return {
+		report_id: asOptionalString(row.report_id),
+		status: asOptionalString(row.status),
+		error_code: asOptionalString(row.error_code),
+		decision_version: asOptionalString(row.decision_version),
+		download_path: asOptionalString(row.download_path),
+		warning_codes: asStringList(row.warning_codes),
+	};
+}
+
+function asAnalysis(value: unknown): Analysis {
+	const row = asRecord(value, "analysis");
+	return {
+		project_id: asString(row, "project_id"),
+		pipeline_id: asOptionalString(row.pipeline_id) ?? "",
+		run_id: asOptionalString(row.run_id) ?? "",
+		demand_revision: asOptionalNumber(row.demand_revision) ?? 0,
+		research_status: asOptionalString(row.research_status) ?? "",
+		decision_version: asOptionalString(row.decision_version),
+		requirements: Array.isArray(row.requirements) ? row.requirements.map(asAnalysisRequirement) : [],
+		candidates: Array.isArray(row.candidates) ? row.candidates.map(asAnalysisCandidate) : [],
+		assessments: Array.isArray(row.assessments) ? row.assessments.map(asAnalysisAssessment) : [],
+		decisions: Array.isArray(row.decisions) ? row.decisions.map(asAnalysisDecision) : [],
+		price_contexts: Array.isArray(row.price_contexts) ? row.price_contexts.map(asPriceContext) : [],
+		evidence: Array.isArray(row.evidence) ? row.evidence.map(asAnalysisEvidence) : [],
+		summary: asAnalysisSummary(row.summary),
+		report: asAnalysisReport(row.report),
 	};
 }
 

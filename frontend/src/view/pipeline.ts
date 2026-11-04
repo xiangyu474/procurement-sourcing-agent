@@ -9,11 +9,16 @@ const STAGE_LINES: Record<string, string> = {
 };
 
 /**
- * The line for a polled pipeline. B1 has no report stage, so a finished task says the analysis is done.
- * RESEARCH and RESEARCHING are the same step: the sample uses RESEARCH and the prose says RESEARCHING.
+ * The line for a polled pipeline. RESEARCH and RESEARCHING are the same step:
+ * the sample uses RESEARCH and the prose says RESEARCHING.
+ *
+ * The report has its own status. A finished analysis with a report that is
+ * still being written says so instead of claiming the work is done.
  */
-export function pipelineProgressLine(status: string, stage: string | null): string | null {
-	if (status === "COMPLETED") return "已完成";
+export function pipelineProgressLine(status: string, stage: string | null, reportStatus?: string | null): string | null {
+	if (status === "COMPLETED") {
+		return reportStatus === "QUEUED" || reportStatus === "RUNNING" ? "正在生成报告" : "已完成";
+	}
 	if (status === "PARTIAL" || status === "FAILED") return "需要处理";
 	const normalized = stage?.trim().toUpperCase() ?? "";
 	if (STAGE_LINES[normalized]) return STAGE_LINES[normalized];

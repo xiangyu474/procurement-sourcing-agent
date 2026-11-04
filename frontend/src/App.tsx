@@ -17,9 +17,11 @@ export function App() {
 	const collapsed = Boolean(run && isTerminalRun(run.status));
 	const startLabel = workspace.startOffer === "retry" ? "重试" : analysisActive ? "分析进行中" : run ? "再次分析" : "开始分析";
 	const downloadPhase = reportPhase({
-		runStatus: run?.status ?? null,
+		// A task that failed has no report. The button is not shown at all.
+		runStatus: workspace.pipelineStatus === "FAILED" ? "FAILED" : run?.status ?? null,
 		decisionsReady: workspace.candidates.decisionsReady,
 		report: workspace.report.report,
+		analysisReport: workspace.candidates.analysisReport,
 		pending: workspace.report.pending,
 	});
 	const candidateRows = workspace.candidates.rows;
@@ -45,6 +47,11 @@ export function App() {
 				/>
 			}
 		>
+			{!workspace.sessionReady ? (
+				<p className="quiet" data-testid="session-loading">
+					正在建立会话。
+				</p>
+			) : null}
 			{workspace.sessionError ? (
 				<div role="alert" className="abnormal failed">
 					<p>{workspace.sessionError}</p>
@@ -128,12 +135,25 @@ export function App() {
 						<p className="quiet" data-testid="pipeline-line">
 							{workspace.pipelineLine}
 						</p>
-					) : workspace.candidates.progressLine ? (
-						<p className="quiet">{workspace.candidates.progressLine}</p>
 					) : null}
 					{workspace.pipelineNote ? <p data-testid="pipeline-note">{workspace.pipelineNote}</p> : null}
-					{workspace.candidates.listNote ? <p>{workspace.candidates.listNote}</p> : null}
-					{workspace.candidates.loading ? <p className="quiet">正在读取候选。</p> : null}
+					{workspace.candidates.loadError ? <p className="quiet">{workspace.candidates.loadError}</p> : null}
+					{workspace.candidates.summaryLine ? (
+						<p className="quiet" data-testid="analysis-summary">
+							{workspace.candidates.summaryLine}
+						</p>
+					) : null}
+					{workspace.candidates.recommendationLine ? (
+						<p className="quiet" data-testid="analysis-recommendation">
+							{workspace.candidates.recommendationLine}
+						</p>
+					) : null}
+					{workspace.candidates.warnings.map((warning) => (
+						<p className="quiet" key={warning}>
+							{warning}
+						</p>
+					))}
+					{workspace.candidates.loading ? <p className="quiet">正在读取分析结果。</p> : null}
 					{showEmptyCandidates ? <p>这次没有候选供应商。</p> : null}
 					{candidateRows.length > 0 ? (
 						<div className="split">
@@ -143,6 +163,7 @@ export function App() {
 								evidence={workspace.candidates.evidence}
 								evidenceError={workspace.candidates.evidenceError}
 								onOpenEvidence={workspace.candidates.openEvidence}
+								onSelect={workspace.candidates.select}
 							/>
 						</div>
 					) : null}

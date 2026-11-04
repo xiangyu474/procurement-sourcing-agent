@@ -237,4 +237,80 @@ describe("ApiClient", () => {
 		await expect(client(fetchImpl).getProject("p1")).rejects.toMatchObject({ code: "unauthorized" });
 		expect(fetchImpl).toHaveBeenCalledTimes(1);
 	});
+
+	it("reads the frozen analysis of one run and keeps only displayable fields", async () => {
+		const fetchImpl = vi.fn(async () =>
+			jsonResponse({
+				project_id: "p1",
+				pipeline_id: "pipe-1",
+				run_id: "run-1",
+				demand_revision: 1,
+				research_status: "COMPLETED",
+				decision_version: "abc123",
+				requirements: [{ requirement_id: "r1", product_name: "摄像机", constraints: [] }],
+				candidates: [{ candidate_id: "c1", requirement_id: "r1", supplier_name: "海康威视", product_model: "DS-1", stage: "DISCOVERED_LONG_LIST", evidence_ids: ["ev_1"] }],
+				assessments: [{ assessment_id: "a1", requirement_id: "r1", product_candidate_id: "c1", product_model_ref: "DS-1", hard_spec_overall: "PASS", checks: [] }],
+				decisions: [{
+					decision_id: "d1",
+					requirement_id: "r1",
+					product_candidate_id: "c1",
+					product_model_ref: "DS-1",
+					recommendation: "SHORTLIST",
+					technical_verdict: "VERIFIED_PASS",
+					hard_spec_overall: "PASS",
+					accepted: true,
+					rationale: "the model did not confirm the pixel count",
+					display: { summary_code: "RECOMMENDED_INQUIRY_VERIFIED", summary_zh: "核验通过。", gaps: [], next_actions: [], untranslated_originals: { rationale: true, gap_count: 0, next_action_count: 0 } },
+				}],
+				price_contexts: [{ requirement_id: "r1", product_name: "摄像机", budget: "500", budget_currency: "CNY", history_scope: "NONE", history_available: false, findings: [], notes: [] }],
+				evidence: [{ evidence_id: "ev_1", title: "页", url: "https://example.com/a", content_sha256: "abc", quote: "摘录", quote_status: "ORIGINAL" }],
+				summary: {
+					requirements: 1,
+					candidate_rows: 1,
+					distinct_models: 1,
+					distinct_suppliers: 1,
+					models: [{ product_model: "DS-1", product_id: "p1", candidate_rows: 1, supplier_count: 1 }],
+					assessments: 1,
+					by_verdict: { PASS: 1 },
+					decisions: 1,
+					by_recommendation: { SHORTLIST: 1 },
+					evidence: 1,
+					coverage_warnings: [],
+				},
+				report: { report_id: "rep-1", status: "COMPLETED", error_code: null, decision_version: "abc123", download_path: "/api/projects/p1/reports/rep-1/download", warning_codes: [] },
+			}),
+		);
+		const analysis = await client(fetchImpl).getAnalysis("p1", { runId: "run-1" });
+		const [analysisUrl] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+		expect(analysisUrl).toBe("http://gateway.test/api/projects/p1/analysis?run_id=run-1");
+		expect(analysis.summary.distinct_models).toBe(1);
+		expect(analysis.summary.by_verdict.PASS).toBe(1);
+		expect(analysis.decisions[0].display?.summary_zh).toBe("核验通过。");
+		expect(analysis.report.download_path).toBe("/api/projects/p1/reports/rep-1/download");
+		expect(analysis.price_contexts[0].history_scope).toBe("NONE");
+	});
+
+	it("asks for the analysis by pipeline or by run, never both", async () => {
+		const fetchImpl = vi.fn(async () => jsonResponse({ project_id: "p1", pipeline_id: "pipe-1", run_id: "run-1", demand_revision: 1, research_status: "COMPLETED" }));
+		const api = client(fetchImpl);
+		await api.getAnalysis("p1", { pipelineId: "pipe-1" });
+		const [pipelineUrl] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+		expect(pipelineUrl).toContain("pipeline_id=pipe-1");
+		expect(pipelineUrl).not.toContain("run_id");
+	});
+
+	it("lists the tasks of a project so a refresh can find the running one", async () => {
+		const fetchImpl = vi.fn(async () =>
+			jsonResponse({
+				project_id: "p1",
+				pipelines: [{ pipeline_id: "pipe-1", run_id: "run-1", demand_revision: 1, status: "RUNNING", stage: "RESEARCH", decision_version: null, report_id: null, report_status: "NOT_STARTED", created_at: "2026-11-04T00:00:00.000Z", updated_at: "2026-11-04T00:00:00.000Z" }],
+				has_more: false,
+			}),
+		);
+		const items = await client(fetchImpl).listProjectPipelines("p1", { active: true, limit: 20 });
+		const [listUrl] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+		expect(listUrl).toBe("http://gateway.test/api/projects/p1/pipelines?active=true&limit=20");
+		expect(items[0].pipeline_id).toBe("pipe-1");
+		expect(items[0].report_status).toBe("NOT_STARTED");
+	});
 });

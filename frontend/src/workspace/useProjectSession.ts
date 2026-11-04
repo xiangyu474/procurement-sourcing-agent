@@ -13,7 +13,7 @@ import {
 	type UiError,
 } from "../api/adapter";
 import type { ApiClient } from "../api/client";
-import { ApiError, type CompileJob, type Pipeline, type Project, type ProjectRunSummary, type ProjectSummary, type Run, type StartedPipeline } from "../api/types";
+import { ApiError, type CompileJob, type Pipeline, type PipelineListItem, type Project, type ProjectRunSummary, type ProjectSummary, type Run, type StartedPipeline } from "../api/types";
 import { pipelineProblemLine, pipelineProgressLine } from "../view/pipeline";
 import { loadDraft, saveDraft } from "../storage";
 import { newIdempotencyKey, readPipelineId, readPipelineKey, writePipelineId, writePipelineKey } from "./pipelineState";
@@ -24,6 +24,8 @@ import type { RunPort } from "./useRunWatch";
 const ACTIVE_KEY = "psi.activeProjectId";
 const DEMAND_CHANGED = "需求刚更新过，请确认后再开始。";
 const ANALYSIS_NOT_STARTED = "分析没能启动。";
+/** The report starts right after the decision snapshot. It is not waited for forever. */
+const REPORT_START_POLLS = 20;
 
 export type ProjectSession = {
 	projects: ProjectSummary[];
@@ -47,6 +49,8 @@ export type ProjectSession = {
 	pipelineLine: string | null;
 	pipelineNote: string | null;
 	pipelineActive: boolean;
+	pipelineStatus: string | null;
+	reportStatus: string | null;
 	startOffer: "retry" | null;
 };
 
@@ -63,7 +67,7 @@ function writeStamp(projectId: string, revision: number): void {
 	sessionStorage.setItem(stampKey(projectId), String(revision));
 }
 
-export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: RunPort): ProjectSession {
+export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: RunPort, ready: boolean): ProjectSession {
 	const [projects, setProjects] = useState<ProjectSummary[]>([]);
 	const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
 	const [project, setProject] = useState<Project | null>(null);
@@ -77,6 +81,8 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 	const [pipelineLine, setPipelineLine] = useState<string | null>(null);
 	const [pipelineNote, setPipelineNote] = useState<string | null>(null);
 	const [pipelineActive, setPipelineActive] = useState(false);
+	const [pipelineStatus, setPipelineStatus] = useState<string | null>(null);
+	const [reportStatus, setReportStatus] = useState<string | null>(null);
 	const [startOffer, setStartOffer] = useState<"retry" | null>(null);
 	const runHistoryRef = useRef<ProjectRunSummary[]>([]);
 	const pipelineActiveRef = useRef(false);
@@ -121,8 +127,10 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 	}
 
 	function showPipeline(snapshot: Pipeline): void {
-		setPipelineLine(pipelineProgressLine(snapshot.status, snapshot.stage));
+		setPipelineStatus(snapshot.status);
+		setPipelineLine(pipelineProgressLine(snapshot.status, snapshot.stage, snapshot.report_status));
 		setPipelineNote(pipelineProblemLine(snapshot.status, snapshot.error, snapshot.stages));
+		setReportStatus(snapshot.report_status);
 	}
 
 	/** The runs row can appear after the pipeline id. A 404 is ignored so the next poll can bind it. */
@@ -145,11 +153,13 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		}
 	}
 
-	/** Poll the saved pipeline. Returns false when B1 has no such task, so the caller can fall back to the run list. */
+	/** Poll the saved pipeline. Returns false when the task is gone, so the caller can fall back. */
 	async function followPipeline(projectId: string, pipelineId: string, signal: AbortSignal): Promise<boolean> {
 		markPipelineActive(true);
 		followedRunRef.current = null;
 		let missedRun = 0;
+		let reportWait = 0;
+		let pollFailed = false;
 		while (!signal.aborted) {
 			let snapshot: Pipeline;
 			try {
@@ -161,9 +171,15 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 					markPipelineActive(false);
 					setPipelineLine(null);
 					setPipelineNote(null);
+					setReportStatus(null);
 					return false;
 				}
-				setError(messageForApiError(caught));
+				// A read that failed once is not a broken task. The line stays and the
+				// error is taken away when the next read succeeds.
+				if (!pollFailed) {
+					pollFailed = true;
+					setError(messageForApiError(caught));
+				}
 				try {
 					await sleep(POLL_INTERVAL_MS, signal);
 				} catch (sleepError) {
@@ -172,6 +188,10 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 				continue;
 			}
 			if (signal.aborted) return true;
+			if (pollFailed) {
+				pollFailed = false;
+				setError(null);
+			}
 			showPipeline(snapshot);
 			const terminal = snapshot.status === "COMPLETED" || snapshot.status === "PARTIAL" || snapshot.status === "FAILED";
 			if (terminal) markPipelineActive(false);
@@ -188,6 +208,29 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 					}
 					continue;
 				}
+				// The report has its own status. A finished analysis is not a finished
+				// report, so the task keeps being read until the report settles.
+				const reportRunning = snapshot.report_status === "QUEUED" || snapshot.report_status === "RUNNING";
+				const reportSettled = snapshot.report_status === "COMPLETED" || snapshot.report_status === "FAILED";
+				if (snapshot.status === "FAILED") return true;
+				if (reportRunning) {
+					try {
+						await sleep(POLL_INTERVAL_MS, signal);
+					} catch (caught) {
+						if (isAbort(caught) || signal.aborted) return true;
+					}
+					continue;
+				}
+				if (!reportSettled) {
+					reportWait += 1;
+					if (reportWait >= REPORT_START_POLLS) return true;
+					try {
+						await sleep(POLL_INTERVAL_MS, signal);
+					} catch (caught) {
+						if (isAbort(caught) || signal.aborted) return true;
+					}
+					continue;
+				}
 				return true;
 			}
 			try {
@@ -197,6 +240,36 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 			}
 		}
 		return true;
+	}
+
+	/**
+	 * Find the task of this project again after a refresh. The backend lists the
+	 * tasks, so the page does not depend on what the tab happened to remember.
+	 */
+	async function recoverPipeline(projectId: string, signal: AbortSignal): Promise<boolean> {
+		let items: PipelineListItem[] = [];
+		try {
+			items = await clientRef.current.listProjectPipelines(projectId, { active: true, limit: 20 }, { signal });
+		} catch (caught) {
+			if (isAbort(caught) || signal.aborted) return true;
+			return false;
+		}
+		if (items.length === 0) {
+			try {
+				// The most recent task of the project, running or not. Its state and
+				// its reason are shown again after a refresh.
+				const recent = await clientRef.current.listProjectPipelines(projectId, { limit: 20 }, { signal });
+				items = recent;
+			} catch (caught) {
+				if (isAbort(caught) || signal.aborted) return true;
+				items = [];
+			}
+		}
+		const target = items[0];
+		if (!target) return false;
+		const followed = await followPipeline(projectId, target.pipeline_id, signal);
+		if (followed) writePipelineId(projectId, target.pipeline_id);
+		return followed;
 	}
 
 	function remember(projectId: string | null): void {
@@ -238,6 +311,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 	}
 
 	useEffect(() => {
+		if (!ready) return;
 		const controller = new AbortController();
 		listAbortRef.current = controller;
 		void (async () => {
@@ -253,12 +327,12 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		return () => controller.abort();
 		// The catalogue is loaded once. Selecting a project has its own effect.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, []);
+	}, [ready]);
 
 	useEffect(() => {
 		const projectId = activeProjectId;
 		runsRef.current.reset();
-		if (!projectId) {
+		if (!projectId || !ready) {
 			setProject(null);
 			setCompileView(null);
 			setText("");
@@ -267,6 +341,8 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 			markPipelineActive(false);
 			setPipelineLine(null);
 			setPipelineNote(null);
+			setPipelineStatus(null);
+			setReportStatus(null);
 			setStartOffer(null);
 			return;
 		}
@@ -297,6 +373,10 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 				const listed = await clientRef.current.listRuns(projectId, { signal });
 				runHistoryRef.current = listed;
 				setRunHistory(listed);
+				// A refresh must find the task again. The backend lists it; the tab
+				// memory is only a fallback.
+				const recovered = await recoverPipeline(projectId, signal);
+				if (signal.aborted || recovered) return;
 				const savedPipeline = readPipelineId(projectId);
 				if (savedPipeline) {
 					const followed = await followPipeline(projectId, savedPipeline, signal);
@@ -312,7 +392,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		})();
 		return () => abortRef.current?.abort();
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [activeProjectId]);
+	}, [activeProjectId, ready]);
 
 	const onCreate = async (title: string) => {
 		if (busy) return false;
@@ -589,6 +669,8 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		pipelineLine,
 		pipelineNote,
 		pipelineActive,
+		pipelineStatus,
+		reportStatus,
 		startOffer,
 	};
 }

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { EvidenceDetail } from "../api/types";
 import type { CandidateRowView, CheckView } from "../view/candidates";
+import { untranslatedNote } from "../view/analysis";
 
 function toneClass(tone: string, kind: "stage" | "tech"): string {
 	if (kind === "tech") {
@@ -19,11 +20,12 @@ function EvidenceBody(props: {
 	evidence: EvidenceDetail | null;
 	evidenceError: string | null;
 	onOpenEvidence: (evidenceId: string) => void;
+	onSelect: (id: string) => void;
 }) {
 	const [showBasis, setShowBasis] = useState(false);
 	const row = props.row;
-	const source = [row.sourceTitle, row.sourceDate].filter(Boolean).join(" · ");
-	const showRepeat = row.stage.label === "已排除" && row.technical.label === "满足" && row.rationale;
+	const source = [row.sourceTitle].filter(Boolean).join(" · ");
+	const pending = untranslatedNote(row.decision);
 	return (
 		<aside className="detail linked" aria-label="所选型号">
 			<h2>{row.model}</h2>
@@ -34,8 +36,47 @@ function EvidenceBody(props: {
 				<span className={toneClass(row.technical.tone, "tech")}>{row.technical.label}</span>
 			</p>
 			<p className="quiet">{row.stage.note}</p>
-			{showRepeat ? <p>{row.rationale}</p> : null}
+			{row.summary ? <p>{row.summary}</p> : null}
+			{row.decision && row.decision.gaps.length > 0 ? (
+				<>
+					<h3>还差什么</h3>
+					<ul className="checks">
+						{row.decision.gaps.map((gap, index) => (
+							<li key={`gap-${index}`}>
+								<p>{gap.text}</p>
+							</li>
+						))}
+					</ul>
+				</>
+			) : null}
+			{row.decision && row.decision.nextActions.length > 0 ? (
+				<>
+					<h3>下一步</h3>
+					<ul className="checks">
+						{row.decision.nextActions.map((action, index) => (
+							<li key={`action-${index}`}>
+								<p>{action.text}</p>
+							</li>
+						))}
+					</ul>
+				</>
+			) : null}
+			{pending ? <p className="quiet">{pending}</p> : null}
 			{row.ambiguous ? <p className="quiet">同一候选有多条核对，这里显示最近一条。</p> : null}
+			{row.members.length > 1 ? (
+				<>
+					<h3>供应来源</h3>
+					<ul className="received">
+						{row.members.map((member) => (
+							<li key={member.id}>
+								<button className="text-button" type="button" onClick={() => props.onSelect(member.id)}>
+									{member.supplier}
+								</button>
+							</li>
+						))}
+					</ul>
+				</>
+			) : null}
 			{source ? (
 				<>
 					<h3>来源</h3>
@@ -69,21 +110,24 @@ function EvidenceBody(props: {
 			{props.evidence && props.evidence.evidence_id === row.evidenceId && props.evidence.snapshot_text ? (
 				<blockquote className="snapshot">{props.evidence.snapshot_text}</blockquote>
 			) : null}
-			<h3>判断</h3>
-			{row.checks.length === 0 ? <p className="quiet">还没有逐条判断。</p> : null}
-			<ul className="checks">
-				{row.checks.map((check, index) => (
-					<li key={`${check.requirement}-${index}`}>
-						<p>
-							{check.requirement}
-							{" · "}
-							<span className={toneClass(check.result.tone, "tech")}>{check.result.label}</span>
-						</p>
-						<p>{check.observed}</p>
-						{check.reason ? <p>{check.reason}</p> : null}
-					</li>
-				))}
-			</ul>
+			{row.checks.length > 0 ? (
+				<>
+					<h3>判断</h3>
+					<ul className="checks">
+						{row.checks.map((check, index) => (
+							<li key={`${check.requirement}-${index}`}>
+								<p>
+									{check.requirement}
+									{" · "}
+									<span className={toneClass(check.result.tone, "tech")}>{check.result.label}</span>
+								</p>
+								<p>{check.observed}</p>
+								{check.reason ? <p>{check.reason}</p> : null}
+							</li>
+						))}
+					</ul>
+				</>
+			) : null}
 			{row.checks.some((check) => check.formula || check.evidence.length > 0) ? (
 				<p>
 					<button className="text-button" type="button" onClick={() => setShowBasis((value) => !value)}>
@@ -101,16 +145,19 @@ function EvidenceBody(props: {
 					))}
 				</ul>
 			) : null}
-			{row.rationale && !showRepeat ? <p>{row.rationale}</p> : null}
-			<h3>价格</h3>
-			<dl className="prices">
-				{row.prices.map((price) => (
-					<div key={price.label}>
-						<dt>{price.label}</dt>
-						<dd>{price.text}</dd>
-					</div>
-				))}
-			</dl>
+			{row.prices.length > 0 ? (
+				<>
+					<h3>价格</h3>
+					<dl className="prices">
+						{row.prices.map((price) => (
+							<div key={price.label}>
+								<dt>{price.label}</dt>
+								<dd>{price.text}</dd>
+							</div>
+						))}
+					</dl>
+				</>
+			) : null}
 		</aside>
 	);
 }
@@ -133,6 +180,7 @@ export function EvidencePane(props: {
 	evidence: EvidenceDetail | null;
 	evidenceError: string | null;
 	onOpenEvidence: (evidenceId: string) => void;
+	onSelect: (id: string) => void;
 }) {
 	if (!props.row) {
 		return (
@@ -141,5 +189,14 @@ export function EvidencePane(props: {
 			</aside>
 		);
 	}
-	return <EvidenceBody key={props.row.id} row={props.row} evidence={props.evidence} evidenceError={props.evidenceError} onOpenEvidence={props.onOpenEvidence} />;
+	return (
+		<EvidenceBody
+			key={props.row.id}
+			row={props.row}
+			evidence={props.evidence}
+			evidenceError={props.evidenceError}
+			onOpenEvidence={props.onOpenEvidence}
+			onSelect={props.onSelect}
+		/>
+	);
 }
