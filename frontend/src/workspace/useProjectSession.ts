@@ -49,6 +49,7 @@ export type ProjectSession = {
 	pipelineLine: string | null;
 	pipelineNote: string | null;
 	pipelineActive: boolean;
+	pipelineStatus: string | null;
 	reportStatus: string | null;
 	startOffer: "retry" | null;
 };
@@ -80,6 +81,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 	const [pipelineLine, setPipelineLine] = useState<string | null>(null);
 	const [pipelineNote, setPipelineNote] = useState<string | null>(null);
 	const [pipelineActive, setPipelineActive] = useState(false);
+	const [pipelineStatus, setPipelineStatus] = useState<string | null>(null);
 	const [reportStatus, setReportStatus] = useState<string | null>(null);
 	const [startOffer, setStartOffer] = useState<"retry" | null>(null);
 	const runHistoryRef = useRef<ProjectRunSummary[]>([]);
@@ -125,6 +127,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 	}
 
 	function showPipeline(snapshot: Pipeline): void {
+		setPipelineStatus(snapshot.status);
 		setPipelineLine(pipelineProgressLine(snapshot.status, snapshot.stage, snapshot.report_status));
 		setPipelineNote(pipelineProblemLine(snapshot.status, snapshot.error, snapshot.stages));
 		setReportStatus(snapshot.report_status);
@@ -209,6 +212,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 				// report, so the task keeps being read until the report settles.
 				const reportRunning = snapshot.report_status === "QUEUED" || snapshot.report_status === "RUNNING";
 				const reportSettled = snapshot.report_status === "COMPLETED" || snapshot.report_status === "FAILED";
+				if (snapshot.status === "FAILED") return true;
 				if (reportRunning) {
 					try {
 						await sleep(POLL_INTERVAL_MS, signal);
@@ -252,14 +256,10 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		}
 		if (items.length === 0) {
 			try {
+				// The most recent task of the project, running or not. Its state and
+				// its reason are shown again after a refresh.
 				const recent = await clientRef.current.listProjectPipelines(projectId, { limit: 20 }, { signal });
-				items = recent.filter(
-					(item) =>
-						item.status === "QUEUED" ||
-						item.status === "RUNNING" ||
-						item.report_status === "QUEUED" ||
-						item.report_status === "RUNNING",
-				);
+				items = recent;
 			} catch (caught) {
 				if (isAbort(caught) || signal.aborted) return true;
 				items = [];
@@ -341,6 +341,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 			markPipelineActive(false);
 			setPipelineLine(null);
 			setPipelineNote(null);
+			setPipelineStatus(null);
 			setReportStatus(null);
 			setStartOffer(null);
 			return;
@@ -668,6 +669,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		pipelineLine,
 		pipelineNote,
 		pipelineActive,
+		pipelineStatus,
 		reportStatus,
 		startOffer,
 	};

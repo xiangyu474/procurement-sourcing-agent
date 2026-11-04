@@ -17,7 +17,8 @@ export function App() {
 	const collapsed = Boolean(run && isTerminalRun(run.status));
 	const startLabel = workspace.startOffer === "retry" ? "重试" : analysisActive ? "分析进行中" : run ? "再次分析" : "开始分析";
 	const downloadPhase = reportPhase({
-		runStatus: run?.status ?? null,
+		// A task that failed has no report. The button is not shown at all.
+		runStatus: workspace.pipelineStatus === "FAILED" ? "FAILED" : run?.status ?? null,
 		decisionsReady: workspace.candidates.decisionsReady,
 		report: workspace.report.report,
 		analysisReport: workspace.candidates.analysisReport,

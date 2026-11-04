@@ -31,6 +31,7 @@ const REASONS: Record<string, string> = {
 	SEARCH_PROVIDER_TIMEOUT: "公开检索超时。",
 	SEARCH_PROVIDER_RATE_LIMITED: "公开检索过于频繁，请稍后再试。",
 	RESEARCH_EXECUTION_FAILED: "寻源过程中断。",
+	PIPELINE_STAGE_FAILED: "这次分析没有完成，可以再试一次。",
 	RESEARCH_FAILED: "寻源没有完成。",
 	INVALID_RESEARCH_INPUT: "当前需求无法开始寻源。",
 	RESEARCH_INPUT_REJECTED: "有一条资料地址被拒绝。",
