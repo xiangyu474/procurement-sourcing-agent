@@ -156,6 +156,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		followedRunRef.current = null;
 		let missedRun = 0;
 		let reportWait = 0;
+		let pollFailed = false;
 		while (!signal.aborted) {
 			let snapshot: Pipeline;
 			try {
@@ -170,7 +171,12 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 					setReportStatus(null);
 					return false;
 				}
-				setError(messageForApiError(caught));
+				// A read that failed once is not a broken task. The line stays and the
+				// error is taken away when the next read succeeds.
+				if (!pollFailed) {
+					pollFailed = true;
+					setError(messageForApiError(caught));
+				}
 				try {
 					await sleep(POLL_INTERVAL_MS, signal);
 				} catch (sleepError) {
@@ -179,6 +185,10 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 				continue;
 			}
 			if (signal.aborted) return true;
+			if (pollFailed) {
+				pollFailed = false;
+				setError(null);
+			}
 			showPipeline(snapshot);
 			const terminal = snapshot.status === "COMPLETED" || snapshot.status === "PARTIAL" || snapshot.status === "FAILED";
 			if (terminal) markPipelineActive(false);
