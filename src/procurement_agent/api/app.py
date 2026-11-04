@@ -27,7 +27,7 @@ from procurement_agent.infra.llm import build_chat_model
 from procurement_agent.infra.search import TavilyContentProvider, TavilySearchProvider
 from procurement_agent.ingestion.pptx import extract_pptx_fragments
 from procurement_agent.ingestion.text import extract_text_fragments
-from procurement_agent.ingestion.xlsx import import_historical_xlsx
+from procurement_agent.ingestion.xlsx import HistoryFileRejected, import_historical_xlsx
 from procurement_agent.services.demand_intake import build_demand_intake
 from procurement_agent.services.sourcing_research import (
     ResearchBudgetExceeded,
@@ -274,13 +274,19 @@ async def import_history(payload: ImportHistoryRequest, x_internal_token: str | 
     """Parse an optional historical workbook without mixing it into demand."""
     _require_internal(payload.token or x_internal_token)
     file_bytes = await _fetch_input(payload, payload.source_id)
-    result = await run_in_threadpool(
-        import_historical_xlsx,
-        file_bytes,
-        project_id=payload.project_id,
-        source_file_name=payload.filename,
-        source_file_id=payload.source_id,
-    )
+    try:
+        result = await run_in_threadpool(
+            import_historical_xlsx,
+            file_bytes,
+            project_id=payload.project_id,
+            source_file_name=payload.filename,
+            source_file_id=payload.source_id,
+        )
+    except HistoryFileRejected as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"reason_code": exc.reason_code, "message": exc.message},
+        ) from exc
     if result.sha256 != payload.sha256:
         raise HTTPException(status_code=409, detail="source content hash changed during import")
     return result.model_dump(mode="json")

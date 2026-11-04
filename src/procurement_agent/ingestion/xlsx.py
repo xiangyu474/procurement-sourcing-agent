@@ -22,6 +22,19 @@ from procurement_agent.domain.requirements import HistoricalTransaction, History
 MAX_XLSX_BYTES = 32 * 1024 * 1024
 MAX_HEADER_SCAN_ROWS = 30
 
+
+class HistoryFileRejected(ValueError):
+    """The workbook cannot be read as a historical purchase table.
+
+    The reason is written for a buyer to read, and it carries a code the
+    gateway can pass on without exposing an exception class.
+    """
+
+    def __init__(self, reason_code: str, message: str) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+        self.message = message
+
 FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "order_id": ("采购订单号", "订单号", "采购单号", "采购订单"),
     "line_id": ("订单行号", "行号", "采购订单行号"),
@@ -116,9 +129,12 @@ def import_historical_xlsx(
     id and an explicit duplicate flag.
     """
     if len(file_bytes) > MAX_XLSX_BYTES:
-        raise ValueError(f"XLSX exceeds the {MAX_XLSX_BYTES}-byte limit")
+        raise HistoryFileRejected(
+            "history_file_too_large",
+            f"历史数据文件超过 {MAX_XLSX_BYTES // (1024 * 1024)}MB 上限。",
+        )
     if not file_bytes.startswith(b"PK"):
-        raise ValueError("input is not an XLSX ZIP container")
+        raise HistoryFileRejected("history_file_not_a_workbook", "这个文件不是 Excel 工作簿。")
 
     digest = hashlib.sha256(file_bytes).hexdigest()
     # Dataset identity is workspace/project scoped: the same file imported to
@@ -126,7 +142,15 @@ def import_historical_xlsx(
     # another project's history namespace.
     dataset_id = "hist_" + hashlib.sha256(f"{project_id}:{digest}".encode()).hexdigest()[:24]
     duplicate = digest in (previously_imported_hashes or set())
-    workbook = openpyxl.load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
+    try:
+        workbook = openpyxl.load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
+    except HistoryFileRejected:
+        raise
+    except Exception as exc:
+        raise HistoryFileRejected(
+            "history_file_unreadable",
+            "这个 Excel 文件无法打开，可能已损坏或不是标准的工作簿。",
+        ) from exc
 
     chosen: tuple[Any, int, list[str], dict[str, int]] | None = None
     for sheet in workbook.worksheets:
@@ -137,7 +161,10 @@ def import_historical_xlsx(
         chosen = (sheet, header_row, headers, _field_map(headers))
         break
     if chosen is None:
-        raise ValueError("no worksheet contains a recognizable historical-order header")
+        raise HistoryFileRejected(
+            "history_file_header_not_found",
+            "工作表没有可用的表头：需要采购订单号、产品名称和数量这些列。",
+        )
 
     sheet, header_row, normalized_headers, mapping = chosen
     # Read the original header cells, not the normalized names, for stored rows.

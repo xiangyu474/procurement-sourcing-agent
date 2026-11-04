@@ -3001,8 +3001,19 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 				}),
 			);
 			if (!response.ok) {
-				const detail = await response.text().catch(() => "");
-				return json({ error: "history_import_failed", detail: detail.slice(0, 500) }, response.status);
+				// A rejected workbook is a normal answer for a buyer: say why in
+				// words. Any other failure is reported without the internals.
+				if (response.status === 422) {
+					const body = await response.json().catch(() => ({})) as { detail?: { message?: string; reason_code?: string } };
+					const detail = body.detail ?? {};
+					return json({
+						error: "history_file_rejected",
+						reason_code: detail.reason_code ?? "history_file_rejected",
+						detail: detail.message ?? "这个历史数据文件无法导入。",
+					}, 422);
+				}
+				console.error("history import failed with status", response.status);
+				return json({ error: "history_import_failed", detail: "历史数据导入失败，请稍后重试。" }, 502);
 			}
 			const imported = (await response.json()) as {
 				dataset_id: string;
