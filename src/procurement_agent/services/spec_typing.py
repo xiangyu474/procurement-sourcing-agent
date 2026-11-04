@@ -23,6 +23,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import ValidationError
 
 from procurement_agent.domain.attributes import (
+    APPROVED_ALIASES,
     attribute_terms,
     canonical_attribute_key,
     quote_names_the_quantity,
@@ -83,6 +84,9 @@ def typing_rules_version() -> str:
             "prompt": SYSTEM_PROMPT,
             "schema": TypedClaimBatch.model_json_schema(),
             "guards": TYPING_GUARD_VERSION,
+            # The reviewed groups decide which key a measurement is written
+            # under, so the cache of this layer has to follow them.
+            "aliases": {key: sorted(value) for key, value in APPROVED_ALIASES.items()},
         }
     )
 
