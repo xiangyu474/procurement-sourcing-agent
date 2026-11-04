@@ -11,6 +11,8 @@ export type WorkspaceModel = ProjectSession &
 		candidates: CandidateModel;
 		report: ReportModel;
 		sessionError: string | null;
+		sessionReady: boolean;
+		sessionMode: "guest" | "operator" | "unknown";
 	};
 
 export function useWorkspace(client: ApiClient = createApiClient()): WorkspaceModel {
@@ -18,9 +20,19 @@ export function useWorkspace(client: ApiClient = createApiClient()): WorkspaceMo
 	clientRef.current = client;
 	const session = useGuestSession(clientRef);
 	const runs = useRunWatch(clientRef);
-	const projectSession = useProjectSession(clientRef, runs);
-	const candidates = useCandidates(clientRef, projectSession.project?.id ?? null, runs.run, projectSession.project?.demand_revision ?? null);
-	const report = useReport(clientRef, projectSession.project?.id ?? null, projectSession.project?.title ?? "", runs.run, candidates.decisionsReady);
+	const projectSession = useProjectSession(clientRef, runs, session.ready);
+	const project = projectSession.project;
+	const run = runs.run && runs.run.project_id === project?.id ? runs.run : null;
+	const candidates = useCandidates(clientRef, project?.id ?? null, run?.id ?? null, run?.status ?? null);
+	const report = useReport(
+		clientRef,
+		project?.id ?? null,
+		project?.title ?? "",
+		run,
+		candidates.decisionsReady,
+		candidates.analysisReport,
+		session.mode !== "guest",
+	);
 	return {
 		...projectSession,
 		run: runs.run,
@@ -30,5 +42,7 @@ export function useWorkspace(client: ApiClient = createApiClient()): WorkspaceMo
 		candidates,
 		report,
 		sessionError: session.error,
+		sessionReady: session.ready,
+		sessionMode: session.mode,
 	};
 }

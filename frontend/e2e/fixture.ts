@@ -1,7 +1,11 @@
 /**
  * FIXTURE — browser-test double for the gateway.
- * Imported only by Playwright. The Vite build does not include this module,
- * and the running app never substitutes these responses for a real API call.
+ *
+ * It answers with the published shapes of the frozen analysis API
+ * (`GET /api/projects/{id}/analysis`), the pipeline status API and the guest
+ * session API. The Vite build does not include this module and the running
+ * app never substitutes these responses for a real API call. A fixture run is
+ * not an acceptance of the public demo.
  */
 import type { Page, Route } from "@playwright/test";
 
@@ -9,6 +13,225 @@ type Mode = "partial" | "completed" | "failed" | "compile-failed";
 
 const LONG_TITLE = "集团总部2026年度工业视觉与网络摄像机框架寻源（含多园区、多品牌、超长名称不应撑破项目栏）";
 const LONG_PPTX = "华北区域工业相机及配套镜头年度框架采购技术规格书终版修订-供应商名称也很长.pptx";
+
+type FixtureCandidate = {
+	candidate_id: string;
+	requirement_id: string;
+	supplier_name: string;
+	product_model: string;
+	evidence_ids?: string[];
+};
+
+type FixtureAssessment = {
+	assessment_id: string;
+	requirement_id: string;
+	product_candidate_id: string;
+	product_model_ref?: string;
+	hard_spec_overall: string;
+	overall_reason_codes?: string[];
+	checks?: unknown[];
+	evidence_ids?: string[];
+};
+
+type FixtureDecision = {
+	decision_id: string;
+	requirement_id: string;
+	product_candidate_id: string;
+	product_model_ref?: string;
+	recommendation: string;
+	technical_verdict: string;
+	hard_spec_overall: string;
+	accepted: boolean;
+	rationale?: string;
+	display?: Record<string, unknown>;
+};
+
+type FixtureReport = {
+	report_id?: string | null;
+	status: string;
+	error_code?: string | null;
+	decision_version?: string | null;
+	download_path?: string | null;
+};
+
+export function analysisPayload(input: {
+	projectId: string;
+	pipelineId: string;
+	runId: string;
+	requirements?: unknown[];
+	candidates: FixtureCandidate[];
+	assessments: FixtureAssessment[];
+	decisions: FixtureDecision[];
+	priceContexts?: unknown[];
+	evidence?: unknown[];
+	report?: FixtureReport;
+}): Record<string, unknown> {
+	const candidates = input.candidates.map((item) => ({
+		candidate_id: item.candidate_id,
+		requirement_id: item.requirement_id,
+		supplier_id: `s-${item.candidate_id}`,
+		product_id: `p-${item.requirement_id}`,
+		supplier_name: item.supplier_name,
+		product_model: item.product_model,
+		product_name: item.product_model,
+		stage: "DISCOVERED_LONG_LIST",
+		rationale: null,
+		evidence_ids: item.evidence_ids ?? [],
+		open_questions: [],
+	}));
+	const assessments = input.assessments.map((item) => ({
+		assessment_id: item.assessment_id,
+		requirement_id: item.requirement_id,
+		product_candidate_id: item.product_candidate_id,
+		product_model_ref: item.product_model_ref ?? null,
+		hard_spec_overall: item.hard_spec_overall,
+		overall_reason_codes: item.overall_reason_codes ?? [],
+		hard_constraint_count: null,
+		unresolved_question_ids: [],
+		evaluated_at: "2026-11-01T13:00:00.000Z",
+		checks: item.checks ?? [],
+	}));
+	const decisions = input.decisions.map((item) => ({
+		decision_id: item.decision_id,
+		requirement_id: item.requirement_id,
+		product_candidate_id: item.product_candidate_id,
+		product_model_ref: item.product_model_ref ?? null,
+		recommendation: item.recommendation,
+		technical_verdict: item.technical_verdict,
+		hard_spec_overall: item.hard_spec_overall,
+		accepted: item.accepted,
+		rationale: item.rationale ?? "internal rationale stays hidden",
+		evidence_ids: [],
+		gaps: [],
+		next_actions: [],
+		priority_rank: null,
+		violations: [],
+		decided_at: "2026-11-01T14:00:00.000Z",
+		display:
+			item.display ??
+			{
+				version: "decision-display-v1",
+				basis: "STRUCTURED_ASSESSMENT_NOT_TRANSLATION",
+				summary_code: "RECOMMENDED_INQUIRY_VERIFIED",
+				summary_zh: "硬性条件的程序核验通过；可作为询价建议，仍需供应商确认。",
+				gaps: [],
+				next_actions: [],
+				unresolved_question_ids: [],
+				untranslated_originals: { rationale: true, gap_count: 0, next_action_count: 0 },
+			},
+	}));
+	const models = new Map<string, { rows: number; suppliers: Set<string> }>();
+	for (const item of candidates) {
+		const key = `${item.requirement_id}::${item.product_model}`;
+		const entry = models.get(key) ?? { rows: 0, suppliers: new Set<string>() };
+		entry.rows += 1;
+		entry.suppliers.add(item.supplier_id);
+		models.set(key, entry);
+	}
+	const byVerdict: Record<string, number> = {};
+	for (const item of assessments) byVerdict[item.hard_spec_overall] = (byVerdict[item.hard_spec_overall] ?? 0) + 1;
+	const byRecommendation: Record<string, number> = {};
+	for (const item of decisions) byRecommendation[item.recommendation] = (byRecommendation[item.recommendation] ?? 0) + 1;
+	const warnings: string[] = [];
+	if (!candidates.length) warnings.push("这次寻源没有找到可核对的候选。");
+	if (models.size === 1 && candidates.length > 0) warnings.push("这次只找到一个型号，候选行来自不同供应商，而不是不同型号。");
+	if (byVerdict.PASS === undefined && assessments.length > 0) warnings.push("没有任何候选通过硬性核验，结论多为证据不足。");
+	const evidence = input.evidence ?? [];
+	const report = input.report ?? { status: "NOT_STARTED", report_id: null, error_code: null, decision_version: null, download_path: null };
+	return {
+		project_id: input.projectId,
+		pipeline_id: input.pipelineId,
+		run_id: input.runId,
+		demand_revision: 1,
+		research_status: "COMPLETED",
+		decision_version: report.decision_version ?? null,
+		requirements: input.requirements ?? [],
+		candidates,
+		assessments,
+		decisions,
+		price_contexts: input.priceContexts ?? [],
+		evidence,
+		summary: {
+			requirements: (input.requirements ?? []).length,
+			candidate_rows: candidates.length,
+			distinct_models: models.size,
+			distinct_suppliers: new Set(candidates.map((item) => item.supplier_id)).size,
+			models: [...models.entries()].map(([key, entry]) => ({
+				product_model: key.split("::")[1] ?? "",
+				product_id: key.split("::")[0] ?? "",
+				candidate_rows: entry.rows,
+				supplier_count: entry.suppliers.size,
+			})),
+			assessments: assessments.length,
+			by_verdict: byVerdict,
+			decisions: decisions.length,
+			by_recommendation: byRecommendation,
+			evidence: evidence.length,
+			coverage_warnings: warnings,
+		},
+		report: { ...report, warning_codes: [] },
+	};
+}
+
+/** The guest session and the pipeline list every fixture needs. */
+async function serveSessionAndPipelines(
+	route: Route,
+	projectId: string,
+	pipelines: unknown[],
+	session: "guest" | "none" = "guest",
+): Promise<boolean> {
+	const request = route.request();
+	const path = new URL(request.url()).pathname;
+	const fulfill = (status: number, body: unknown) =>
+		route.fulfill({ status, contentType: "application/json; charset=utf-8", body: JSON.stringify(body) });
+	if (session === "guest" && request.method() === "POST" && path === "/api/session") {
+		await fulfill(201, { expires_at: "2026-11-05T00:00:00.000Z" });
+		return true;
+	}
+	if (session === "guest" && request.method() === "GET" && path === "/api/session") {
+		await fulfill(200, { expires_at: "2026-11-05T00:00:00.000Z" });
+		return true;
+	}
+	if (request.method() === "GET" && path === `/api/projects/${projectId}/pipelines`) {
+		await fulfill(200, { project_id: projectId, pipelines, has_more: false });
+		return true;
+	}
+	const detail = path.match(/^\/api\/projects\/([^/]+)\/pipeline\/([^/]+)$/);
+	if (request.method() === "GET" && detail) {
+		const found = (pipelines as Array<Record<string, unknown>>).find((item) => item.pipeline_id === decodeURIComponent(detail[2]));
+		// An unknown task belongs to the fixture that knows it.
+		if (!found) return false;
+		await fulfill(200, {
+			...found,
+			project_id: projectId,
+			error: null,
+			report_error_code: null,
+			download_path: found.report_status === "COMPLETED" ? `/api/projects/${projectId}/reports/report-1/download` : null,
+			candidates_found: 0,
+			models_found: 0,
+			evidence_found: 0,
+			stages: [{ stage: "RESEARCH", status: "COMPLETED", started_at: "2026-10-31T00:03:00.000Z", finished_at: "2026-10-31T00:04:00.000Z", error_code: null }],
+		});
+		return true;
+	}
+	return false;
+}
+
+/** A finished pipeline of a project, so the page can find the task again. */
+function finishedPipeline(pipelineId: string, runId: string): Record<string, unknown> {
+	return {
+		pipeline_id: pipelineId,
+		run_id: runId,
+		demand_revision: 1,
+		status: "COMPLETED",
+		stage: "COMPLETED",
+		decision_version: "version-1",
+		report_id: "report-1",
+		report_status: "COMPLETED",
+		created_at: "2026-10-31T00:03:00.000Z",
+		updated_at: "2026-10-31T00:04:00.000Z",
+	};
+}
 
 export function installFixture(page: Page, mode: Mode): Promise<unknown> {
 	const state = {
@@ -56,6 +279,8 @@ export function installFixture(page: Page, mode: Mode): Promise<unknown> {
 		};
 		const fulfill = (status: number, body: unknown) =>
 			route.fulfill({ status, contentType: "application/json; charset=utf-8", body: JSON.stringify(body) });
+
+		if (await serveSessionAndPipelines(route, state.id, [])) return;
 
 		if (request.method() === "GET" && path === "/api/projects") {
 			await fulfill(200, { projects: state.created ? [projectSummary()] : [] });
@@ -172,7 +397,6 @@ export function installFixture(page: Page, mode: Mode): Promise<unknown> {
 				purpose,
 				revision: 1,
 				sha256: "def",
-				r2_key: "workspaces/default/projects/secret-object-key",
 			});
 			return;
 		}
@@ -236,6 +460,14 @@ export function installFixture(page: Page, mode: Mode): Promise<unknown> {
 				status: done ? terminal : "RUNNING",
 				stage: done ? terminal : "RESEARCH",
 				error: null,
+				decision_version: done ? "version-1" : null,
+				report_id: done ? "report-1" : null,
+				report_status: done ? "COMPLETED" : "NOT_STARTED",
+				report_error_code: null,
+				download_path: done ? `/api/projects/${state.id}/reports/report-1/download` : null,
+				candidates_found: 0,
+				models_found: 0,
+				evidence_found: 0,
 				stages: [
 					{
 						stage: "RESEARCH",
@@ -248,6 +480,14 @@ export function installFixture(page: Page, mode: Mode): Promise<unknown> {
 				created_at: "2026-10-31T00:03:00.000Z",
 				updated_at: "2026-10-31T00:04:00.000Z",
 			});
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${state.id}/analysis`) {
+			await fulfill(200, analysisPayload({ projectId: state.id, pipelineId: state.pipelineId, runId: state.runId, candidates: [], assessments: [], decisions: [] }));
+			return;
+		}
+		if (request.method() === "GET" && path === `/api/projects/${state.id}/reports`) {
+			await fulfill(200, { project_id: state.id, reports: [] });
 			return;
 		}
 		if (request.method() === "POST" && path === `/api/projects/${state.id}/runs`) {
@@ -282,18 +522,6 @@ export function installFixture(page: Page, mode: Mode): Promise<unknown> {
 			});
 			return;
 		}
-		if (request.method() === "GET" && path === `/api/projects/${state.id}/candidates`) {
-			await fulfill(200, { candidates: [] });
-			return;
-		}
-		if (request.method() === "GET" && (path === `/api/projects/${state.id}/spec-assessments/status` || path === `/api/projects/${state.id}/decisions/status`)) {
-			await fulfill(200, { status: "IDLE", job_id: null, demand_revision: state.demandRevision, error: null, updated_at: null });
-			return;
-		}
-		if (request.method() === "GET" && (path === `/api/projects/${state.id}/spec-assessments` || path === `/api/projects/${state.id}/decisions`)) {
-			await fulfill(200, { project_id: state.id, assessments: [], decisions: [] });
-			return;
-		}
 		if (request.method() === "GET" && path === `/api/runs/${state.runId}/research`) {
 			await fulfill(200, {
 				metrics: {
@@ -325,6 +553,14 @@ export function installCatalogue(page: Page, count = 50): Promise<unknown> {
 		const path = new URL(request.url()).pathname;
 		const fulfill = (status: number, body: unknown) =>
 			route.fulfill({ status, contentType: "application/json; charset=utf-8", body: JSON.stringify(body) });
+		if (request.method() === "POST" && path === "/api/session") {
+			await fulfill(201, { expires_at: "2026-11-05T00:00:00.000Z" });
+			return;
+		}
+		if (request.method() === "GET" && path === "/api/session") {
+			await fulfill(200, { expires_at: "2026-11-05T00:00:00.000Z" });
+			return;
+		}
 		if (request.method() === "GET" && path === "/api/projects") {
 			await fulfill(200, { projects });
 			return;
@@ -363,139 +599,103 @@ export function installReview(page: Page, variant: "mixed" | "none" = "mixed"): 
 		{
 			requirement_id: "r1",
 			product_name: "工业摄像机",
-			constraints: [{ constraint_id: "k-pixel", attribute_definition: "像素" }],
-			planned_total_budget: { kind: "PLANNED_BUDGET", value: "100", currency: "CNY", unit: "元/套" },
-			public_reference: { kind: "PUBLIC_REFERENCE", value: "128", currency: "CNY", unit: "元/台" },
+			product_category: "摄像机",
+			quantity: 10,
+			quantity_unit: "台",
+			constraints: [{ constraint_id: "k-pixel", attribute_key: "pixel", attribute_definition: "像素", operator: "GTE", value: "4", unit: "MP", importance: "HARD", source_quote: null }],
 		},
 		{
 			requirement_id: "r2",
 			product_name: "云台探头",
+			product_category: "摄像机",
+			quantity: 2,
+			quantity_unit: "台",
 			constraints: [],
-			history_scope: "TABLE_OVERVIEW",
-			history_price: { kind: "HISTORICAL_TRANSACTION", value: "77", currency: "CNY" },
 		},
 	];
-	const evidence = {
-		evidence_id: "ev_pass",
-		source_url: "https://example.com/ds-2cd",
-		title: "产品规格页",
-		retrieved_at: "2026-10-31T01:16:00.000Z",
-		excerpt: "500万像素，防护等级 IP67。",
-	};
+	const evidence = [
+		{ evidence_id: "ev_pass", url: "https://example.com/ds-2cd", title: "产品规格页", content_sha256: "abc", quote: "500万像素，防护等级 IP67。", quote_status: "ORIGINAL" },
+	];
 	const candidates = variant === "none" ? [] : [
-		{
-			candidate_id: "c-pass",
-			requirement_id: "r1",
-			stage: "RFQ_SHORTLIST",
-			rationale: null,
-			open_questions: [],
-			first_seen_run_id: REVIEW_RUN,
-			last_seen_run_id: REVIEW_RUN,
-			updated_at: "2026-10-31T02:00:00.000Z",
-			supplier: { supplier_id: "s-pass", display_name: "海康威视", website_domain: "hikvision.com", identity_status: "OBSERVED", role: "MANUFACTURER" },
-			product: { product_id: "p-pass", product_name: "网络摄像机", brand: "海康威视", model: "DS-2CD2347G2-LU", product_category: "摄像机" },
-			evidence: [evidence],
-		},
-		{
-			candidate_id: "c-unknown",
-			requirement_id: "r1",
-			stage: "DISCOVERED_LONG_LIST",
-			rationale: null,
-			open_questions: [],
-			first_seen_run_id: REVIEW_RUN,
-			last_seen_run_id: REVIEW_RUN,
-			updated_at: "2026-10-31T02:01:00.000Z",
-			supplier: { supplier_id: "s-unknown", display_name: "华北区域工业视觉设备联合体（含多园区超长供应商名称不应撑破表格）", website_domain: null, identity_status: "OBSERVED", role: "DISTRIBUTOR" },
-			product: { product_id: "p-unknown", product_name: "网络摄像机", brand: null, model: "DH-IPC-HFW5442", product_category: "摄像机" },
-			evidence: [],
-		},
-		{
-			candidate_id: "c-fail",
-			requirement_id: "r1",
-			stage: "EXCLUDED",
-			rationale: null,
-			open_questions: [],
-			first_seen_run_id: REVIEW_RUN,
-			last_seen_run_id: REVIEW_RUN,
-			updated_at: "2026-10-31T02:02:00.000Z",
-			supplier: { supplier_id: "s-fail", display_name: "宇视科技", website_domain: null, identity_status: "OBSERVED", role: "MANUFACTURER" },
-			product: { product_id: "p-fail", product_name: "网络摄像机", brand: "宇视", model: "IPC-B312", product_category: "摄像机" },
-			evidence: [],
-		},
-		{
-			candidate_id: "c-verify",
-			requirement_id: "r1",
-			stage: "NEEDS_VERIFICATION",
-			rationale: null,
-			open_questions: [],
-			first_seen_run_id: REVIEW_RUN,
-			last_seen_run_id: REVIEW_RUN,
-			updated_at: "2026-10-31T02:03:00.000Z",
-			supplier: { supplier_id: "s-verify", display_name: "大华股份", website_domain: null, identity_status: "OBSERVED", role: "MANUFACTURER" },
-			product: { product_id: "p-verify", product_name: "网络摄像机", brand: "大华", model: "DH-SD-VERIFY", product_category: "摄像机" },
-			evidence: [],
-		},
-		{
-			candidate_id: "c-overview",
-			requirement_id: "r2",
-			stage: "DISCOVERED_LONG_LIST",
-			rationale: null,
-			open_questions: [],
-			first_seen_run_id: REVIEW_RUN,
-			last_seen_run_id: REVIEW_RUN,
-			updated_at: "2026-10-31T02:04:00.000Z",
-			supplier: { supplier_id: "s-overview", display_name: "目录中的供应商", website_domain: null, identity_status: "OBSERVED", role: "DISTRIBUTOR" },
-			product: { product_id: "p-overview", product_name: "云台探头", brand: null, model: "PTZ-OVERVIEW", product_category: "摄像机" },
-			evidence: [],
-		},
+		{ candidate_id: "c-pass", requirement_id: "r1", supplier_name: "海康威视", product_model: "DS-2CD2347G2-LU", evidence_ids: ["ev_pass"] },
+		{ candidate_id: "c-unknown", requirement_id: "r1", supplier_name: "华北区域工业视觉设备联合体（含多园区超长供应商名称不应撑破表格）", product_model: "DH-IPC-HFW5442", evidence_ids: [] },
+		{ candidate_id: "c-fail", requirement_id: "r1", supplier_name: "宇视科技", product_model: "IPC-B312", evidence_ids: [] },
+		{ candidate_id: "c-verify", requirement_id: "r1", supplier_name: "大华股份", product_model: "DH-SD-VERIFY", evidence_ids: [] },
+		{ candidate_id: "c-overview", requirement_id: "r2", supplier_name: "目录中的供应商", product_model: "PTZ-OVERVIEW", evidence_ids: [] },
 	];
-	const check = (status: string, explanation: string) => ({
+	const check = (status: string) => ({
 		constraint_id: "k-pixel",
 		requirement_id: "r1",
+		claim_ids: [],
 		status,
-		reason_code: status === "PASS" ? "VERIFIED_COMPARISON" : status === "FAIL" ? "VERIFIED_COMPARISON" : "MISSING_CLAIM",
-		operation: "actual >= required",
+		reason_code: status === "UNKNOWN" ? "MISSING_CLAIM" : "VERIFIED_COMPARISON",
+		operation: "4.9152 MP GTE 4 MP",
 		normalized_actual: status === "UNKNOWN" ? null : status === "FAIL" ? "2" : "5",
 		normalized_required: "4",
 		unit: "MP",
 		evidence_ids: ["ev_pass"],
-		explanation,
 		importance: "HARD",
 	});
-	const assessment = (id: string, candidateId: string, overall: string, explanation: string, requirementId = "r1") => ({
+	const assessment = (id: string, candidateId: string, model: string, overall: string) => ({
 		assessment_id: id,
-		requirement_id: requirementId,
+		requirement_id: candidateId === "c-overview" ? "r2" : "r1",
 		product_candidate_id: candidateId,
-		product_model_ref: null,
-		demand_revision: 1,
+		product_model_ref: model,
 		hard_spec_overall: overall,
 		overall_reason_codes: [],
 		hard_constraint_count: 1,
-		calculator_version: "0.1.0",
-		dsl_schema_version: "1.0",
-		assessment: { checks: [check(overall, explanation)] },
+		checks: candidateId === "c-overview" ? [] : [check(overall)],
 		evidence_ids: ["ev_pass"],
-		evaluated_at: "2026-10-31T03:00:00.000Z",
-		created_at: "2026-10-31T03:00:00.000Z",
 	});
-	const decision = (id: string, candidateId: string, recommendation: string, verdict: string, overall: string, accepted: boolean) => ({
-		decision_id: id,
-		requirement_id: "r1",
-		product_candidate_id: candidateId,
-		product_model_ref: null,
-		recommendation,
-		technical_verdict: verdict,
-		hard_spec_overall: overall,
-		accepted,
-		priority_rank: null,
-		rationale: "依据已核对的技术结论留下这条记录。",
-		evidence_ids: ["ev_pass"],
-		gaps: [],
-		next_actions: [],
-		violations: [],
-		decided_at: "2026-10-31T04:00:00.000Z",
-		created_at: "2026-10-31T04:00:00.000Z",
+	const display = (code: string, text: string) => ({
+		version: "decision-display-v1",
+		basis: "STRUCTURED_ASSESSMENT_NOT_TRANSLATION",
+		summary_code: code,
+		summary_zh: text,
+		gaps: code === "EVIDENCE_INSUFFICIENT" ? [{ code: "MISSING_CLAIM", constraint_id: "k-pixel", importance: "HARD", evidence_ids: [], text_zh: "尚未找到支持该项指标的可用资料。" }] : [],
+		next_actions: code === "EVIDENCE_INSUFFICIENT" ? [{ code: "MISSING_CLAIM", constraint_id: "k-pixel", text_zh: "补充该型号的对应技术资料并核验来源。" }] : [],
+		unresolved_question_ids: [],
+		untranslated_originals: { rationale: true, gap_count: 0, next_action_count: 0 },
 	});
+	const decisions = variant === "none" ? [] : [
+		{ decision_id: "dec-pass", requirement_id: "r1", product_candidate_id: "c-pass", product_model_ref: "DS-2CD2347G2-LU", recommendation: "SHORTLIST", technical_verdict: "VERIFIED_PASS", hard_spec_overall: "PASS", accepted: true, display: display("RECOMMENDED_INQUIRY_VERIFIED", "硬性条件的程序核验通过；可作为询价建议，仍需供应商确认。") },
+		{ decision_id: "dec-unknown", requirement_id: "r1", product_candidate_id: "c-unknown", product_model_ref: "DH-IPC-HFW5442", recommendation: "SHORTLIST", technical_verdict: "VERIFIED_PASS", hard_spec_overall: "PASS", accepted: false, display: display("GATE_REJECTED", "该建议未通过验证门禁，暂不可采纳。") },
+		{ decision_id: "dec-fail", requirement_id: "r1", product_candidate_id: "c-fail", product_model_ref: "IPC-B312", recommendation: "EXCLUDE", technical_verdict: "VERIFIED_FAIL", hard_spec_overall: "FAIL", accepted: true, display: display("HARD_REQUIREMENT_FAILED", "至少一项硬性条件核验不通过，建议排除。") },
+		{ decision_id: "dec-verify", requirement_id: "r1", product_candidate_id: "c-verify", product_model_ref: "DH-SD-VERIFY", recommendation: "INVESTIGATE", technical_verdict: "UNVERIFIED", hard_spec_overall: "UNKNOWN", accepted: true, display: display("EVIDENCE_INSUFFICIENT", "现有证据不足以判断是否符合全部硬性条件，建议补充核验。") },
+		{ decision_id: "dec-overview", requirement_id: "r2", product_candidate_id: "c-overview", product_model_ref: "PTZ-OVERVIEW", recommendation: "INVESTIGATE", technical_verdict: "UNVERIFIED", hard_spec_overall: "UNKNOWN", accepted: true, display: display("EVIDENCE_INSUFFICIENT", "现有证据不足以判断是否符合全部硬性条件，建议补充核验。") },
+	];
+	const priceContexts = [
+		{
+			requirement_id: "r1",
+			product_name: "工业摄像机",
+			budget: "100",
+			budget_currency: "CNY",
+			budget_unit: "元/套",
+			history_scope: "NONE",
+			history_available: false,
+			history_rows: 0,
+			statistics: null,
+			overview_statistics: null,
+			overview_is_not_a_baseline: false,
+			findings: [{ lowest_basis: "PUBLIC_REFERENCE", lowest_value: "128", saving: null, saving_percent: null, comparability: "COMPARABLE", explanation: null, lowest_observation_id: null }],
+			notes: [],
+		},
+		{
+			requirement_id: "r2",
+			product_name: "云台探头",
+			budget: null,
+			budget_currency: null,
+			budget_unit: null,
+			history_scope: "TABLE_OVERVIEW",
+			history_available: false,
+			history_rows: 0,
+			statistics: null,
+			overview_statistics: { count: 1000, minimum: "77", maximum: "1255", currency: "CNY", unit: "元/台" },
+			overview_is_not_a_baseline: true,
+			findings: [],
+			notes: [],
+		},
+	];
 	const project = {
 		id: REVIEW_PROJECT,
 		title: "工业摄像机寻源",
@@ -511,6 +711,7 @@ export function installReview(page: Page, variant: "mixed" | "none" = "mixed"): 
 		const path = url.pathname;
 		const fulfill = (status: number, body: unknown) =>
 			route.fulfill({ status, contentType: "application/json; charset=utf-8", body: JSON.stringify(body) });
+		if (await serveSessionAndPipelines(route, REVIEW_PROJECT, [finishedPipeline("pipe-review", REVIEW_RUN)])) return;
 		if (request.method() === "GET" && path === "/api/projects") {
 			await fulfill(200, { projects: [project] });
 			return;
@@ -535,41 +736,24 @@ export function installReview(page: Page, variant: "mixed" | "none" = "mixed"): 
 			await fulfill(200, { analysis_version: 1, compilation: { requirements, issues: [] } });
 			return;
 		}
-		if (request.method() === "GET" && path === `/api/projects/${REVIEW_PROJECT}/candidates`) {
-			await fulfill(200, { candidates: url.searchParams.get("run_id") === REVIEW_RUN ? candidates : [] });
-			return;
-		}
-		if (request.method() === "GET" && path === `/api/projects/${REVIEW_PROJECT}/spec-assessments/status`) {
-			await fulfill(200, { status: variant === "none" ? "IDLE" : "COMPLETED", job_id: variant === "none" ? null : "job-spec", demand_revision: 1, error: null, detail: { assessments: 4 } });
-			return;
-		}
-		if (request.method() === "GET" && path === `/api/projects/${REVIEW_PROJECT}/decisions/status`) {
-			await fulfill(200, { status: variant === "none" ? "IDLE" : "COMPLETED", job_id: variant === "none" ? null : "job-decision", demand_revision: 1, error: null, updated_at: "2026-10-31T05:00:00.000Z", detail: { decisions: 3 } });
-			return;
-		}
-		if (request.method() === "GET" && path === `/api/projects/${REVIEW_PROJECT}/spec-assessments`) {
-			await fulfill(200, {
-				project_id: REVIEW_PROJECT,
+		if (request.method() === "GET" && path === `/api/projects/${REVIEW_PROJECT}/analysis`) {
+			await fulfill(200, analysisPayload({
+				projectId: REVIEW_PROJECT,
+				pipelineId: "pipe-review",
+				runId: REVIEW_RUN,
+				requirements,
+				candidates,
 				assessments: variant === "none" ? [] : [
-					assessment("spc-pass", "c-pass", "PASS", "页面写明 500万像素，满足不低于 4MP。"),
-					assessment("spc-unknown", "c-unknown", "UNKNOWN", "没有读到像素。"),
-					assessment("spc-fail", "c-fail", "FAIL", "读到的像素低于要求。"),
-					assessment("spc-verify", "c-verify", "UNKNOWN", "防护等级还不能从页面确认。"),
-					assessment("spc-overview", "c-overview", "UNKNOWN", "没有对应的规格。", "r2"),
+					assessment("spc-pass", "c-pass", "DS-2CD2347G2-LU", "PASS"),
+					assessment("spc-unknown", "c-unknown", "DH-IPC-HFW5442", "UNKNOWN"),
+					assessment("spc-fail", "c-fail", "IPC-B312", "FAIL"),
+					assessment("spc-verify", "c-verify", "DH-SD-VERIFY", "UNKNOWN"),
+					assessment("spc-overview", "c-overview", "PTZ-OVERVIEW", "UNKNOWN"),
 				],
-			});
-			return;
-		}
-		if (request.method() === "GET" && path === `/api/projects/${REVIEW_PROJECT}/decisions`) {
-			await fulfill(200, {
-				project_id: REVIEW_PROJECT,
-				decisions: variant === "none" ? [] : [
-					decision("dec-pass", "c-pass", "SHORTLIST", "VERIFIED_PASS", "PASS", true),
-					decision("dec-unknown", "c-unknown", "SHORTLIST", "VERIFIED_PASS", "PASS", false),
-					decision("dec-fail", "c-fail", "EXCLUDE", "VERIFIED_FAIL", "FAIL", true),
-					decision("dec-verify", "c-verify", "INVESTIGATE", "UNVERIFIED", "UNKNOWN", true),
-				],
-			});
+				decisions,
+				priceContexts,
+				evidence,
+			}));
 			return;
 		}
 		if (request.method() === "GET" && path === `/api/runs/${REVIEW_RUN}`) {
@@ -585,15 +769,14 @@ export function installReview(page: Page, variant: "mixed" | "none" = "mixed"): 
 				evidence: {
 					evidence_id: "ev_pass",
 					source_type: "WEB",
-					source_url: evidence.source_url,
-					normalized_url: evidence.source_url,
-					title: evidence.title,
+					source_url: "https://example.com/ds-2cd",
+					normalized_url: "https://example.com/ds-2cd",
+					title: "产品规格页",
 					publisher: "example",
-					retrieved_at: evidence.retrieved_at,
+					retrieved_at: "2026-10-31T01:16:00.000Z",
 					locator: null,
-					excerpt: evidence.excerpt,
+					excerpt: "500万像素，防护等级 IP67。",
 					content_sha256: "abc",
-					content_date_hints_json: "[]",
 					snapshot_r2_key: "workspaces/default/secret-snapshot",
 					trust_notes: null,
 					snapshot_text: "页面正文：500万像素。",
@@ -613,15 +796,9 @@ export function installKnownCase(page: Page): Promise<unknown> {
 	const nbn = (index: number) => ({
 		candidate_id: `c-nbn-${index}`,
 		requirement_id: "r1",
-		stage: "RFQ_SHORTLIST",
-		rationale: null,
-		open_questions: [],
-		first_seen_run_id: KNOWN_RUN,
-		last_seen_run_id: KNOWN_RUN,
-		updated_at: "2026-11-01T12:00:00.000Z",
-		supplier: { supplier_id: "s-nbn", display_name: "宁波某供应商", website_domain: null, identity_status: "OBSERVED", role: "DISTRIBUTOR" },
-		product: { product_id: "p-nbn", product_name: "网络摄像机", brand: null, model: "NBN-80052-BA", product_category: "摄像机" },
-		evidence: [{ evidence_id: "ev_nbn", source_url: "https://example.com/nbn", title: "NBN 规格页", retrieved_at: "2026-11-01T08:00:00.000Z", excerpt: "像素不低于 5MP。" }],
+		supplier_name: "宁波某供应商",
+		product_model: "NBN-80052-BA",
+		evidence_ids: ["ev_nbn"],
 	});
 	const candidates = [
 		nbn(1),
@@ -631,33 +808,22 @@ export function installKnownCase(page: Page): Promise<unknown> {
 		{
 			candidate_id: "c-ips",
 			requirement_id: "r1",
-			stage: "EXCLUDED",
-			rationale: null,
-			open_questions: [],
-			first_seen_run_id: KNOWN_RUN,
-			last_seen_run_id: KNOWN_RUN,
-			updated_at: "2026-11-01T12:01:00.000Z",
-			supplier: { supplier_id: "s-ips", display_name: longSupplier, website_domain: null, identity_status: "OBSERVED", role: "MANUFACTURER" },
-			product: { product_id: "p-ips", product_name: "网络摄像机", brand: null, model: "IPS05-R10-OIA4-EXTRA-LONG-MODEL-TOKEN", product_category: "摄像机" },
-			evidence: [{ evidence_id: "ev_ips", source_url: "https://example.com/ips", title: "IPS 规格页", retrieved_at: "2026-11-01T08:05:00.000Z", excerpt: "分辨率约 4.9MP。" }],
+			supplier_name: longSupplier,
+			product_model: "IPS05-R10-OIA4-EXTRA-LONG-MODEL-TOKEN",
+			evidence_ids: ["ev_ips"],
 		},
 		{
 			candidate_id: "c-repeat",
 			requirement_id: "r1",
-			stage: "EXCLUDED",
-			rationale: null,
-			open_questions: [],
-			first_seen_run_id: KNOWN_RUN,
-			last_seen_run_id: KNOWN_RUN,
-			updated_at: "2026-11-01T12:02:00.000Z",
-			supplier: { supplier_id: "s-nbn", display_name: "宁波某供应商", website_domain: null, identity_status: "OBSERVED", role: "DISTRIBUTOR" },
-			product: { product_id: "p-nbn", product_name: "网络摄像机", brand: null, model: "NBN-80052-BA", product_category: "摄像机" },
-			evidence: [{ evidence_id: "ev_nbn", source_url: "https://example.com/nbn", title: "NBN 规格页", retrieved_at: "2026-11-01T08:00:00.000Z", excerpt: "像素不低于 5MP。" }],
+			supplier_name: "宁波某供应商",
+			product_model: "NBN-80052-BA",
+			evidence_ids: ["ev_nbn"],
 		},
 	];
 	const passCheck = {
 		constraint_id: "k-pixel",
 		requirement_id: "r1",
+		claim_ids: [],
 		status: "PASS",
 		reason_code: "VERIFIED_COMPARISON",
 		operation: "5 MP GTE 5 MP",
@@ -665,12 +831,12 @@ export function installKnownCase(page: Page): Promise<unknown> {
 		normalized_required: "5",
 		unit: "MP",
 		evidence_ids: ["ev_nbn"],
-		explanation: "output_resolution is 5 MP and the requirement asks GTE 5 MP: PASS",
 		importance: "HARD",
 	};
 	const failCheck = {
 		constraint_id: "k-pixel",
 		requirement_id: "r1",
+		claim_ids: [],
 		status: "FAIL",
 		reason_code: "VERIFIED_COMPARISON",
 		operation: "4.9152 MP GTE 5 MP",
@@ -678,40 +844,37 @@ export function installKnownCase(page: Page): Promise<unknown> {
 		normalized_required: "5",
 		unit: "MP",
 		evidence_ids: ["ev_ips"],
-		explanation: "output_resolution is 4.9152 MP and the requirement asks GTE 5 MP: FAIL",
 		importance: "HARD",
 	};
-	const assessment = (id: string, candidateId: string, overall: string, check: unknown) => ({
+	const assessment = (id: string, candidateId: string, model: string, overall: string, check: unknown) => ({
 		assessment_id: id,
 		requirement_id: "r1",
 		product_candidate_id: candidateId,
-		demand_revision: 1,
+		product_model_ref: model,
 		hard_spec_overall: overall,
 		overall_reason_codes: ["VERIFIED_COMPARISON"],
 		hard_constraint_count: 1,
-		calculator_version: "0.1.0",
-		dsl_schema_version: "1.0",
-		assessment: { checks: [check], source_refs: ["workspaces/default/projects/secret/demand.pptx"] },
+		checks: [check],
 		evidence_ids: overall === "FAIL" ? ["ev_ips"] : ["ev_nbn"],
-		evaluated_at: "2026-11-01T13:00:00.000Z",
-		created_at: "2026-11-01T13:00:00.000Z",
 	});
-	const decision = (id: string, candidateId: string, recommendation: string, verdict: string, overall: string, rationale: string) => ({
-		decision_id: id,
-		requirement_id: "r1",
-		product_candidate_id: candidateId,
-		recommendation,
-		technical_verdict: verdict,
-		hard_spec_overall: overall,
-		accepted: true,
-		rationale,
-		evidence_ids: ["ev_nbn"],
+	const display = (code: string, text: string) => ({
+		version: "decision-display-v1",
+		basis: "STRUCTURED_ASSESSMENT_NOT_TRANSLATION",
+		summary_code: code,
+		summary_zh: text,
 		gaps: [],
 		next_actions: [],
-		violations: [],
-		decided_at: "2026-11-01T14:00:00.000Z",
-		created_at: "2026-11-01T14:00:00.000Z",
+		unresolved_question_ids: [],
+		untranslated_originals: { rationale: true, gap_count: 0, next_action_count: 0 },
 	});
+	const decisions = [
+		{ decision_id: "dec-nbn-1", requirement_id: "r1", product_candidate_id: "c-nbn-1", product_model_ref: "NBN-80052-BA", recommendation: "SHORTLIST", technical_verdict: "VERIFIED_PASS", hard_spec_overall: "PASS", accepted: true, display: display("RECOMMENDED_INQUIRY_VERIFIED", "硬性条件的程序核验通过；可作为询价建议，仍需供应商确认。") },
+		{ decision_id: "dec-nbn-2", requirement_id: "r1", product_candidate_id: "c-nbn-2", product_model_ref: "NBN-80052-BA", recommendation: "SHORTLIST", technical_verdict: "VERIFIED_PASS", hard_spec_overall: "PASS", accepted: true, display: display("RECOMMENDED_INQUIRY_VERIFIED", "硬性条件的程序核验通过；可作为询价建议，仍需供应商确认。") },
+		{ decision_id: "dec-nbn-3", requirement_id: "r1", product_candidate_id: "c-nbn-3", product_model_ref: "NBN-80052-BA", recommendation: "SHORTLIST", technical_verdict: "VERIFIED_PASS", hard_spec_overall: "PASS", accepted: true, display: display("RECOMMENDED_INQUIRY_VERIFIED", "硬性条件的程序核验通过；可作为询价建议，仍需供应商确认。") },
+		{ decision_id: "dec-nbn-4", requirement_id: "r1", product_candidate_id: "c-nbn-4", product_model_ref: "NBN-80052-BA", recommendation: "SHORTLIST", technical_verdict: "VERIFIED_PASS", hard_spec_overall: "PASS", accepted: true, display: display("RECOMMENDED_INQUIRY_VERIFIED", "硬性条件的程序核验通过；可作为询价建议，仍需供应商确认。") },
+		{ decision_id: "dec-ips", requirement_id: "r1", product_candidate_id: "c-ips", product_model_ref: "IPS05-R10-OIA4-EXTRA-LONG-MODEL-TOKEN", recommendation: "EXCLUDE", technical_verdict: "VERIFIED_FAIL", hard_spec_overall: "FAIL", accepted: true, display: display("HARD_REQUIREMENT_FAILED", "至少一项硬性条件核验不通过，建议排除。") },
+		{ decision_id: "dec-repeat", requirement_id: "r1", product_candidate_id: "c-repeat", product_model_ref: "NBN-80052-BA", recommendation: "EXCLUDE", technical_verdict: "VERIFIED_PASS", hard_spec_overall: "PASS", accepted: true, display: display("REVIEW_REQUIRED", "与已列出的同型号重复，不再单独询价。") },
+	];
 	const project = {
 		id: KNOWN_PROJECT,
 		title: "M3 cloud acceptance",
@@ -726,6 +889,7 @@ export function installKnownCase(page: Page): Promise<unknown> {
 		const path = new URL(request.url()).pathname;
 		const fulfill = (status: number, body: unknown) =>
 			route.fulfill({ status, contentType: "application/json; charset=utf-8", body: JSON.stringify(body) });
+		if (await serveSessionAndPipelines(route, KNOWN_PROJECT, [finishedPipeline("pipe-known", KNOWN_RUN)])) return;
 		if (request.method() === "GET" && path === "/api/projects") {
 			await fulfill(200, { projects: [project] });
 			return;
@@ -762,40 +926,49 @@ export function installKnownCase(page: Page): Promise<unknown> {
 			});
 			return;
 		}
-		if (request.method() === "GET" && path === `/api/projects/${KNOWN_PROJECT}/candidates`) {
-			await fulfill(200, { candidates });
-			return;
-		}
-		if (request.method() === "GET" && (path.endsWith("/spec-assessments/status") || path.endsWith("/decisions/status"))) {
-			await fulfill(200, { status: "COMPLETED", job_id: "job-1", demand_revision: 1, error: null, updated_at: "2026-11-01T15:00:00.000Z" });
-			return;
-		}
-		if (request.method() === "GET" && path === `/api/projects/${KNOWN_PROJECT}/spec-assessments`) {
-			await fulfill(200, {
-				project_id: KNOWN_PROJECT,
+		if (request.method() === "GET" && path === `/api/projects/${KNOWN_PROJECT}/analysis`) {
+			await fulfill(200, analysisPayload({
+				projectId: KNOWN_PROJECT,
+				pipelineId: "pipe-known",
+				runId: KNOWN_RUN,
+				requirements: [{
+					requirement_id: "r1",
+					product_name: "工业摄像机",
+					product_category: "摄像机",
+					quantity: 10,
+					quantity_unit: "台",
+					constraints: [{ constraint_id: "k-pixel", attribute_key: "pixel", attribute_definition: "像素", operator: "GTE", value: "5", unit: "MP", importance: "HARD", source_quote: null }],
+				}],
+				candidates,
 				assessments: [
-					assessment("spc-nbn-1", "c-nbn-1", "PASS", passCheck),
-					assessment("spc-nbn-2", "c-nbn-2", "PASS", passCheck),
-					assessment("spc-nbn-3", "c-nbn-3", "PASS", passCheck),
-					assessment("spc-nbn-4", "c-nbn-4", "PASS", passCheck),
-					assessment("spc-ips", "c-ips", "FAIL", failCheck),
-					assessment("spc-repeat", "c-repeat", "PASS", passCheck),
+					assessment("spc-nbn-1", "c-nbn-1", "NBN-80052-BA", "PASS", passCheck),
+					assessment("spc-nbn-2", "c-nbn-2", "NBN-80052-BA", "PASS", passCheck),
+					assessment("spc-nbn-3", "c-nbn-3", "NBN-80052-BA", "PASS", passCheck),
+					assessment("spc-nbn-4", "c-nbn-4", "NBN-80052-BA", "PASS", passCheck),
+					assessment("spc-ips", "c-ips", "IPS05-R10-OIA4-EXTRA-LONG-MODEL-TOKEN", "FAIL", failCheck),
+					assessment("spc-repeat", "c-repeat", "NBN-80052-BA", "PASS", passCheck),
 				],
-			});
-			return;
-		}
-		if (request.method() === "GET" && path === `/api/projects/${KNOWN_PROJECT}/decisions`) {
-			await fulfill(200, {
-				project_id: KNOWN_PROJECT,
-				decisions: [
-					decision("dec-nbn-1", "c-nbn-1", "SHORTLIST", "VERIFIED_PASS", "PASS", "可以先询价。引用 pptx_1:r1 与 ev_abc123。"),
-					decision("dec-nbn-2", "c-nbn-2", "SHORTLIST", "VERIFIED_PASS", "PASS", "可以先询价。"),
-					decision("dec-nbn-3", "c-nbn-3", "SHORTLIST", "VERIFIED_PASS", "PASS", "可以先询价。"),
-					decision("dec-nbn-4", "c-nbn-4", "SHORTLIST", "VERIFIED_PASS", "PASS", "可以先询价。"),
-					decision("dec-ips", "c-ips", "EXCLUDE", "VERIFIED_FAIL", "FAIL", "像素不够。依据 pptx_1:c1 与 clm_deadbeef。"),
-					decision("dec-repeat", "c-repeat", "EXCLUDE", "VERIFIED_PASS", "PASS", "与已列出的同型号重复，不再单独询价。"),
+				decisions,
+				priceContexts: [{
+					requirement_id: "r1",
+					product_name: "工业摄像机",
+					budget: "100",
+					budget_currency: "CNY",
+					budget_unit: "元/套",
+					history_scope: "NONE",
+					history_available: false,
+					history_rows: 0,
+					statistics: null,
+					overview_statistics: null,
+					overview_is_not_a_baseline: false,
+					findings: [],
+					notes: [],
+				}],
+				evidence: [
+					{ evidence_id: "ev_nbn", url: "https://example.com/nbn", title: "NBN 规格页", content_sha256: "abc", quote: "像素不低于 5MP。", quote_status: "ORIGINAL" },
+					{ evidence_id: "ev_ips", url: "https://example.com/ips", title: "IPS 规格页", content_sha256: "def", quote: "分辨率约 4.9MP。", quote_status: "ORIGINAL" },
 				],
-			});
+			}));
 			return;
 		}
 		if (request.method() === "GET" && path === `/api/runs/${KNOWN_RUN}`) {
@@ -824,6 +997,7 @@ const REPORT_RUN = "66666666-6666-4666-8666-666666666666";
 export function installReportFlow(page: Page, mode: "generate" | "completed" | "failed" | "blocked" | "prior-failed" | "older"): Promise<unknown> {
 	const posts: string[] = [];
 	let polls = 0;
+	let reportReads = 0;
 	const project = {
 		id: REPORT_PROJECT,
 		title: "正式报告项目",
@@ -845,11 +1019,21 @@ export function installReportFlow(page: Page, mode: "generate" | "completed" | "
 		created_at: "2026-10-31T02:10:00.000Z",
 		updated_at: "2026-10-31T02:12:00.000Z",
 	};
+	const reportStatus = (runId: string | null) => {
+		if (mode === "completed") return { report_id: "report-1", status: "COMPLETED", error_code: null, decision_version: "3f2a9c1b7d0e4a55", download_path: `/api/projects/${REPORT_PROJECT}/reports/report-1/download` };
+		if (mode === "failed" || mode === "prior-failed") return { report_id: "report-1", status: "FAILED", error_code: "REPORT_GENERATION_FAILED", decision_version: null, download_path: null };
+		if (mode === "blocked") return { report_id: null, status: "NOT_STARTED", error_code: null, decision_version: null, download_path: null };
+		if (mode === "older" && runId !== "77777777-7777-4777-8777-777777777777") {
+			return { report_id: "report-1", status: "COMPLETED", error_code: null, decision_version: "3f2a9c1b7d0e4a55", download_path: `/api/projects/${REPORT_PROJECT}/reports/report-1/download` };
+		}
+		return { report_id: "report-1", status: "QUEUED", error_code: null, decision_version: "3f2a9c1b7d0e4a55", download_path: null };
+	};
 	return page.route("**/api/**", async (route: Route) => {
 		const request = route.request();
 		const path = new URL(request.url()).pathname;
 		const fulfill = (status: number, body: unknown) =>
 			route.fulfill({ status, contentType: "application/json; charset=utf-8", body: JSON.stringify(body) });
+		if (await serveSessionAndPipelines(route, REPORT_PROJECT, [finishedPipeline("pipe-report", mode === "older" ? "77777777-7777-4777-8777-777777777777" : REPORT_RUN)], "none")) return;
 		if (request.method() === "GET" && path === "/api/projects") {
 			await fulfill(200, { projects: [project] });
 			return;
@@ -888,45 +1072,36 @@ export function installReportFlow(page: Page, mode: "generate" | "completed" | "
 			await fulfill(404, { error: "not_compiled" });
 			return;
 		}
-		if (request.method() === "GET" && path === `/api/projects/${REPORT_PROJECT}/candidates`) {
+		if (request.method() === "GET" && path === `/api/projects/${REPORT_PROJECT}/analysis`) {
 			const runId = new URL(request.url()).searchParams.get("run_id");
-			await fulfill(200, { candidates: mode === "blocked" || runId === "77777777-7777-4777-8777-777777777777" ? [] : [{
-				candidate_id: "c1",
-				requirement_id: "r1",
-				stage: "RFQ_SHORTLIST",
-				last_seen_run_id: REPORT_RUN,
-				updated_at: "2026-10-31T02:00:00.000Z",
-				supplier: { display_name: "海康威视" },
-				product: { model: "DS-1" },
-				evidence: [],
-			}] });
-			return;
-		}
-		if (request.method() === "GET" && path.endsWith("/spec-assessments/status")) {
-			await fulfill(200, { status: mode === "blocked" ? "IDLE" : "COMPLETED", job_id: null, demand_revision: 1, error: null, updated_at: "2026-10-31T02:00:00.000Z" });
-			return;
-		}
-		if (request.method() === "GET" && path.endsWith("/decisions/status")) {
-			await fulfill(200, { status: mode === "blocked" ? "IDLE" : "COMPLETED", job_id: null, demand_revision: 1, error: null, updated_at: mode === "older" ? "2026-10-31T11:00:00.000Z" : "2026-10-31T03:00:00.000Z" });
-			return;
-		}
-		if (request.method() === "GET" && path === `/api/projects/${REPORT_PROJECT}/spec-assessments`) {
-			await fulfill(200, { project_id: REPORT_PROJECT, assessments: mode === "blocked" ? [] : [{ assessment_id: "spc-1", requirement_id: "r1", product_candidate_id: "c1", demand_revision: 1, hard_spec_overall: "PASS", evidence_ids: [], evaluated_at: "2026-10-31T02:00:00.000Z", created_at: "2026-10-31T02:00:00.000Z", assessment: { checks: [] } }] });
-			return;
-		}
-		if (request.method() === "GET" && path === `/api/projects/${REPORT_PROJECT}/decisions`) {
-			await fulfill(200, { project_id: REPORT_PROJECT, decisions: mode === "blocked" ? [] : [{ decision_id: "dec-1", requirement_id: "r1", product_candidate_id: "c1", recommendation: "SHORTLIST", technical_verdict: "VERIFIED_PASS", hard_spec_overall: "PASS", accepted: true, rationale: "可以先询价。", evidence_ids: [], decided_at: "2026-10-31T02:00:00.000Z", created_at: "2026-10-31T02:00:00.000Z" }] });
+			const empty = mode === "blocked" || runId === "77777777-7777-4777-8777-777777777777";
+			await fulfill(200, analysisPayload({
+				projectId: REPORT_PROJECT,
+				pipelineId: "pipe-report",
+				runId: runId ?? REPORT_RUN,
+				requirements: [],
+				candidates: empty ? [] : [{ candidate_id: "c1", requirement_id: "r1", supplier_name: "海康威视", product_model: "DS-1", evidence_ids: [] }],
+				assessments: empty ? [] : [{ assessment_id: "spc-1", requirement_id: "r1", product_candidate_id: "c1", product_model_ref: "DS-1", hard_spec_overall: "PASS", checks: [] }],
+				decisions: empty ? [] : [{ decision_id: "dec-1", requirement_id: "r1", product_candidate_id: "c1", product_model_ref: "DS-1", recommendation: "SHORTLIST", technical_verdict: "VERIFIED_PASS", hard_spec_overall: "PASS", accepted: true }],
+				report: reportStatus(runId),
+			}));
 			return;
 		}
 		if (request.method() === "GET" && path === `/api/projects/${REPORT_PROJECT}/reports`) {
 			const failed = {
 				...completed,
 				status: "FAILED",
-				error: "report generation failed with status 500: Error proxying request to container: The container is not running",
-				download_path: `/api/projects/${REPORT_PROJECT}/reports/report-1/download`,
+				error: "报告生成失败，请重试。",
+				download_path: null,
 				decision_version: null,
 			};
-			await fulfill(200, { project_id: REPORT_PROJECT, reports: mode === "completed" ? [completed] : mode === "prior-failed" ? [failed] : [] });
+			reportReads += 1;
+			const listed =
+				mode === "completed" ? [completed]
+				: mode === "prior-failed" ? [failed]
+				: mode === "generate" && reportReads > 1 ? [completed]
+				: [];
+			await fulfill(200, { project_id: REPORT_PROJECT, reports: listed });
 			return;
 		}
 		if (request.method() === "POST" && path === `/api/projects/${REPORT_PROJECT}/reports`) {
@@ -986,6 +1161,14 @@ export function installPipeline(page: Page, script: PipelineScript): Promise<Arr
 			status,
 			stage: script === "failed" ? "RESEARCH" : stage,
 			error: script === "failed" ? "container exploded and should stay hidden" : null,
+			decision_version: finished ? "version-1" : null,
+			report_id: finished ? "report-1" : null,
+			report_status: finished ? "COMPLETED" : "NOT_STARTED",
+			report_error_code: null,
+			download_path: finished ? `/api/projects/${PIPE_PROJECT}/reports/report-1/download` : null,
+			candidates_found: 0,
+			models_found: 0,
+			evidence_found: 0,
 			stages: [
 				{
 					stage: "RESEARCH",
@@ -1012,6 +1195,7 @@ export function installPipeline(page: Page, script: PipelineScript): Promise<Arr
 			const raw = request.postData();
 			return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
 		};
+		if (await serveSessionAndPipelines(route, PIPE_PROJECT, [])) return;
 		if (request.method() === "GET" && path === "/api/projects") {
 			await fulfill(200, {
 				projects: state.created
@@ -1141,6 +1325,10 @@ export function installPipeline(page: Page, script: PipelineScript): Promise<Arr
 			await fulfill(200, pipelineBody());
 			return;
 		}
+		if (request.method() === "GET" && path === `/api/projects/${PIPE_PROJECT}/analysis`) {
+			await fulfill(200, analysisPayload({ projectId: PIPE_PROJECT, pipelineId: PIPE_ID, runId: PIPE_RUN, candidates: [], assessments: [], decisions: [] }));
+			return;
+		}
 		if (request.method() === "GET" && path === `/api/runs/${PIPE_RUN}`) {
 			const finished = script === "stages" ? state.pipelineReads >= 4 : script !== "reload";
 			await fulfill(200, {
@@ -1161,18 +1349,6 @@ export function installPipeline(page: Page, script: PipelineScript): Promise<Arr
 		}
 		if (request.method() === "GET" && path === `/api/runs/${PIPE_RUN}/research`) {
 			await fulfill(200, { metrics: { stop_reason_code: null, candidate_count: 0 } });
-			return;
-		}
-		if (request.method() === "GET" && path === `/api/projects/${PIPE_PROJECT}/candidates`) {
-			await fulfill(200, { candidates: [] });
-			return;
-		}
-		if (request.method() === "GET" && (path.endsWith("/spec-assessments/status") || path.endsWith("/decisions/status"))) {
-			await fulfill(200, { status: "IDLE", job_id: null, demand_revision: state.revision, error: null, updated_at: null });
-			return;
-		}
-		if (request.method() === "GET" && (path.endsWith("/spec-assessments") || path.endsWith("/decisions") || path.endsWith("/reports"))) {
-			await fulfill(200, { assessments: [], decisions: [], reports: [] });
 			return;
 		}
 		await fulfill(404, { error: "not_found" });

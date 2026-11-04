@@ -3,6 +3,8 @@ export type CallOptions = {
 	timeoutMs?: number;
 };
 
+export * from "./analysisTypes";
+
 export type ProjectSource = {
 	id: string;
 	purpose: string;
@@ -134,7 +136,7 @@ export type PipelineStage = {
 	error_code: string | null;
 };
 
-/** GET /api/projects/{id}/pipeline/{pipeline_id}. `status` is the task field; there is no report_status in B1. */
+/** GET /api/projects/{id}/pipeline/{pipeline_id}. `status` is the analysis task; `report_status` is the report. */
 export type Pipeline = {
 	pipeline_id: string;
 	project_id: string;
@@ -143,7 +145,29 @@ export type Pipeline = {
 	status: string;
 	stage: string | null;
 	error: string | null;
+	decision_version: string | null;
+	report_id: string | null;
+	report_status: string | null;
+	report_error_code: string | null;
+	download_path: string | null;
+	candidates_found: number;
+	models_found: number;
+	evidence_found: number;
 	stages: PipelineStage[];
+	created_at: string;
+	updated_at: string;
+};
+
+/** One entry of GET /api/projects/{id}/pipelines. */
+export type PipelineListItem = {
+	pipeline_id: string;
+	run_id: string | null;
+	demand_revision: number | null;
+	status: string;
+	stage: string | null;
+	decision_version: string | null;
+	report_id: string | null;
+	report_status: string | null;
 	created_at: string;
 	updated_at: string;
 };

@@ -13,6 +13,11 @@ function toneClass(tone: string, kind: "stage" | "tech"): string {
 	return "stage long";
 }
 
+/**
+ * One row per requirement and model. The suppliers of the same model are the
+ * members of that row, so the table does not repeat one model as many flat
+ * supplier rows.
+ */
 export function CandidateTable(props: {
 	rows: CandidateRowView[];
 	selectedId: string | null;
@@ -47,7 +52,7 @@ export function CandidateTable(props: {
 								setOpenGroup(openGroup === row.id ? null : row.id);
 							}}
 						>
-							同型号 {row.groupCount} 条
+							展开 {row.groupCount} 家
 						</button>
 					) : null}
 					</span>
@@ -84,7 +89,7 @@ export function CandidateTable(props: {
 				{props.rows.map((row) => (
 					<Fragment key={row.id}>
 						{renderRow(row, true)}
-						{openGroup === row.id ? row.members.slice(1).map((member) => renderRow(member, false)) : null}
+						{openGroup === row.id ? row.members.map((member) => renderRow(member, false)) : null}
 					</Fragment>
 				))}
 			</tbody>
