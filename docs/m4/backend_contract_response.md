@@ -565,3 +565,14 @@ B2 云端验收自动下载并打开 DOCX，检查报告内 Run/版本以及下�
 1. **“线上 bundle 不是从本仓库构建的”这个判断不成立。** 线上页面确实由本仓库的 `frontend/` 构建（Cloudflare Builds 的构建命令 `npm --prefix frontend ci && VITE_GUEST_SESSION=1 npm --prefix frontend run build && npx wrangler deploy` 配置在 Cloudflare 账号里，不在仓库中）。线上 bundle 里找不到 `/analysis`、找不到 `coverage_warnings`，是因为**合并 PR #5 之前的仓库前端本来就没有消费这些字段**；`VITE_GUEST_SESSION` 在构建时被内联成 `"1"`，所以源码里的 `!== "0"` 判断在压缩后不会出现字符串字面量——这是 Vite 的正常行为，不代表构建用了别的源码。PR #5 合并后线上 bundle 已包含 `/analysis`（已实测确认）。前端的运行时探测方案本身更好，保留即可，不必再怀疑构建链路。
 2. **默认研究预算已调整。** 之前默认 `4/4/2/1/12` 在“像素 + IP67 + PoE + 质保 + 单价”这种多约束需求上会让研究阶段预算用尽，结果是一屏 `UNKNOWN`（前端实跑的那类需求正是如此）。现在默认 `5/6/2/1/15`（搜索/取页/任务/轮次/模型调用），并在 `/analysis.summary.coverage_warnings` 里明确提示“这次研究用完了预算，部分约束没有取到来源快照，结论多为证据不足”。前端如需快速预览，仍可显式传 `research_budget`（如 `3/3/1/1/8`），并在界面上标注“快速预览”。
 3. **失败时请把 `stages[].error_code` 一起显示。** 顶层 `error` 永远是通用的 `PIPELINE_STAGE_FAILED`，阶段里的 `error_code` 才是具体原因（见 §7 第五条第（五）项的码表）。前端按码给一句中文即可，不要显示原始英文。
+
+## 7.6 关于"同一需求有时 PASS、有时 UNKNOWN"（2026-11-05，后端结论）
+
+前端 11-04 报的两次 `PIPELINE_STAGE_FAILED` 已定位并修复（容器中途崩溃 + 终态被回写事件复活 + 失败后要等 60 分钟），详见 §7 第五条第（五）项。除此之外，后端在 11-05 又定位到两个**结果不稳定**的来源，性质不同，需要分开看：
+
+1. **需求整理偶尔丢掉约束（已修）。** 同一句"输出分辨率不低于5MP"，11-03 整理出 `output_resolution ≥ 5 MP (HARD)`，11-05 有一次整理出**零条约束**——分析层于是只能报 `NO_HARD_CONSTRAINT`，全屏 UNKNOWN。现在编译器在"原文写了可测量内容、但结果一条约束都没有"时会再试一次（不编造字段），最终仍为空则把缺口原样交给买家。已实网复验：约束回来了。
+2. **对齐结果随研究到的页面波动（未修，属于研究覆盖质量）。** 约束键是 `output_resolution`；当研究取到明确写"video output resolution 5MP"的页面时，判定是 `VERIFIED_COMPARISON` → PASS（11-03 的官方案例 22 PASS 即此）；当研究只取到写"5 megapixel (3K)"、未说明是输出像素还是传感器像素的页面时，模型**明确拒绝**配对（提示词里写明"sensor effective pixels 与 video output pixels 不是同一测量"），代码按规则保留 `UNKNOWN`（`ATTRIBUTE_NOT_ALIGNED`）。这不是可以靠代码"改对"的：让代码把传感器像素当输出像素，正是被禁止的静默改写。
+   - 后端已做的合规收敛：把**人工审校别名表**用于打字层，使同一测量只写一个键（`video_output_resolution`、`resolution` 等统一写成 `output_resolution`），并把别名表纳入打字层的版本指纹，避免旧缓存继续生效。
+   - 仍未解决的是**来源覆盖**：要让"输出分辨率"判定为 PASS，研究必须取到写明输出分辨率的规格页。这属于 M2 研究质量问题（与"型号多样性"同一批），不在 B4 前端路径上。
+   - 前端展示建议：把 `coverage_warnings` 与 `decisions[].display` 原样呈现（"证据不足：规格未对齐"），不要把 UNKNOWN 渲染成"不合格"——它表示"来源还没取到能支撑结论的证据"。
+3. **给演示的建议**：候选的证据若明确写的是输出分辨率，判定会稳定为 PASS；反之会稳定为 UNKNOWN 并诚实说明缺口。演示时用有官方规格页的型号，结论更完整。
