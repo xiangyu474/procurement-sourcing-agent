@@ -17,7 +17,7 @@
 		{
 			"class_name": "SourcingContainer",
 			"image": "./Dockerfile",
-			"instance_type": "standard-2",
+			"instance_type": "standard-4",
 			"max_instances": 2
 		}
 	],
@@ -91,7 +91,7 @@
 		// A running container keeps the image it was started with. Bump this
 		// name to bring a new image into service: the next request starts a
 		// container from the image of this deployment.
-		"CONTAINER_INSTANCE_NAME": "sourcing-v19",
+		"CONTAINER_INSTANCE_NAME": "sourcing-v20",
 		// B1 is available only through the existing protected server-side bearer
 		// path. Guest Session and its expensive operations remain disabled.
 		"PIPELINE_ENABLED": "true",
@@ -113,7 +113,7 @@
 		"GUEST_TASK_SESSION_DAILY_STARTS": "6",
 		// The acceptance drives the public API, which starts workflows that
 		// call a container, so it runs in its own instance.
-		"ACCEPTANCE_CONTAINER_NAME": "acceptance-v5",
+		"ACCEPTANCE_CONTAINER_NAME": "acceptance-v6",
 		"LANGSMITH_TRACING": "true",
 		"LANGSMITH_PROJECT": "procurement-sourcing-m2"
 	}
