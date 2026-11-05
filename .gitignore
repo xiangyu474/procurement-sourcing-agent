@@ -44,3 +44,13 @@ tmp/
 docx_dump.txt
 fail_events.txt
 NUL
+
+# Local scratch files from backend forensics (never part of the repository)
+.q*.json
+.sr.json
+.al.json
+.ev.json
+.jc*.json
+.pdf_ev.json
+.spec_pass.json
+_read_exp.py
