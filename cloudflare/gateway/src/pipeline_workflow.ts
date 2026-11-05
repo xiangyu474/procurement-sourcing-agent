@@ -134,7 +134,6 @@ export class ProcurementPipelineWorkflow extends WorkflowEntrypoint<Env, Pipelin
 						AND EXISTS (SELECT 1 FROM project_candidate_evidence e WHERE e.workspace_id = c.workspace_id AND e.candidate_id = c.id)
 						ORDER BY c.id LIMIT 301`)
 						.bind(projectId, runId).all<{ id: string }>();
-					if (!result.results.length) throw new Error("NO_CANDIDATES");
 					if (result.results.length > 300) throw new Error("TOO_MANY_CANDIDATES");
 					const url = new URL(`/internal/projects/${encodeURIComponent(projectId)}/spec-context`, this.env.CONTAINER_GATEWAY_URL);
 					url.searchParams.set("pipeline_id", pipelineId); url.searchParams.set("run_id", runId);
@@ -142,7 +141,9 @@ export class ProcurementPipelineWorkflow extends WorkflowEntrypoint<Env, Pipelin
 					const response = await fetch(url, { headers: { "x-internal-token": this.env.INTERNAL_GATEWAY_TOKEN } });
 					if (!response.ok) throw new Error("SPEC_CONTEXT_FAILED");
 					const context = await response.json() as SpecContext;
-					if (context.project_id !== projectId || context.run_id !== runId || !context.requirements.length || !context.candidates.length) throw new Error("SPEC_CONTEXT_INVALID");
+					// A research that found no candidate is an answer, not a broken
+					// task: the analysis then says so in words.
+					if (context.project_id !== projectId || context.run_id !== runId || !context.requirements.length) throw new Error("SPEC_CONTEXT_INVALID");
 					await save(this.env.DB, pipelineId, "SPEC_CONTEXT", context);
 				}
 				await recordPipelineStage(this.env.DB, pipelineId, "RESEARCH", researchStatus === "PARTIAL" ? "PARTIAL" : "COMPLETED");
@@ -155,7 +156,7 @@ export class ProcurementPipelineWorkflow extends WorkflowEntrypoint<Env, Pipelin
 					project_id: projectId, pipeline_id: pipelineId, gateway_url: this.env.CONTAINER_GATEWAY_URL,
 					token: this.env.INTERNAL_GATEWAY_TOKEN, runtime_config: runtime(this.env),
 				});
-				if (output.status !== "COMPLETED" || !output.assessments) throw new Error("NO_ASSESSMENTS");
+				if (output.status !== "COMPLETED" || typeof output.assessments !== "number") throw new Error("NO_ASSESSMENTS");
 				await snapshot(this.env.DB, pipelineId, "SPEC_RESULTS");
 				await recordPipelineStage(this.env.DB, pipelineId, "EVALUATING", "COMPLETED");
 			});
@@ -178,7 +179,7 @@ export class ProcurementPipelineWorkflow extends WorkflowEntrypoint<Env, Pipelin
 					project_id: projectId, pipeline_id: pipelineId, gateway_url: this.env.CONTAINER_GATEWAY_URL,
 					token: this.env.INTERNAL_GATEWAY_TOKEN, runtime_config: runtime(this.env),
 				});
-				if (output.status !== "COMPLETED" || !output.decisions) throw new Error("NO_DECISIONS");
+				if (output.status !== "COMPLETED" || typeof output.decisions !== "number") throw new Error("NO_DECISIONS");
 				await snapshot(this.env.DB, pipelineId, "PRICE_CONTEXT");
 				await snapshot(this.env.DB, pipelineId, "DECISION_RESULTS");
 			});

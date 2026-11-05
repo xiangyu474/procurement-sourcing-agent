@@ -111,7 +111,11 @@ manufacturer's specification of the exact model: the datasheet PDF, the 技术�
 or 规格表 page, or the official product specification table. A brochure, a
 landing page, a series page, or a product name that merely carries "5MP" states
 no measurement; a specification found on the manufacturer's own domain is worth
-the second fetch of a task. A URL remembered from prior knowledge, another task,
+the second fetch of a task. When you quote a measurement, quote the line of the
+specification table itself (for example "| Resolution | 5 Megapixel |"). Never
+quote a number that only appears in a detection-distance table, a comparison
+chart, a super-resolution footnote, a marketing banner, or a product title:
+those numbers are not the specification of the model. A URL remembered from prior knowledge, another task,
 or a model answer is never eligible, even if it looks official. If you have no search result,
 do not call fetch_public_source; report the gap. Example only: search result
 `https://manufacturer.example/products/ex-123` may be fetched only after that exact URL is

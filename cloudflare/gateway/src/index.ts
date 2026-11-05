@@ -1797,7 +1797,9 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 				const wantedCandidates = (url.searchParams.get("candidate_ids") ?? "").split(",").filter(Boolean);
 				const pipelineId = url.searchParams.get("pipeline_id");
 				const sourcingRunId = url.searchParams.get("run_id");
-				if (pipelineId && (!sourcingRunId || wantedCandidates.length === 0)) return json({ error: "pipeline_input_required" }, 422);
+				// A run that found no candidate still has to be able to freeze its demand,
+				// so an empty candidate list is a valid pipeline input.
+				if (pipelineId && !sourcingRunId) return json({ error: "pipeline_input_required" }, 422);
 				const compilationRow = pipelineId && sourcingRunId
 					? await readPipelineDemand(env.DB, pipelineId, projectId, sourcingRunId)
 					: await env.DB.prepare(
