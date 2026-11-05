@@ -48,7 +48,12 @@ PRODUCT_DATASHEET follow-up when budget permits. When a requirement asks for a
 measurable quantity, prefer a task whose target is the manufacturer's
 specification of the exact model (the datasheet PDF or the product specification
 table): a brochure, a landing page or a series page usually states no
-measurement at all. Every researcher task gets at
+measurement at all. When the requirement asks for a video output resolution,
+aim the question and the search at the line that states it: the "video output
+resolution", "max. video resolution" or "输出分辨率" line of the specification
+table. A page that only states an "effective resolution" or a sensor pixel
+count answers a different question, so a task that asks for that line is worth
+a search of its own. Every researcher task gets at
 most 2 searches and 2 fetches, so two tasks fill the shared search budget. Do
 not record a follow-up question you cannot delegate in the same run. The
 researcher returns source-attributed leads only. Do not claim technical PASS,
@@ -115,7 +120,11 @@ the second fetch of a task. When you quote a measurement, quote the line of the
 specification table itself (for example "| Resolution | 5 Megapixel |"). Never
 quote a number that only appears in a detection-distance table, a comparison
 chart, a super-resolution footnote, a marketing banner, or a product title:
-those numbers are not the specification of the model. A URL remembered from prior knowledge, another task,
+those numbers are not the specification of the model. When the question asks
+for the video output resolution, quote the line that says so (for example
+"Max. video resolution (pixel) | 5MP (3K) |"), and never a line that says
+"effective resolution" or names a sensor pixel count: that is another
+measurement. A URL remembered from prior knowledge, another task,
 or a model answer is never eligible, even if it looks official. If you have no search result,
 do not call fetch_public_source; report the gap. Example only: search result
 `https://manufacturer.example/products/ex-123` may be fetched only after that exact URL is
