@@ -213,6 +213,8 @@ test("a finished run with no candidates leaves the detail column out", async ({ 
 	await page.goto("/");
 	await page.getByRole("button", { name: /工业摄像机寻源/ }).click();
 	await expect(page.getByText("这次没有候选供应商。")).toBeVisible();
+	// The coverage warning of the backend is shown as it is.
+	await expect(page.getByText("这次寻源没有找到可核对的候选。")).toBeVisible();
 	await expect(page.getByTestId("run-status")).toHaveText("寻源已结束");
 	await expect(page.getByRole("complementary", { name: "所选型号" })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "下载这一版" })).toBeDisabled();

@@ -20,6 +20,7 @@ from langchain_core.tools import tool
 from pydantic import Field
 
 from procurement_agent.agents.sourcing import create_sourcing_supervisor
+from procurement_agent.domain.attributes import NAMING_TERMS_BY_TRIGGER
 from procurement_agent.domain.requirements import RequirementCompilation
 from procurement_agent.domain.sourcing import (
     CandidateClaim,
@@ -122,6 +123,53 @@ The researcher tool task_id must equal the plan question_id exactly.
 SOURCING PLAN AND RESEARCH CONTEXT:
 {context}
 """
+
+
+
+_SPECIFICATION_TERMS: tuple[str, ...] = tuple(
+    term.casefold()
+    for group in NAMING_TERMS_BY_TRIGGER.values()
+    for term in group
+)
+
+
+def _looks_like_specification(line: str) -> bool:
+    """Whether a line of a page states a quantity with a number."""
+    if not any(character.isdigit() for character in line):
+        return False
+    folded = line.casefold()
+    return any(term in folded for term in _SPECIFICATION_TERMS)
+
+
+def _focused_page_text(content: str, limit: int = 6000) -> str:
+    """Show the researcher the part of the page that carries the numbers.
+
+    A datasheet keeps its specification table deep in the document, and the
+    first lines of a page rarely state the measurement. The window is chosen
+    by the lines that name a quantity and carry a number, so the researcher
+    sees the specification table rather than the cover letter.
+    """
+    if len(content) <= limit:
+        return content
+    lines = content.splitlines()
+    marks = [index for index, line in enumerate(lines) if _looks_like_specification(line)]
+    if not marks:
+        return content[:limit]
+    span = 30
+    best_start = marks[0]
+    best_score = -1
+    for index in marks:
+        start = max(0, index - span)
+        score = sum(1 for mark in marks if start <= mark < start + 2 * span)
+        if score > best_score:
+            best_score = score
+            best_start = start
+    head = content[:400].rstrip()
+    body = "
+".join(lines[best_start:best_start + 2 * span])
+    return f"{head}
+[... the specification part of this page ...]
+{body}"
 
 
 class ResearchBudgetExceeded(RuntimeError):
@@ -802,7 +850,7 @@ class ResearchLedger:
                 self.evidence_by_url[source_norm] = evidence_id
                 self.task_evidence_ids.setdefault(task_id, set()).add(evidence_id)
                 self._record_action(task_id, task, "tavily.extract", task.question, [evidence_id], "SOURCE_CAPTURED", 0, 1)
-            return evidence, page.content[:6_000]
+            return evidence, _focused_page_text(page.content)
         except Exception as exc:
             failure = _public_provider_failure_code(exc)
             with self.condition:

@@ -1,0 +1,33 @@
+[
+  {
+    "results": [
+      {
+        "p": "{\"constraint_id\":\"text_1:c1\",\"claim_ids\":[\"clm_bf55c90627c9ed8e1b2aefff\"],\"status\":\"AMBIGUOUS\",\"method\":\"EXACT_ATTRIBUTE_KEY\",\"reason\":\"Same attribute key (output_resolution) on both sides and the claim is stated as video output resolution, so it addresses the constraint's attribute. But the only evidenced wording is 'Resolution 3072×1728', printed inside the DORI chart section, i.e. in the context of a detection-distance table, while the formal spec-table line 'Max. video resolution (pixel)' was only seen in a search snippet, not in the evidence. The source therefore does not confirm that 307"
+      },
+      {
+        "p": "{\"constraint_id\":\"text_1:c1\",\"claim_ids\":[\"clm_02a4d8e2844570159262afa5\",\"clm_2e0485f670dc1e08c9291fc1\",\"clm_34935739d4bcc60e3613f8c6\",\"clm_38134eeec1cd3e9285135856\",\"clm_4599e8a217586feb828347a2\",\"clm_5963e136335027e09479f9d4\",\"clm_5a3997ea1061478c1f3a15fc\",\"clm_618d17898ef9e5280f35780a\",\"clm_65aab6fddd53192b53aa25df\",\"clm_7c9e1c858f7f15b67d8ec590\",\"clm_8ab14a4ddd93a1ebbb85dff2\",\"clm_9411b650312ab591b5e322f0\",\"clm_af151e7e8402489afe7f1ea8\",\"clm_b8bfe1e0fdaf74ca8814ff36\",\"clm_c20e42b06a467e4cb4792f14\",\"clm_c91418d73d4154b11531db91\",\"clm_d76078700e488d97d5b955cd\",\"clm_e322d1a6360d519a69f40e61\"]"
+      },
+      {
+        "p": "{\"constraint_id\":\"text_1:c1\",\"claim_ids\":[\"clm_2d92c78e79336376df8ea0db\",\"clm_bf55c90627c9ed8e1b2aefff\"],\"status\":\"AMBIGUOUS\",\"method\":\"LLM_PROPOSED_REVIEWED\",\"reason\":\"The two claims state one and the same quantity defined by the constraint (视频输出像素数): the camera's video/image output resolution. But the source gives it in two forms of different precision: the document title line states the camera as 5MP (clm_2d92c78e79336376df8ea0db, expressly not a specs-table value, only the resolution designation), and the printed resolution line states 3072×1728 as maximum video output (clm_bf55c90627c9ed8"
+      }
+    ],
+    "success": true,
+    "meta": {
+      "served_by": "v3-prod",
+      "served_by_region": "WNAM",
+      "served_by_colo": "SJC",
+      "served_by_primary": true,
+      "timings": {
+        "sql_duration_ms": 2.7213
+      },
+      "duration": 2.7213,
+      "changes": 0,
+      "last_row_id": 0,
+      "changed_db": false,
+      "size_after": 33599488,
+      "rows_read": 1579,
+      "rows_written": 0,
+      "total_attempts": 1
+    }
+  }
+]
