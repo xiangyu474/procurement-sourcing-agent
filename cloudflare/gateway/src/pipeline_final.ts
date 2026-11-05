@@ -30,7 +30,10 @@ export async function buildFinalContext(input: FinalInput): Promise<Row> {
 	const rawAssessments = array(input.specResults.assessments);
 	const decisions = array(input.decisionResults.decisions);
 	const prices = array(input.priceContext.price_contexts);
-	if (!requirements.length || !candidates.length || !rawAssessments.length || !decisions.length || !prices.length || !evidence.length) {
+	// A run without source snapshots is still an answer: the analysis says in
+	// words that no source could be captured. Only the demand itself and the
+	// candidates it was matched to are required.
+	if (!requirements.length || !candidates.length) {
 		throw new Error("SNAPSHOT_INCOMPLETE");
 	}
 	const requirementIds = new Set(requirements.map(r => str(r.requirement_id)));

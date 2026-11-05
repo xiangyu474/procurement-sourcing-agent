@@ -165,11 +165,8 @@ def _focused_page_text(content: str, limit: int = 6000) -> str:
             best_score = score
             best_start = start
     head = content[:400].rstrip()
-    body = "
-".join(lines[best_start:best_start + 2 * span])
-    return f"{head}
-[... the specification part of this page ...]
-{body}"
+    body = "\n".join(lines[best_start:best_start + 2 * span])
+    return f"{head}\n[... the specification part of this page ...]\n{body}"
 
 
 class ResearchBudgetExceeded(RuntimeError):

@@ -27,11 +27,26 @@ it("freezes exact source inputs and stable assessment identity", async () => {
 	assert.deepEqual(first.price_contexts, input.priceContext.price_contexts);
 });
 
+it("keeps a run without any source snapshot, so the analysis can say so", async () => {
+	// A research that captured no source produced candidates without a
+	// citation. That is a degraded answer, not a broken task.
+	const input = fixture();
+	input.specContext.report_evidence = [];
+	input.specContext.report_candidates = [{ candidate_id: "c", requirement_id: "r", evidence_ids: [] }];
+	input.specResults.assessments = [];
+	input.decisionResults.decisions = [];
+	input.priceContext.price_contexts = [];
+	const result = await buildFinalContext(input);
+	assert.deepEqual(result.candidates, input.specContext.report_candidates);
+	assert.deepEqual(result.evidence, []);
+});
+
 it("fails closed on version mixing, missing evidence and unsafe accepted decisions", async () => {
 	const wrongRun = fixture(); wrongRun.specContext.run_id = "other";
 	await assert.rejects(() => buildFinalContext(wrongRun), /VERSION_MISMATCH/);
+	// A candidate that cites a source snapshot that is not there fails closed.
 	const missing = fixture(); missing.specContext.report_evidence = [];
-	await assert.rejects(() => buildFinalContext(missing), /INCOMPLETE/);
+	await assert.rejects(() => buildFinalContext(missing), /EVIDENCE_MISSING/);
 	const unsafe = fixture(); unsafe.decisionResults.decisions[0].recommendation = "SHORTLIST";
 	unsafe.decisionResults.decisions[0].technical_verdict = "VERIFIED_PASS";
 	await assert.rejects(() => buildFinalContext(unsafe), /UNSAFE/);
