@@ -37,6 +37,7 @@ export interface Env {
 	SOURCING_CONTAINER: DurableObjectNamespace<Container<Env>>;
 	INTERNAL_GATEWAY_TOKEN: string;
 	DEMO_ACCESS_TOKEN: string;
+	PUBLIC_BASE_URL?: string;
 	GUEST_SESSION_ENABLED?: string;
 	GUEST_SESSION_SECRET?: string;
 	GUEST_PUBLIC_ORIGIN?: string;
@@ -3665,7 +3666,66 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 		return json({ error: "not_found" }, 404);
 }
 
+/**
+ * The acceptance self-test runs inside Cloudflare, on a schedule.
+ *
+ * The developer machine may not be able to reach the public gateway at all:
+ * the workers.dev name is blocked on some networks. A cron trigger keeps the
+ * measurement running where the product actually runs, and the outcome is
+ * written to the database, where it can be read with any Cloudflare API.
+ */
+const SELFTEST_DEMAND = "采购5MP工业网络摄像机，数量10套，预计单价100元/套，输出分辨率不低于5MP。";
+
+async function runSelfTest(env: Env): Promise<void> {
+	const base = (env.PUBLIC_BASE_URL || "").replace(/\/$/, "");
+	if (!base || !env.DEMO_ACCESS_TOKEN) {
+		console.error("selftest skipped: PUBLIC_BASE_URL or DEMO_ACCESS_TOKEN is missing");
+		return;
+	}
+	const headers = { authorization: `Bearer ${env.DEMO_ACCESS_TOKEN}`, "content-type": "application/json" };
+	const created = await fetch(`${base}/api/projects`, {
+		method: "POST", headers,
+		body: JSON.stringify({ title: "SELFTEST 判定稳定性", requirement_text: SELFTEST_DEMAND }),
+	});
+	if (!created.ok) {
+		console.error("selftest could not create its project", created.status);
+		return;
+	}
+	const projectId = (await created.json() as { project_id?: string }).project_id ?? "";
+	const revision = Number((await (await fetch(`${base}/api/projects/${projectId}`, { headers })).json() as { demand_revision?: number }).demand_revision ?? 0);
+	const compileStart = await fetch(`${base}/api/projects/${projectId}/requirement-compile`, { method: "POST", headers });
+	if (!compileStart.ok) {
+		console.error("selftest could not start the demand compile", compileStart.status);
+		return;
+	}
+	const compileId = (await compileStart.json() as { compile_id?: string }).compile_id ?? "";
+	let compiled = false;
+	for (let attempt = 0; attempt < 60; attempt += 1) {
+		const state = await (await fetch(`${base}/api/projects/${projectId}/requirement-compile/${compileId}`, { headers })).json() as { status?: string };
+		if (state.status === "COMPLETED") { compiled = true; break; }
+		if (state.status === "FAILED") break;
+		await new Promise((resolve) => setTimeout(resolve, 10_000));
+	}
+	if (!compiled) {
+		console.error("selftest demand compile did not finish");
+		return;
+	}
+	const started = await fetch(`${base}/api/projects/${projectId}/pipeline`, {
+		method: "POST", headers: { ...headers, "idempotency-key": `selftest-${projectId}` },
+		body: JSON.stringify({ demand_revision: revision }),
+	});
+	if (!started.ok) {
+		console.error("selftest could not start the analysis", started.status);
+		return;
+	}
+	const pipelineId = (await started.json() as { pipeline_id?: string }).pipeline_id ?? "";
+	console.error("selftest started", projectId, pipelineId);
+}
+
 export default {
+	async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+		ctx.waitUntil(runSelfTest(env));
+	},
 	async fetch(request: Request, env: Env): Promise<Response> {
 		if (env.GUEST_SESSION_ENABLED !== "true" || !new URL(request.url).pathname.startsWith("/api/")) {
 			return handleFetch(request, env);
