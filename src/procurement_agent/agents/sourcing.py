@@ -44,7 +44,11 @@ when channels or questions are meaningfully distinct and the shared run budget
 allows it. After first findings, decide whether another non-duplicate research
 question can materially close a gap; do not repeat a fixed query list. If results
 name only a product family/series and not an exact order/model code, plan a
-PRODUCT_DATASHEET follow-up when budget permits. Every researcher task gets at
+PRODUCT_DATASHEET follow-up when budget permits. When a requirement asks for a
+measurable quantity, prefer a task whose target is the manufacturer's
+specification of the exact model (the datasheet PDF or the product specification
+table): a brochure, a landing page or a series page usually states no
+measurement at all. Every researcher task gets at
 most 2 searches and 2 fetches, so two tasks fill the shared search budget. Do
 not record a follow-up question you cannot delegate in the same run. The
 researcher returns source-attributed leads only. Do not claim technical PASS,
@@ -102,8 +106,13 @@ model_quote for each; never combine the models or their claims.
 One-shot tool sequence: copy the exact planned task_id, call search_public_web
 once with a purpose-built query and closed purpose enum, then copy one `url`
 verbatim from that same call's `results` and pass it to fetch_public_source with
-the same task_id. A URL remembered from prior knowledge, another task, or a model
-answer is never eligible, even if it looks official. If you have no search result,
+the same task_id. When the question is about a measurable quantity, fetch the
+manufacturer's specification of the exact model: the datasheet PDF, the 技术参数
+or 规格表 page, or the official product specification table. A brochure, a
+landing page, a series page, or a product name that merely carries "5MP" states
+no measurement; a specification found on the manufacturer's own domain is worth
+the second fetch of a task. A URL remembered from prior knowledge, another task,
+or a model answer is never eligible, even if it looks official. If you have no search result,
 do not call fetch_public_source; report the gap. Example only: search result
 `https://manufacturer.example/products/ex-123` may be fetched only after that exact URL is
 returned for this task.
