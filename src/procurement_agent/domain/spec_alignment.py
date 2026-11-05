@@ -105,6 +105,20 @@ class ProductAttributeClaim(BaseModel):
         return value
 
 
+class AmbiguityKind(StrEnum):
+    """Why a pairing could not be confirmed.
+
+    The kinds are told apart because the code can resolve one of them by
+    itself: when several values of the same measurement are stated, the
+    requirement is met if every one of them satisfies it. A value whose role
+    in the source is not confirmed cannot be resolved that way.
+    """
+
+    SEVERAL_VALUES = "SEVERAL_VALUES"
+    ROLE_UNCONFIRMED = "ROLE_UNCONFIRMED"
+    OTHER = "OTHER"
+
+
 class SemanticAlignment(BaseModel):
     """The decision that a constraint and a claim measure the same thing."""
 
@@ -118,6 +132,7 @@ class SemanticAlignment(BaseModel):
     dimension: str | None = Field(default=None, max_length=200)
     unit_conversion: str | None = Field(default=None, max_length=300)
     unresolved_qualifiers: list[str] = Field(default_factory=list, max_length=20)
+    ambiguity_kind: AmbiguityKind = AmbiguityKind.OTHER
 
     @model_validator(mode="after")
     def aligned_alignment_needs_claims(self) -> SemanticAlignment:
@@ -166,6 +181,7 @@ class AlignmentProposal(BaseModel):
     reason: str = Field(default="", max_length=1000)
     dimension: str | None = Field(default=None, max_length=200)
     unit_conversion: str | None = Field(default=None, max_length=300)
+    ambiguity_kind: AmbiguityKind = AmbiguityKind.OTHER
 
 
 class AlignmentBatch(BaseModel):

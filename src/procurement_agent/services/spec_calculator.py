@@ -30,6 +30,7 @@ from procurement_agent.domain.requirements import (
 from procurement_agent.domain.sourcing import ClaimStatus
 from procurement_agent.domain.spec_alignment import (
     AlignmentStatus,
+    AmbiguityKind,
     ConstraintCheck,
     ConstraintReasonCode,
     ConstraintStatus,
@@ -383,6 +384,46 @@ def _compare(
     return None, "", "", None, None, f"{constraint.value_type.value} cannot be compared automatically"
 
 
+def _all_stated_values_satisfy(
+    constraint: RequirementConstraint,
+    claims: Sequence[ProductAttributeClaim],
+    product_model_ref: str | None,
+) -> tuple[str, list[ProductAttributeClaim]] | None:
+    """Check every stated value of one measurement against the requirement.
+
+    The sources may state the same measurement in several ways. When every one
+    of them satisfies the requirement, the requirement is met no matter which
+    value is the right one, so no value has to be chosen. The smallest value is
+    reported, because it is the one that satisfies the requirement least.
+    """
+    relevant = [
+        claim for claim in claims
+        if claim.attribute_key == constraint.attribute_key
+        and (product_model_ref is None or claim.product_model_ref == product_model_ref)
+        and claim.claim_status == ClaimStatus.SUPPORTED_BY_SOURCE
+        and claim.extraction_status == ParseStatus.RESOLVED
+    ]
+    if len(relevant) < 2:
+        return None
+    smallest: tuple[Decimal, str] | None = None
+    for claim in relevant:
+        compatible, _ = _qualifiers_compatible(constraint, claim)
+        if not compatible:
+            return None
+        status, _operation, _unit, normalized_actual, _required, problem = _compare(constraint, claim)
+        if status is None or status != ConstraintStatus.PASS or not normalized_actual:
+            return None
+        try:
+            value = Decimal(normalized_actual)
+        except InvalidOperation:
+            return None
+        if smallest is None or value < smallest[0]:
+            smallest = (value, normalized_actual)
+    if smallest is None:
+        return None
+    return smallest[1], relevant
+
+
 def evaluate_constraint(
     constraint: RequirementConstraint,
     claims: Sequence[ProductAttributeClaim],
@@ -422,6 +463,34 @@ def evaluate_constraint(
             f"the sources disagree about this attribute: {alignment.reason}",
         )
     if alignment.status != AlignmentStatus.ALIGNED:
+        # The model refused to pick between several values of one measurement.
+        # If every value the sources state for that measurement satisfies the
+        # requirement, the requirement is met no matter which value is right,
+        # so the check can be made without choosing a value.
+        if alignment.status == AlignmentStatus.AMBIGUOUS and alignment.ambiguity_kind == AmbiguityKind.SEVERAL_VALUES:
+            agreed = _all_stated_values_satisfy(constraint, claims, product_model_ref)
+            if agreed is not None:
+                smallest, values = agreed
+                return ConstraintCheck(
+                    constraint_id=constraint.constraint_id,
+                    requirement_id=constraint.requirement_id,
+                    claim_ids=[claim.claim_id for claim in values],
+                    status=ConstraintStatus.PASS,
+                    reason_code=ConstraintReasonCode.VERIFIED_COMPARISON,
+                    operation=constraint.operator.value,
+                    normalized_actual=smallest,
+                    normalized_required=constraint.value,
+                    unit=constraint.unit,
+                    evidence_ids=sorted({evidence for claim in values for evidence in claim.evidence_ids}),
+                    source_refs=[constraint.source_ref] if constraint.source_ref else [],
+                    explanation=(
+                        f"the sources state {len(values)} values for {constraint.attribute_key} "
+                        f"({', '.join(str(claim.value) for claim in values)}) and every one of them "
+                        f"satisfies {constraint.operator.value} {constraint.value}"
+                        f"{(' ' + constraint.unit) if constraint.unit else ''}: PASS"
+                    ),
+                    importance=constraint.importance.value,
+                )
         return _unknown(
             constraint,
             ConstraintReasonCode.ATTRIBUTE_NOT_ALIGNED,

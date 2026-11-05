@@ -86,6 +86,7 @@ Rules:
 - A claim that does not state the attribute is not a pair. Report NOT_ALIGNED with the reason.
 - Always name the claim identifiers you paired. A pairing without a claim identifier cannot be used.
 - When the source states several values for one attribute, or when the wording leaves the quantity open, report AMBIGUOUS or CONFLICTING. Never pick the value that suits the requirement.
+- When you report AMBIGUOUS, say why in `ambiguity_kind`: use `SEVERAL_VALUES` when several sources state the same measurement with different values and every one of them is the measurement the requirement asks about; use `ROLE_UNCONFIRMED` when a value may measure something else (a sensor pixel count, a super-resolution figure, a detection-distance table, a comparison chart) and the source does not say which; use `OTHER` for any other doubt. A pairing that is uncertain only because there are several values of the same measurement is still a pairing of that measurement: name the claim ids of it.
 - Copy the constraint_id and product_candidate_id exactly as they are given.
 
 The reviewed alias groups are:
@@ -235,6 +236,7 @@ def canonical_alignment(
             reason=proposal.reason or "The model did not align this constraint.",
             dimension=proposal.dimension,
             unit_conversion=proposal.unit_conversion,
+            ambiguity_kind=proposal.ambiguity_kind,
         )
 
     claim = claims[known[0]]

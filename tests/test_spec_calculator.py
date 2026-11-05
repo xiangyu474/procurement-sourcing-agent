@@ -529,3 +529,63 @@ def test_an_unconfirmed_attribute_is_not_treated_as_standardised():
     check = evaluate_constraint(constraint(), [claim(attribute_key="sensor_resolution")], alignment, product_model_ref="TRI055N")
     assert check.status == ConstraintStatus.UNKNOWN
     assert check.reason_code == ConstraintReasonCode.ATTRIBUTE_NOT_ALIGNED
+
+
+def test_several_values_of_one_measurement_pass_when_every_value_satisfies():
+    """The model may refuse to pick a value; the code can still answer."""
+    from procurement_agent.domain.spec_alignment import AmbiguityKind
+
+    target = constraint(value="5", unit="MP", operator=ConstraintOperator.GTE)
+    claims = [
+        claim(claim_id="c1", value="5", unit="MP", attribute_key="output_resolution", product_model_ref="m1", claim_status=ClaimStatus.SUPPORTED_BY_SOURCE, extraction_status=ParseStatus.RESOLVED),
+        claim(claim_id="c2", value="3072x1728", unit="px", attribute_key="output_resolution", product_model_ref="m1", claim_status=ClaimStatus.SUPPORTED_BY_SOURCE, extraction_status=ParseStatus.RESOLVED),
+    ]
+    alignment = SemanticAlignment(
+        constraint_id=target.constraint_id,
+        claim_ids=["c1", "c2"],
+        status=AlignmentStatus.AMBIGUOUS,
+        method=AlignmentMethod.EXACT_ATTRIBUTE_KEY,
+        reason="several values of the same measurement",
+        ambiguity_kind=AmbiguityKind.SEVERAL_VALUES,
+    )
+    check = evaluate_constraint(target, claims, alignment, product_model_ref="m1")
+    assert check.status == ConstraintStatus.PASS
+    assert check.reason_code == ConstraintReasonCode.VERIFIED_COMPARISON
+    assert check.claim_ids == ["c1", "c2"]
+
+
+def test_an_unconfirmed_role_stays_unknown():
+    from procurement_agent.domain.spec_alignment import AmbiguityKind
+
+    target = constraint(value="5", unit="MP", operator=ConstraintOperator.GTE)
+    claims = [claim(claim_id="c1", value="5", unit="MP", attribute_key="output_resolution", product_model_ref="m1", claim_status=ClaimStatus.SUPPORTED_BY_SOURCE, extraction_status=ParseStatus.RESOLVED)]
+    alignment = SemanticAlignment(
+        constraint_id=target.constraint_id,
+        claim_ids=["c1"],
+        status=AlignmentStatus.AMBIGUOUS,
+        method=AlignmentMethod.EXACT_ATTRIBUTE_KEY,
+        reason="the role of the value is not confirmed",
+        ambiguity_kind=AmbiguityKind.ROLE_UNCONFIRMED,
+    )
+    check = evaluate_constraint(target, claims, alignment, product_model_ref="m1")
+    assert check.status == ConstraintStatus.UNKNOWN
+
+
+def test_a_value_that_does_not_satisfy_the_requirement_stays_unknown():
+    from procurement_agent.domain.spec_alignment import AmbiguityKind
+
+    target = constraint(value="5", unit="MP", operator=ConstraintOperator.GTE)
+    claims = [
+        claim(claim_id="c1", value="5", unit="MP", attribute_key="output_resolution", product_model_ref="m1", claim_status=ClaimStatus.SUPPORTED_BY_SOURCE, extraction_status=ParseStatus.RESOLVED),
+        claim(claim_id="c2", value="3", unit="MP", attribute_key="output_resolution", product_model_ref="m1", claim_status=ClaimStatus.SUPPORTED_BY_SOURCE, extraction_status=ParseStatus.RESOLVED),
+    ]
+    alignment = SemanticAlignment(
+        constraint_id=target.constraint_id,
+        claim_ids=["c1", "c2"],
+        status=AlignmentStatus.AMBIGUOUS,
+        method=AlignmentMethod.EXACT_ATTRIBUTE_KEY,
+        reason="several values",
+        ambiguity_kind=AmbiguityKind.SEVERAL_VALUES,
+    )
+    check = evaluate_constraint(target, claims, alignment, product_model_ref="m1")
+    assert check.status == ConstraintStatus.UNKNOWN
