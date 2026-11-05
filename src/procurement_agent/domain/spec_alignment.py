@@ -132,7 +132,17 @@ class SemanticAlignment(BaseModel):
     dimension: str | None = Field(default=None, max_length=200)
     unit_conversion: str | None = Field(default=None, max_length=300)
     unresolved_qualifiers: list[str] = Field(default_factory=list, max_length=20)
-    ambiguity_kind: AmbiguityKind = AmbiguityKind.OTHER
+    ambiguity_kind: AmbiguityKind = Field(
+        default=AmbiguityKind.OTHER,
+        description=(
+            "Only for AMBIGUOUS: why the pairing is uncertain. Use SEVERAL_VALUES when several "
+            "sources state the same measurement with different values and every one of them is "
+            "the measurement the requirement asks about. Use ROLE_UNCONFIRMED when a value may "
+            "measure something else (a sensor pixel count, a super-resolution figure, a "
+            "detection-distance table, a comparison chart) and the source does not say which. "
+            "Use OTHER for any other doubt."
+        ),
+    )
 
     @model_validator(mode="after")
     def aligned_alignment_needs_claims(self) -> SemanticAlignment:

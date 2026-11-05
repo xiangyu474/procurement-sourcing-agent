@@ -86,7 +86,10 @@ Rules:
 - A claim that does not state the attribute is not a pair. Report NOT_ALIGNED with the reason.
 - Always name the claim identifiers you paired. A pairing without a claim identifier cannot be used.
 - When the source states several values for one attribute, or when the wording leaves the quantity open, report AMBIGUOUS or CONFLICTING. Never pick the value that suits the requirement.
-- When you report AMBIGUOUS, say why in `ambiguity_kind`: use `SEVERAL_VALUES` when several sources state the same measurement with different values and every one of them is the measurement the requirement asks about; use `ROLE_UNCONFIRMED` when a value may measure something else (a sensor pixel count, a super-resolution figure, a detection-distance table, a comparison chart) and the source does not say which; use `OTHER` for any other doubt. A pairing that is uncertain only because there are several values of the same measurement is still a pairing of that measurement: name the claim ids of it.
+- Every AMBIGUOUS answer must carry an `ambiguity_kind`. It is the one field that tells the reader what kind of doubt this is, so never leave it out.
+  - `SEVERAL_VALUES`: several sources state the same measurement with different values, and every one of them is the measurement the requirement asks about (for example one page states 5 MP and another states 2992x1680 pixels of the same video output resolution). The pairing itself is not in doubt, only the choice of value, so name the claim ids of that measurement.
+  - `ROLE_UNCONFIRMED`: a value may measure something else, such as a sensor pixel count, a super-resolution figure, a number inside a detection-distance table, a comparison chart or a product title, and the source does not say which. Here the pairing is in doubt.
+  - `OTHER`: any other doubt, with the reason spelled out.
 - Copy the constraint_id and product_candidate_id exactly as they are given.
 
 The reviewed alias groups are:
