@@ -7,6 +7,7 @@ import { buildFinalContext } from "./pipeline_final";
 import { startPipelineReport } from "./pipeline_report";
 import { releaseGuestAdmission } from "./guest_admission";
 import { containerReasonCode, stageErrorCode } from "./stage_error";
+import { pipelineInstanceName } from "./container_instance";
 
 export interface PipelineRequest { pipelineId: string; projectId: string; runId: string; probeOnly?: boolean; researchBudget?: { max_search_calls: number; max_fetches: number; max_tasks: number; max_rounds: number; max_model_calls: number } }
 interface PipelineRow { id: string; run_id: string; demand_revision: number; history_dataset_id: string | null; history_r2_key: string | null }
@@ -28,8 +29,9 @@ async function update(db: D1Database, id: string, status: string, stage: string,
 	await db.prepare("UPDATE project_pipelines SET status = ?2, stage = ?3, error = ?4, updated_at = ?5 WHERE id = ?1")
 		.bind(id, status, stage, error, new Date().toISOString()).run();
 }
-async function callContainer(env: Env, path: string, payload: Record<string, unknown>) {
-	const container = getContainer(env.SOURCING_CONTAINER, env.CONTAINER_INSTANCE_NAME);
+async function callContainer(env: Env, path: string, payload: Record<string, unknown>, pipelineId?: string) {
+	// Every pipeline gets its own container, so one run cannot take another down.
+	const container = getContainer(env.SOURCING_CONTAINER, pipelineInstanceName(env.CONTAINER_INSTANCE_NAME, pipelineId));
 	await container.start();
 	// The container may still be restarting after a crash. Sending work to a
 	// closed port would fail the stage for the wrong reason.
@@ -155,7 +157,7 @@ export class ProcurementPipelineWorkflow extends WorkflowEntrypoint<Env, Pipelin
 				const output = await callContainer(this.env, "/internal/evaluate-spec", {
 					project_id: projectId, pipeline_id: pipelineId, gateway_url: this.env.CONTAINER_GATEWAY_URL,
 					token: this.env.INTERNAL_GATEWAY_TOKEN, runtime_config: runtime(this.env),
-				});
+				}, pipelineId);
 				if (output.status !== "COMPLETED" || typeof output.assessments !== "number") throw new Error("NO_ASSESSMENTS");
 				await snapshot(this.env.DB, pipelineId, "SPEC_RESULTS");
 				await recordPipelineStage(this.env.DB, pipelineId, "EVALUATING", "COMPLETED");
@@ -178,7 +180,7 @@ export class ProcurementPipelineWorkflow extends WorkflowEntrypoint<Env, Pipelin
 				const output = await callContainer(this.env, "/internal/decide", {
 					project_id: projectId, pipeline_id: pipelineId, gateway_url: this.env.CONTAINER_GATEWAY_URL,
 					token: this.env.INTERNAL_GATEWAY_TOKEN, runtime_config: runtime(this.env),
-				});
+				}, pipelineId);
 				if (output.status !== "COMPLETED" || typeof output.decisions !== "number") throw new Error("NO_DECISIONS");
 				await snapshot(this.env.DB, pipelineId, "PRICE_CONTEXT");
 				await snapshot(this.env.DB, pipelineId, "DECISION_RESULTS");

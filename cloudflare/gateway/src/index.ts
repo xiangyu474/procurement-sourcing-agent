@@ -10,6 +10,7 @@ import { listProjectPipelines } from "./pipeline_discovery";
 import { evidenceDisplayExcerpt } from "./evidence_excerpt";
 import { guestEvent, guestRun, guestRunSummary, guestStage, guestStopReason } from "./guest_public";
 import { guestAdmissionPolicy, releaseGuestAdmission, reserveGuestTask } from "./guest_admission";
+import { pipelineInstanceName } from "./container_instance";
 export { ProcurementPipelineWorkflow };
 import {
 	checkInternalAuth,
@@ -1426,7 +1427,10 @@ export class SourcingWorkflow extends WorkflowEntrypoint<Env, RunRequest> {
 					timeout: "20 minutes",
 				},
 				async () => {
-					const container = getContainer(this.env.SOURCING_CONTAINER, this.env.CONTAINER_INSTANCE_NAME);
+					// A pipeline run gets its own container so that two visitors
+					// never share one process.
+					const container = getContainer(this.env.SOURCING_CONTAINER,
+						pipelineInstanceName(this.env.CONTAINER_INSTANCE_NAME, event.payload.pipelineId ?? null));
 					// The instance sleeps when it is idle, so it has to be
 					// started and ready before a long request is sent.
 					await container.start();
