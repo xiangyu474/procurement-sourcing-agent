@@ -3685,9 +3685,10 @@ async function runSelfTest(env: Env): Promise<void> {
 	const headers = { authorization: `Bearer ${env.DEMO_ACCESS_TOKEN}`, "content-type": "application/json" };
 	// One self-test at a time. Every run gets its own container instance, so
 	// two overlapping runs would take the instance allowance of the demo.
+	// Any running task counts, not only the self-tests: the demo always has
+	// the container instances it needs.
 	const running = await env.DB.prepare(
-		`SELECT COUNT(*) AS n FROM project_pipelines pp JOIN projects p ON p.id = pp.project_id
-		 WHERE p.title = 'SELFTEST 判定稳定性' AND pp.status IN ('QUEUED', 'RUNNING')`,
+		`SELECT COUNT(*) AS n FROM project_pipelines WHERE status IN ('QUEUED', 'RUNNING')`,
 	).first<{ n: number }>();
 	if ((running?.n ?? 0) > 0) {
 		console.error("selftest skipped: a self-test is already running");
