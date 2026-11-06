@@ -6,7 +6,7 @@
 - 需求编译写入 D1 时的 `compiler_version`：`m1-0.1.0`
 - 需求 DSL：`compiler_version` 默认 `req-dsl-1.0`，文档中的 `schema_version` 为 `1.0`（`docs/requirement_dsl.md`）
 - 网关迁移：`cloudflare/gateway/migrations/0001` 至 `0008`
-- 已部署网关：`https://procurement-sourcing-gateway.xiangyu474.workers.dev`（`wrangler.jsonc` 的 `CONTAINER_GATEWAY_URL`）
+- 已部署网关：`https://procurement-sourcing-agent.com`（`wrangler.jsonc` 的 `CONTAINER_GATEWAY_URL`）
 
 本次审计对已部署网关做了三次只读探测，没有创建项目：
 

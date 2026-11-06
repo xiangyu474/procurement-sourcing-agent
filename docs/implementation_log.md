@@ -2,7 +2,7 @@
 
 ## M0 — Cloudflare deployment and agent smoke (passed)
 
-- Deployed Worker: `https://procurement-sourcing-gateway.xiangyu474.workers.dev`.
+- Deployed Worker: `https://procurement-sourcing-agent.com`.
 - Python Deep Agents Container, Durable Object, Workflows, D1, and private R2 are active. Container images build on Cloudflare Workers Builds; no local Docker/Docker Hub.
 - Verified task `202 + run_id`, 70-second browser disconnect, D1 stage events, terminal `FAILED`, idempotency key, internal bearer rejection, and DOCX write/read/download from R2.
 - M0 long work was a clearly labelled stage simulation; it did not claim actual supplier research.

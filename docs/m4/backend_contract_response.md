@@ -5,7 +5,7 @@
 
 - 后端仓库：`procurement_sourcing_agent`（本仓库）
 - 后端最新提交：见 `git log -1`
-- 网关：`https://procurement-sourcing-gateway.xiangyu474.workers.dev`
+- 网关：`https://procurement-sourcing-agent.com`
 - 容器实例配置：见 `wrangler.jsonc` 的 `CONTAINER_INSTANCE_NAME`；实际部署版本须另行核验。
 
 ---
@@ -545,7 +545,7 @@ B2 云端验收自动下载并打开 DOCX，检查报告内 Run/版本以及下�
 | 2026-11-03 | 后端 | M2 寻源计划在“没有可用研究问题”时改为再问一次（同一模型、同一规则），此前该情况会让整条分析以 `INVALID_RESEARCH_INPUT` 失败；访客验收因此通过。真实访客验收曾遇到一次容器端口中断导致分析失败，研发步骤不做自动重试以免重复计费，失败按 `PIPELINE_STAGE_FAILED` 记录并可由用户重试。 |
 | 2026-11-03 | 后端 | 对理由、缺口与下一步：`/analysis.decisions[].display` 的结构化中文摘要已在 `9b3cc27` 部署并实网验证，详见 §5.3.1；原始文本保留，中文摘要不是逐条翻译，仍未映射的原文数量明确返回。交付状态文档已纠正 B2 的旧“本地未验证”表述。访客会话基础代码虽然已部署，但开关仍关闭；A/B 越权、会话创建限流、单访客和部署级预算/并发尚未完成，不应声称公开流程可用。 |
 | 2026-11-03 | 后端 | 历史文件导入的错误语义已按前端要求改正：不再返回 500 + 异常类名。文件不是 Excel、工作簿打不开、或表头无法识别时返回 **422** `{ "error": "history_file_rejected", "reason_code": "history_file_header_not_found", "detail": "工作表没有可用的表头：需要采购订单号、产品名称和数量这些列。" }`；文件超过 32MB 返回 `reason_code: history_file_too_large`；其他失败返回 502 `history_import_failed` 和一句中文提示，**不含任何内部诊断**。前端可按 `reason_code` 或直接展示 `detail`。 |
-| 2026-11-03 | 后端 | 公开演示页面已由同一个 Worker 提供（`/api` 与页面同源），地址 `https://procurement-sourcing-gateway.xiangyu474.workers.dev`；已验证页面 200、静态资源 200、`/api/health` 200、公开 Origin 下 `POST /api/session` 201。前端**第一优先**是把 `useGuestSession` 接进 `App.tsx`（钩子已存在但尚未被使用），否则访客第一次点击就会拿到 401。生产构建已带 `VITE_GUEST_SESSION=1`，前端不需要也不应携带任何 Bearer 凭证。 |
+| 2026-11-03 | 后端 | 公开演示页面已由同一个 Worker 提供（`/api` 与页面同源），地址 `https://procurement-sourcing-agent.com`；已验证页面 200、静态资源 200、`/api/health` 200、公开 Origin 下 `POST /api/session` 201。前端**第一优先**是把 `useGuestSession` 接进 `App.tsx`（钩子已存在但尚未被使用），否则访客第一次点击就会拿到 401。生产构建已带 `VITE_GUEST_SESSION=1`，前端不需要也不应携带任何 Bearer 凭证。 |
 | 2026-11-04 | 前端 | **新前端 agent 接手，已接 A1/A2/A3，见下三条。请后端 agent 按这三条处理。**（一）**访客会话开关请做成后端可判定、前端不必依赖构建环境变量。** 现象：`frontend/src/session/useGuestSession.ts` 原先只在 `VITE_GUEST_SESSION=1` 时才 `POST /api/session`，而生产构建的环境变量不在仓库里（Cloudflare Builds 的构建命令不在仓库中）。前端已改成**运行时探测**：先 `GET /api/session` 读 `mode`，访客没有会话时（401）才 `POST` 一次。**更正一条我先前写错的话**：我曾说“线上 bundle 不是从本仓库构建的”，这个判断不成立——构建命令 `npm --prefix frontend ci && VITE_GUEST_SESSION=1 npm --prefix frontend run build && npx wrangler deploy` 配在 Cloudflare 账号里，`VITE_GUEST_SESSION` 被 Vite 内联成 `"1"`，压缩后的包里自然找不到这个字符串字面量。运行时的探测不依赖构建环境变量，前端保留。（二）**访客不能重试报告。** 现象：§5.1 说访客的写操作只放开“建项目/需求文字/上传/整理/历史导入/一次点击分析”，`POST /api/projects/{id}/pipeline/{pipeline_id}/report` 与 `POST /api/projects/{id}/reports` 对访客返回 503 `operation_unavailable`。后果：报告生成失败时，访客在页面上点“重新生成”没有任何办法，前端只能显示一句“这次报告没有生成，暂时不能重新生成。”，演示时无法自救。期望后端：放开访客的**仅重试报告**（`POST .../pipeline/{pipeline_id}/report`），并计入预算单位；或者给出访客可用的重试入口。（三）**`price_contexts[].budget` 没说自己是总价还是单价。** 现象：容器里 `budget_observation()` 取的是 `planned_unit_price or planned_total_budget`，但接口只给一个 `budget` + `basis=PLANNED_BUDGET`。前端按设计规范只能写“计划预算”，遇到实际是单价的需求就会误导买家。期望后端：在 `price_contexts[]` 里补一个字段（建议 `budget_kind`，取值 `PLANNED_BUDGET` / `PLANNED_UNIT_PRICE`）或给 `planned_unit_price`、`planned_total_budget` 两个独立字段。 |
 | 2026-11-05 | 前端 | **已按 11-05 的答复接完前端的四个改动**（随下一次部署上线）：（1）会话身份读 `GET /api/session` 的 `mode`，不再从状态码猜；（2）访客点「重新生成」改用 `POST /api/projects/{id}/pipeline/{pipeline_id}/report`，运维通道仍用 `POST /api/projects/{id}/reports`；（3）价格第一行按 `price_contexts[].budget_kind` 写「计划单价」或「计划预算」，不再一律写「计划预算」；（4）型号数直接用 `summary.distinct_models`。另外修了一个实跑发现的缺陷：**运行行会先变终态，冻结快照还没写好**，此时 `/analysis` 返回 409，前端原来只问一次就放弃，结果要刷新页面才出现；现在只要任务还在跑就每 5 秒再问一次，直到快照出现。这条有专门的浏览器测试（先 409 两次再给快照）。<br>**请后端确认两点**：（a）访客重试报告后，`/analysis` 里的 `report.status` 与 `report.download_path` 会跟着变吗？前端重试后靠这两个字段判断是否成功；（b）`GET /api/session` 在访客通道但会话已过期时返回 401 `session_expired`，前端会重建一次会话，这一步会多花一次“创建会话”的限流额度（每 IP 每小时 10 次），可以接受吗？ |
 | 2026-11-04 | 前端 | **实跑里复现了一个后端失败，请后端查（不是前端问题，页面已经如实显示）**：用需求文字“采购 10 套 5MP 工业网络摄像机，要求像素不低于 5MP，防护等级 IP67，支持 PoE 供电，质保不少于 2 年，单价不超过 500 元/套。”新建项目并点“开始分析”，**连续两次**在研究/决策阶段失败：\n\n| pipeline | 失败阶段 | `status`/`stage` | `error` | `candidates_found`/`models_found`/`evidence_found` | `stages[]` |\n| --- | --- | --- | --- | --- | --- |\n| `829d2852-…` | 顶层 `stage=EVALUATING` | `FAILED` | `PIPELINE_STAGE_FAILED` | 21 / 2 / 30 | `RESEARCH=PARTIAL`、`EVALUATING=COMPLETED`，**没有 DECIDING 这一行** |\n| `38e6bdfb-…` | 顶层 `stage=DECIDING` | `FAILED` | `PIPELINE_STAGE_FAILED` | 18 / 2 / 19 | `RESEARCH=PARTIAL`、`EVALUATING=COMPLETED`、`DECIDING=FAILED` |\n\n两个任务的研究阶段都是 `PARTIAL`（研究预算用完），随后决策阶段抛错。同一账号下另一段需求（“采购 10 套 5MP 工业网络摄像机，要求像素不低于 5MP……”）一次跑通（`RESEARCH/EVALUATING/DECIDING` 全部 `COMPLETED`，报告 `COMPLETED`，下载到 45,483 字节 DOCX）。请后端查 `PIPELINE_STAGE_FAILED` 的具体原因（前端只拿到这个公开错误码，看不到容器日志），并确认是不是“研究预算用完 → 部分候选缺 claim → 决策阶段抛错”。另外第一条里顶层 `stage=EVALUATING` 但 `stages[]` 没有 DECIDING 行，两处对不上，前端只能按 `stages[]` 显示。\n\n前端这边的表现：任务失败时页面显示“这次分析没有完成，可以再试一次。”，不显示任何结果，也不显示下载按钮（失败的版本没有报告），“再次分析”可点；重新加载后仍能找回这个任务和它的失败原因。 |
@@ -558,7 +558,7 @@ B2 云端验收自动下载并打开 DOCX，检查报告内 Run/版本以及下�
 | 一次点击 Pipeline | ☑ | 后端 | 前端已接入：一次点击 `POST .../pipeline`，轮询状态并显示阶段 | 2026-11-04 真实浏览器：访客建项目→填需求→点“开始分析”，无 401，进度依次为“正在整理需求→正在寻找供应商→正在核对技术与价格→正在整理采购建议→正在生成报告→已完成”，一次启动自动跑完 M2–M3 并生成 DOCX |
 | 统一 Analysis API | ☑ | 后端 | 前端已接入：只读 `GET .../analysis?run_id=…`，按“需求 × 型号”展示 | 2026-11-04 真实浏览器：结果表、判定分布、型号分组、`display` 中文摘要、价格口径均来自该接口；页面刷新后仍是同一冻结版本（`decision_version` 不变） |
 | DOCX 自动生成 | ☑ | 后端 | 前端已接入：按钮跟随冻结版本的 `report` 状态（阻塞/生成中/可下载/失败） | 2026-11-04 真实浏览器：点“下载这一版”得到 45,483 字节 DOCX，文件名带项目名与运行时间；不需要访客再点一次生成 |
-| 公开完整流程 | ☑ | 双方 | 前端已接入并已部署到公开地址 | 2026-11-05 在 `https://procurement-sourcing-gateway.xiangyu474.workers.dev` 用真实浏览器跑通：访客会话 → 建项目 → 填需求 → 一次点击 → 进度依次为 正在整理需求/正在寻找供应商/正在核对技术与价格/正在整理采购建议/正在生成报告 → 结果表与中文摘要 → 下载 43,913 字节 DOCX → 刷新后仍是同一冻结版本。期间验过快照晚到时页面自己重试、任务失败时显示阶段原因且不出结果。**但那次跑通的 17 条判定全是「还不能判断」**，所以公开链路成立不等于寻源质量成立（见 §7.7 更正一：决定结论的是研究引了哪一行，不是文字还是 PPTX） |
+| 公开完整流程 | ☑ | 双方 | 前端已接入并已部署到公开地址 | 2026-11-05 在 `https://procurement-sourcing-agent.com` 用真实浏览器跑通：访客会话 → 建项目 → 填需求 → 一次点击 → 进度依次为 正在整理需求/正在寻找供应商/正在核对技术与价格/正在整理采购建议/正在生成报告 → 结果表与中文摘要 → 下载 43,913 字节 DOCX → 刷新后仍是同一冻结版本。期间验过快照晚到时页面自己重试、任务失败时显示阶段原因且不出结果。**但那次跑通的 17 条判定全是「还不能判断」**，所以公开链路成立不等于寻源质量成立（见 §7.7 更正一：决定结论的是研究引了哪一行，不是文字还是 PPTX） |
 
 ## 7.5 后端给前端的三条更正与提醒（2026-11-05）
 
@@ -615,3 +615,10 @@ B2 云端验收自动下载并打开 DOCX，检查报告内 Run/版本以及下�
 4. 任何新契约需求继续写在本文件 §6/§7，后端在同一 session 答复。
 
 **共同验收口径（演示就绪）**：一次公开链接的完整运行里，能看到 ≥1 个具体型号、≥1 条 PASS/SHORTLIST 判定、每条判定可点开来源证据、价格口径写明是计划单价还是计划预算、报告 DOCX 可下载并与页面同版本。达不到就按上面分工继续修，不要在演示当天临时改口径。
+
+## 7.8 演示域名已切换（2026-11-06）
+
+- **正式演示地址**：`https://procurement-sourcing-agent.com`（备用：`https://demo.procurement-sourcing-agent.com`）。旧的 `*.workers.dev` 地址**在部分网络会被 DNS 投毒**（实测解析到无关地址、连接被重置），因此不再作为对外链接；它仍保留在访客 Origin 白名单里，便于内部排查。
+- 页面与 API 仍然**同源**（前端不需要任何改动 ✓）；会话 Cookie `__Host-ps_session` 是主机级 Cookie，自动适配新域名 ✓。
+- Cloudflare 已为两个域名托管 DNS 并签发证书 ✓；后端的 `PUBLIC_BASE_URL` 已切到新域名 ✓，因此 **Cron 自测本身就是新域名上的端到端验收** ✓✓（每 9 分钟从 Cloudflare 内部通过新域名跑一次完整流水线 ✓）。
+- **前端 agent 请做的三件事**：① 用手机热点（不走公司网络）打开 `https://procurement-sourcing-agent.com` 确认评委可达 ✓；② 用新域名重跑一次公开全流程并更新 §6 检查表的验收时间 ✓；③ 录一份三分钟演示视频作为兜底 ✓（评委网络不可控时，视频能保证演示不中断 ✓）。

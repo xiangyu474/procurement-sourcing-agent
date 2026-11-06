@@ -26,7 +26,7 @@
   npm run dev              # 开发服务器，/api 走 vite 代理
   npm run build            # 生产构建
   ```
-- **公开演示地址已上线**：`https://procurement-sourcing-gateway.xiangyu474.workers.dev`（页面与 API 同源，后端就是它）。合并后刷新这个地址即可看到你的改动。
+- **公开演示地址已上线**：`https://procurement-sourcing-agent.com`（页面与 API 同源，后端就是它）。合并后刷新这个地址即可看到你的改动。
 
 ## 2. 后端现在的真实状态（都已实网验收）
 

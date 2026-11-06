@@ -542,7 +542,7 @@ B1 跑通后，立即接入决策版本与报告。
 
 # 八、交付盘点（2026-11-04，距 11-11 截止 7 天）
 
-后端状态：**B3 CLOUD_VERIFIED**（访客隔离、限流、预算单位、一次点击 Pipeline、按运行读取分析、自动 DOCX 均有实网验收）；**B4 未开始**。公开演示地址已可用：`https://procurement-sourcing-gateway.xiangyu474.workers.dev`（页面与 API 同源，访客会话生效）。
+后端状态：**B3 CLOUD_VERIFIED**（访客隔离、限流、预算单位、一次点击 Pipeline、按运行读取分析、自动 DOCX 均有实网验收）；**B4 未开始**。公开演示地址已可用：`https://procurement-sourcing-agent.com`（页面与 API 同源，访客会话生效）。
 
 ## A. 必须做完，否则演示不成立
 

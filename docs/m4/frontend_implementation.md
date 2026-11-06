@@ -115,7 +115,7 @@
 | --- | --- | --- |
 | 夹具 | `npm run e2e`，`frontend/e2e/fixture.ts` 拦截 `**/api/**` | 前端按发布出来的形状渲染。不证明公开链路 |
 | 真实浏览器 + 真实网关 | 本地构建，一个把 `/api` 转发到公开网关的同源代理 | 接口对得上，页面读的是真数据 |
-| 公开地址 | `https://procurement-sourcing-gateway.xiangyu474.workers.dev` | 评委走的那条链路 |
+| 公开地址 | `https://procurement-sourcing-agent.com` | 评委走的那条链路 |
 
 已经在公开地址上用真实浏览器验过的（2026-11-05）：
 

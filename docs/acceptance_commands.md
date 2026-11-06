@@ -81,14 +81,14 @@ PYTHONIOENCODING=utf-8 uv run --python 3.11 python scripts/audit_pass_quotes.py 
 
 ```bash
 # 生成（网关公开接口）
-curl -sS -X POST "https://procurement-sourcing-gateway.xiangyu474.workers.dev/api/projects/<project_id>/reports" \
+curl -sS -X POST "https://procurement-sourcing-agent.com/api/projects/<project_id>/reports" \
   -H "Authorization: Bearer $DEMO_ACCESS_TOKEN" -H "content-type: application/json" \
   -d '{"run_id":"<run_id>"}'
 
 # 状态与下载
-curl -sS "https://procurement-sourcing-gateway.xiangyu474.workers.dev/api/projects/<project_id>/reports/<report_id>" \
+curl -sS "https://procurement-sourcing-agent.com/api/projects/<project_id>/reports/<report_id>" \
   -H "Authorization: Bearer $DEMO_ACCESS_TOKEN"
-curl -sS -o report.docx "https://procurement-sourcing-gateway.xiangyu474.workers.dev/api/projects/<project_id>/reports/<report_id>/download" \
+curl -sS -o report.docx "https://procurement-sourcing-agent.com/api/projects/<project_id>/reports/<report_id>/download" \
   -H "Authorization: Bearer $DEMO_ACCESS_TOKEN"
 ```
 

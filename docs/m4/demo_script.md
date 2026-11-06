@@ -2,7 +2,7 @@
 
 面向演示人。目标是让评委在公开地址上走完一条真实链路，并看清三件事：**结论有来源、结论分档、结论可下载可复核**。
 
-演示地址：`https://procurement-sourcing-gateway.xiangyu474.workers.dev`（页面与 API 同源，访客会话自动建立）。
+演示地址：`https://procurement-sourcing-agent.com`（页面与 API 同源，访客会话自动建立）。
 
 ## 演示前 10 分钟
 
