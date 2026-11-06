@@ -113,7 +113,10 @@ once with a purpose-built query and closed purpose enum, then copy one `url`
 verbatim from that same call's `results` and pass it to fetch_public_source with
 the same task_id. When the question is about a measurable quantity, fetch the
 manufacturer's specification of the exact model: the datasheet PDF, the 技术参数
-or 规格表 page, or the official product specification table. A brochure, a
+or 规格表 page, or the official product specification table. The search results
+mark such a result with `page_kind: SPECIFICATION`; fetch that one when the
+question is about a measurement, and do not spend the fetch on a product page
+or a marketing article that states no measurement. A brochure, a
 landing page, a series page, or a product name that merely carries "5MP" states
 no measurement; a specification found on the manufacturer's own domain is worth
 the second fetch of a task. When you quote a measurement, quote the line of the

@@ -169,6 +169,29 @@ def _focused_page_text(content: str, limit: int = 6000) -> str:
     return f"{head}\n[... the specification part of this page ...]\n{body}"
 
 
+_SPECIFICATION_HINTS = (
+    "datasheet", "data sheet", "specification", "spec sheet", "specs",
+    "technical data", "technical specification", "datasheets", "规格书", "技术参数",
+)
+
+
+def page_kind(url: str, title: str) -> str:
+    """Say what a search result is: a specification page, a product page, or other.
+
+    A manufacturer's datasheet states the measurements of the model; a product
+    page, a brochure or a marketing article usually states a name and a
+    headline figure. The search result is marked so the researcher can read the
+    page that can answer a question about a measurement.
+    """
+    haystack = f"{url} {title}".casefold()
+    if any(hint in haystack for hint in _SPECIFICATION_HINTS):
+        return "SPECIFICATION"
+    address = url.casefold().split("?")[0]
+    if address.endswith(".pdf"):
+        return "SPECIFICATION"
+    return "OTHER"
+
+
 class ResearchBudgetExceeded(RuntimeError):
     """A shared run-wide Tavily/task/model budget has been exhausted."""
 
@@ -950,10 +973,17 @@ def build_research_tools(ledger: ResearchLedger) -> tuple[list[Any], list[Any]]:
             }
         return {
             "results": [
-                {"url": item.url, "title": item.title[:500], "snippet": item.snippet[:1000], "rank": item.rank}
+                {
+                    "url": item.url, "title": item.title[:500], "snippet": item.snippet[:1000],
+                    "rank": item.rank, "page_kind": page_kind(item.url, item.title),
+                }
                 for item in results
             ],
-            "note": "Search snippets are discovery hints only; fetch a page before extracting claims.",
+            "note": (
+                "Search snippets are discovery hints only; fetch a page before extracting claims. "
+                "A result marked page_kind=SPECIFICATION is a manufacturer's datasheet or specification "
+                "document; it is the page that states the measurements of a model."
+            ),
             "search_calls_used": ledger.search_calls,
             "search_call_limit": ledger.plan.budget.max_search_calls,
         }
