@@ -38,6 +38,7 @@ export interface Env {
 	INTERNAL_GATEWAY_TOKEN: string;
 	DEMO_ACCESS_TOKEN: string;
 	DEMO_SAMPLE_PIPELINE_ID?: string;
+	SELFTEST_ENABLED?: string;
 	PUBLIC_BASE_URL?: string;
 	GUEST_SESSION_ENABLED?: string;
 	GUEST_SESSION_SECRET?: string;
@@ -2515,9 +2516,11 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 		if (request.method === "GET" && url.pathname === "/api/projects") {
 			const requested = Number(url.searchParams.get("limit") ?? 50);
 			const limit = Number.isFinite(requested) ? Math.max(1, Math.min(200, Math.floor(requested))) : 50;
+			const asked = Number(url.searchParams.get("offset") ?? 0);
+			const offset = Number.isFinite(asked) ? Math.max(0, Math.min(10000, Math.floor(asked))) : 0;
 			const listSql = guestSessionId ? guestProjectsListSql : projectsListSql;
 			const statement = env.DB.prepare(listSql);
-			const { results } = await (guestSessionId ? statement.bind(limit, guestSessionId) : statement.bind(limit))
+			const { results } = await (guestSessionId ? statement.bind(limit, guestSessionId, offset) : statement.bind(limit, offset))
 				.all<Record<string, unknown>>();
 			return json({ projects: results.map((row) => {
 				const project = shapeProject(row);
@@ -3754,6 +3757,7 @@ const SELFTEST_DEMAND = "采购5MP工业网络摄像机，数量10套，预计�
 
 async function runSelfTest(env: Env): Promise<void> {
 	const base = (env.PUBLIC_BASE_URL || "").replace(/\/$/, "");
+	if (env.SELFTEST_ENABLED === "false") return;
 	if (!base || !env.DEMO_ACCESS_TOKEN) {
 		console.error("selftest skipped: PUBLIC_BASE_URL or DEMO_ACCESS_TOKEN is missing");
 		return;
@@ -3770,15 +3774,17 @@ async function runSelfTest(env: Env): Promise<void> {
 		console.error("selftest skipped: a self-test is already running");
 		return;
 	}
+	// One fixed project for the self-test: a new project every nine minutes
+	// pushed the demonstration projects out of the visitor's project list.
+	const projectId = "00000000-0000-4000-8000-000000000001";
 	const created = await fetch(`${base}/api/projects`, {
 		method: "POST", headers,
 		body: JSON.stringify({ title: "SELFTEST 判定稳定性", requirement_text: SELFTEST_DEMAND }),
 	});
-	if (!created.ok) {
+	if (!created.ok && created.status !== 409) {
 		console.error("selftest could not create its project", created.status);
 		return;
 	}
-	const projectId = (await created.json() as { project_id?: string }).project_id ?? "";
 	const revision = Number((await (await fetch(`${base}/api/projects/${projectId}`, { headers })).json() as { demand_revision?: number }).demand_revision ?? 0);
 	const compileStart = await fetch(`${base}/api/projects/${projectId}/requirement-compile`, { method: "POST", headers });
 	if (!compileStart.ok) {
@@ -3798,7 +3804,7 @@ async function runSelfTest(env: Env): Promise<void> {
 		return;
 	}
 	const started = await fetch(`${base}/api/projects/${projectId}/pipeline`, {
-		method: "POST", headers: { ...headers, "idempotency-key": `selftest-${projectId}` },
+		method: "POST", headers: { ...headers, "idempotency-key": `selftest-${projectId}-${Date.now()}` },
 		body: JSON.stringify({ demand_revision: revision }),
 	});
 	if (!started.ok) {

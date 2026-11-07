@@ -53,8 +53,13 @@ describe("guest session and resource isolation", () => {
 		insert.run("a", "A", "2026-01-01", "session-a");
 		insert.run("b", "B", "2026-01-02", "session-b");
 		insert.run("old", "Old", "2026-01-03", null);
-		const rows = db.prepare(guestProjectsListSql).all(50, "session-a");
+		const rows = db.prepare(guestProjectsListSql).all(50, "session-a", 0);
 		assert.deepEqual(rows.map(row => row.id), ["a"]);
+		// The list can be paged, so a project is not lost when newer ones arrive.
+		const later = insert.run("c", "C", "2026-01-04", "session-a");
+		assert.equal(later.changes, 1);
+		const paged = db.prepare(guestProjectsListSql).all(1, "session-a", 1);
+		assert.deepEqual(paged.map(row => row.id), ["a"]);
 	});
 	it("requires explicit creation, validates Origin, and reuses a valid session", async () => {
 		const { env } = setup();

@@ -112,8 +112,8 @@ describe("the credentials of the internal routes", () => {
 });
 
 describe("the statements of the new routes", () => {
-	it("bind one parameter for the project list", () => {
-		assert.equal(placeholderCount(projectsListSql), 1);
+	it("bind the limit and the offset for the project list", () => {
+		assert.equal(placeholderCount(projectsListSql), 2);
 	});
 
 	it("bind one parameter for the runs of a project", () => {
