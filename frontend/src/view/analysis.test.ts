@@ -184,7 +184,34 @@ describe("analysis view", () => {
 		expect(row.summary).toBe("现有证据不足以判断是否符合全部硬性条件，建议补充核验。");
 		expect(row.decision?.gaps[0].text).toBe("尚未找到支持该项指标的可用资料。");
 		expect(row.decision?.nextActions[0].text).toBe("补充该型号的对应技术资料并核验来源。");
-		expect(untranslatedNote(row.decision)).toContain("还有原始信息待核对");
+		expect(untranslatedNote(row.decision)).toBe("另有 5 条缺口、3 条下一步和理由原文未翻译，可在来源中核对。");
+		expect(
+			untranslatedNote({
+				code: null,
+				summary: null,
+				gaps: [],
+				nextActions: [],
+				untranslated: { rationale: true, gapCount: 1, nextActionCount: 1 },
+			}),
+		).toBe("另有 1 条缺口、1 条下一步和理由原文未翻译，可在来源中核对。");
+		expect(
+			untranslatedNote({
+				code: null,
+				summary: null,
+				gaps: [],
+				nextActions: [],
+				untranslated: { rationale: false, gapCount: 0, nextActionCount: 2 },
+			}),
+		).toBe("另有 2 条下一步，可在来源中核对。");
+		expect(
+			untranslatedNote({
+				code: null,
+				summary: null,
+				gaps: [],
+				nextActions: [],
+				untranslated: { rationale: true, gapCount: 0, nextActionCount: 0 },
+			}),
+		).toBe("另有理由原文未翻译，可在来源中核对。");
 		expect(JSON.stringify(row)).not.toContain("the model did not confirm");
 	});
 
@@ -208,13 +235,14 @@ describe("analysis view", () => {
 			],
 			notes: [],
 		});
-		expect(rows.map((row) => row.label)).toEqual(["计划预算", "历史成交价", "公网参考价", "正式报价"]);
+		expect(rows.filter((row) => !row.muted).map((row) => row.label)).toEqual(["计划总预算", "历史成交价", "公网参考价"]);
+		expect(rows.find((row) => row.muted)?.text).toBe("暂无正式报价");
 		expect(rows.map((row) => row.text).join(" ")).not.toMatch(/历史价|节支/);
-		expect(rows[0].text).toBe("200000 CNY 元");
+		expect(rows[0].text).toBe("200000 CNY/元");
 		expect(rows[1].text).toContain("导入目录");
 		expect(rows[1].text).not.toContain("77");
 		expect(rows[2].text).toContain("网页标价");
-		expect(rows[3].text).toBe("还没有");
+		expect(rows.find((row) => row.muted)?.text).toBe("暂无正式报价");
 	});
 
 	it("shows the item history and the saving only on a usable baseline", () => {
@@ -262,7 +290,27 @@ describe("analysis view", () => {
 			notes: [],
 		});
 		expect(unit[0].label).toBe("计划单价");
-		expect(unit[0].text).toBe("500 CNY 元/套");
+		expect(unit[0].text).toBe("500 CNY/元/套");
+		const perSet = priceRows({
+			requirement_id: "r1",
+			product_name: "摄像机",
+			budget: "100",
+			budget_currency: "CNY",
+			budget_unit: "套",
+			budget_kind: "PLANNED_UNIT_PRICE",
+			history_scope: "NONE",
+			history_scope_note: null,
+			history_available: false,
+			history_rows: 0,
+			statistics: null,
+			overview_statistics: null,
+			overview_is_not_a_baseline: false,
+			findings: [],
+			notes: [],
+		});
+		expect(perSet[0].text).toBe("100 CNY/套");
+		expect(`${perSet[0].label} ${perSet[0].text}`).toBe("计划单价 100 CNY/套");
+		expect(unit.find((row) => row.muted)?.text).toBe("暂无历史成交价、公网参考价和正式报价");
 		const total = priceRows({
 			requirement_id: "r1",
 			product_name: "摄像机",
@@ -280,7 +328,8 @@ describe("analysis view", () => {
 			findings: [],
 			notes: [],
 		});
-		expect(total[0].label).toBe("计划预算");
+		expect(total[0].label).toBe("计划总预算");
+		expect(total[0].text).toBe("5000 CNY/元");
 	});
 
 	it("reads the published counts", () => {

@@ -1,5 +1,5 @@
 import { isTerminalRun } from "./api/adapter";
-import { analysisInProgress, showNoCandidateLine } from "./view/pipeline";
+import { analysisInProgress, showNoCandidateLine, sourcingOutcome } from "./view/pipeline";
 import { CandidateTable } from "./components/CandidateTable";
 import { DemandForm } from "./components/DemandForm";
 import { EvidencePane } from "./components/EvidencePane";
@@ -14,6 +14,18 @@ export function App() {
 	const project = workspace.project;
 	const run = workspace.run && workspace.run.project_id === project?.id ? workspace.run : null;
 	const pipelineForRun = workspace.pipelineRunId && run?.id === workspace.pipelineRunId ? workspace.pipelineStatus : null;
+	const outcome = sourcingOutcome({
+		pipelineStatus: pipelineForRun,
+		stages: pipelineForRun ? workspace.pipelineStages : [],
+		researchStatus: pipelineForRun ? workspace.candidates.researchStatus : null,
+	});
+	const headingStatus = outcome ?? pipelineForRun;
+	const terminalResult = outcome === "COMPLETED" || outcome === "PARTIAL";
+	const progressLine = terminalResult
+		? workspace.reportStatus === "QUEUED" || workspace.reportStatus === "RUNNING"
+			? "正在生成报告"
+			: null
+		: workspace.pipelineLine;
 	const analysisActive = analysisInProgress(workspace.pipelineStatus, run?.status ?? null);
 	const collapsed = Boolean(run && isTerminalRun(run.status));
 	const startLabel = workspace.startOffer === "retry" && !analysisActive ? "重试" : analysisActive ? "分析进行中" : run ? "再次分析" : "开始分析";
@@ -96,6 +108,7 @@ export function App() {
 						historyNote={workspace.historyNote}
 						synthetic={workspace.historyNote?.synthetic ?? null}
 						startLabel={startLabel}
+						quietStart={startLabel === "再次分析"}
 						onText={workspace.onText}
 						onUpload={workspace.onUpload}
 						onImport={workspace.onImportHistory}
@@ -119,7 +132,7 @@ export function App() {
 					) : null}
 					<RunPanel
 						run={run}
-						pipelineStatus={pipelineForRun}
+						pipelineStatus={headingStatus}
 						events={workspace.events}
 						stopReason={workspace.stopReason}
 						candidateCount={workspace.candidateCount}
@@ -134,9 +147,9 @@ export function App() {
 						runs={workspace.runHistory}
 						onSelectRun={workspace.selectRun}
 					/>
-					{workspace.pipelineLine ? (
+					{progressLine ? (
 						<p className="quiet" data-testid="pipeline-line">
-							{workspace.pipelineLine}
+							{progressLine}
 						</p>
 					) : null}
 					{workspace.pipelineNote ? <p data-testid="pipeline-note">{workspace.pipelineNote}</p> : null}
@@ -167,6 +180,7 @@ export function App() {
 								evidenceError={workspace.candidates.evidenceError}
 								onOpenEvidence={workspace.candidates.openEvidence}
 								onSelect={workspace.candidates.select}
+								onClose={workspace.candidates.clear}
 							/>
 						</div>
 					) : null}

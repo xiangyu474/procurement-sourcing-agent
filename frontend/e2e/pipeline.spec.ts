@@ -19,9 +19,9 @@ test("fixture pipeline maps documented stages and does not invent a report", asy
 	await expect(line).toHaveText("正在寻找供应商", { timeout: 20_000 });
 	await expect(line).toHaveText("正在核对技术与价格", { timeout: 20_000 });
 	await expect(line).toHaveText("正在整理采购建议", { timeout: 20_000 });
-	await expect(line).toHaveText("已完成", { timeout: 20_000 });
-	await expect(page.getByText("正在生成报告")).toHaveCount(0);
 	await expect(page.getByTestId("run-status")).toHaveText("寻源已结束", { timeout: 20_000 });
+	await expect(page.getByTestId("pipeline-line")).toHaveCount(0);
+	await expect(page.getByText("正在生成报告")).toHaveCount(0);
 	await page.screenshot({ path: `${screenshots}/b1-pipeline-done.png`, fullPage: true });
 });
 
@@ -41,7 +41,8 @@ test("fixture pipeline reuses one idempotency key when the start can be retried"
 	await begin(page);
 	await expect(page.getByRole("alert")).toContainText("分析没能启动。");
 	await page.getByRole("button", { name: "重试" }).click();
-	await expect(page.getByTestId("pipeline-line")).toHaveText("已完成", { timeout: 20_000 });
+	await expect(page.getByTestId("run-status")).toHaveText("寻源已结束", { timeout: 20_000 });
+	await expect(page.getByTestId("pipeline-line")).toHaveCount(0);
 	expect(posts).toHaveLength(2);
 	expect(posts[0].key).toBe(posts[1].key);
 	expect(posts[0].key.length).toBeGreaterThan(0);
@@ -51,7 +52,8 @@ test("fixture pipeline reuses one idempotency key when the start can be retried"
 test("fixture pipeline replaces the key after an idempotency conflict and stays quiet", async ({ page }) => {
 	const posts = await installPipeline(page, "conflict");
 	await begin(page);
-	await expect(page.getByTestId("pipeline-line")).toHaveText("已完成", { timeout: 20_000 });
+	await expect(page.getByTestId("run-status")).toHaveText("寻源已结束", { timeout: 20_000 });
+	await expect(page.getByTestId("pipeline-line")).toHaveCount(0);
 	expect(posts).toHaveLength(2);
 	expect(posts[0].key).not.toBe(posts[1].key);
 	await expect(page.getByText("idempotency_conflict")).toHaveCount(0);

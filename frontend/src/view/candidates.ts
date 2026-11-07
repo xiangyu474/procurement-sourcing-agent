@@ -17,7 +17,12 @@ export type CheckView = {
 	evidence: EvidenceLink[];
 };
 
-export type PriceRow = { label: "计划预算" | "计划单价" | "历史成交价" | "公网参考价" | "正式报价"; text: string };
+export type PriceRow = {
+	label: "计划预算" | "计划单价" | "计划总预算" | "历史成交价" | "公网参考价" | "正式报价";
+	text: string;
+	/** A single muted sentence standing in for several empty price rows. */
+	muted?: boolean;
+};
 
 /** The Chinese projection of one frozen decision. */
 export type DecisionGap = { text: string; importance: string | null; evidenceIds: string[] };

@@ -183,6 +183,16 @@ tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .stage.verify, .tech.unknown { color: var(--unknown); }
 .tech.pass { color: var(--pass); }
 .tech.fail { color: var(--fail); }
+.detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-2); }
+.detail-head h2 { margin: 0; }
+.close-detail {
+	border: 0;
+	background: none;
+	color: var(--muted);
+	font-size: 20px;
+	line-height: 1;
+	padding: 0 4px;
+}
 .detail {
 	position: sticky;
 	top: 0;

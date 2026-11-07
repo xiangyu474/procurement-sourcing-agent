@@ -26,6 +26,7 @@ function renderForm(collapsed: boolean) {
 			historyNote={null}
 			synthetic={null}
 			startLabel={collapsed ? "再次分析" : "开始分析"}
+			quietStart={collapsed}
 			onText={() => {}}
 			onUpload={async () => {}}
 			onImport={async () => {}}
@@ -46,6 +47,8 @@ describe("DemandForm", () => {
 		renderForm(true);
 		const notice = screen.getByText("计划预算未确认");
 		const button = screen.getByRole("button", { name: "再次分析" });
+		expect(button.className).toContain("ghost");
+		expect(button.className).not.toContain("primary");
 		expect(notice.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
 });

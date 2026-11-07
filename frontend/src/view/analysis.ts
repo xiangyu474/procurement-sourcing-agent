@@ -83,10 +83,12 @@ export function untranslatedNote(summary: DecisionSummary | null): string | null
 	const { rationale, gapCount, nextActionCount } = summary.untranslated;
 	if (!rationale && gapCount === 0 && nextActionCount === 0) return null;
 	const parts: string[] = [];
-	if (rationale) parts.push("理由");
 	if (gapCount > 0) parts.push(`${gapCount} 条缺口`);
 	if (nextActionCount > 0) parts.push(`${nextActionCount} 条下一步`);
-	return `还有原始信息待核对：${parts.join("、")}。`;
+	if (rationale) parts.push("理由原文未翻译");
+	const joined = parts.length === 1 ? parts[0] : parts.length === 2 ? `${parts[0]}和${parts[1]}` : `${parts.slice(0, -1).join("、")}和${parts[parts.length - 1]}`;
+	const lead = joined.startsWith("理由") ? "另有" : "另有 ";
+	return `${lead}${joined}，可在来源中核对。`;
 }
 
 const BASIS_LABELS: Record<string, PriceRow["label"]> = {
@@ -100,7 +102,14 @@ const OVERVIEW_HISTORY_TEXT = "这是导入目录的整体情况，不能当作�
 
 function amountText(value: string | null, currency: string | null, unit: string | null): string | null {
 	if (!value || !value.trim()) return null;
-	return [value.trim(), currency?.trim(), unit?.trim()].filter((part): part is string => Boolean(part)).join(" ");
+	const money = [currency?.trim(), unit?.trim()].filter((part): part is string => Boolean(part)).join("/");
+	return money ? `${value.trim()} ${money}` : value.trim();
+}
+
+function emptyPriceNote(labels: string[]): string {
+	if (labels.length <= 1) return `暂无${labels[0] ?? ""}`;
+	if (labels.length === 2) return `暂无${labels[0]}和${labels[1]}`;
+	return `暂无${labels.slice(0, -1).join("、")}和${labels[labels.length - 1]}`;
 }
 
 function statisticText(statistics: Record<string, unknown> | null): { count: number | null; currency: string | null; unit: string | null } {
@@ -140,7 +149,8 @@ export function priceRows(context: AnalysisPriceContext | null): PriceRow[] {
 	}
 	const statistics = statisticText(context.statistics);
 	const budget = amountText(context.budget, context.budget_currency, context.budget_unit);
-	const budgetLabel: PriceRow["label"] = context.budget_kind === "PLANNED_UNIT_PRICE" ? "计划单价" : "计划预算";
+	const budgetLabel: PriceRow["label"] =
+		context.budget_kind === "PLANNED_UNIT_PRICE" ? "计划单价" : context.budget_kind === "PLANNED_TOTAL_BUDGET" ? "计划总预算" : "计划预算";
 	const history = findingFor(context, "历史成交价");
 	const publicPrice = findingFor(context, "公网参考价");
 	const formal = findingFor(context, "正式报价");
@@ -171,12 +181,16 @@ export function priceRows(context: AnalysisPriceContext | null): PriceRow[] {
 		formalText = "不可比，不能用来比较。";
 	}
 
-	return [
-		{ label: budgetLabel, text: budget ?? "还没有" },
+	const quoted: PriceRow[] = [
 		{ label: "历史成交价", text: historyText },
 		{ label: "公网参考价", text: publicText },
 		{ label: "正式报价", text: formalText },
 	];
+	const present = quoted.filter((row) => row.text !== "还没有");
+	const missing = quoted.filter((row) => row.text === "还没有").map((row) => row.label);
+	const rows: PriceRow[] = [{ label: budgetLabel, text: budget ?? "还没有" }, ...present];
+	if (missing.length > 0) rows.push({ label: "计划预算", text: emptyPriceNote(missing), muted: true });
+	return rows;
 }
 
 function groupKey(requirementId: string | null, model: string | null): string {

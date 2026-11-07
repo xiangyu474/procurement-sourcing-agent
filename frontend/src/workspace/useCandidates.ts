@@ -16,11 +16,13 @@ export type CandidateModel = {
 	loading: boolean;
 	/** True only after this run's analysis response was read. A 409 or a failure is not zero candidates. */
 	loaded: boolean;
+	researchStatus: string | null;
 	loadError: string | null;
 	decisionsReady: boolean;
 	reportBlockReason: string | null;
 	selectedId: string | null;
 	select: (id: string) => void;
+	clear: () => void;
 	evidence: EvidenceDetail | null;
 	evidenceError: string | null;
 	openEvidence: (evidenceId: string) => void;
@@ -53,6 +55,7 @@ export function useCandidates(
 	const [analysisPipelineId, setAnalysisPipelineId] = useState<string | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [loaded, setLoaded] = useState(false);
+	const [researchStatus, setResearchStatus] = useState<string | null>(null);
 	const [loadError, setLoadError] = useState<string | null>(null);
 	const [decisionsReady, setDecisionsReady] = useState(false);
 	const [reportBlockReason, setReportBlockReason] = useState<string | null>(null);
@@ -83,6 +86,7 @@ export function useCandidates(
 		setAnalysisReport(null);
 		setAnalysisPipelineId(null);
 		setLoaded(false);
+		setResearchStatus(null);
 		if (!projectId || !runId || !runStatus) {
 			setLoading(false);
 			return;
@@ -113,6 +117,7 @@ export function useCandidates(
 				setDecisionsReady(analysis.decisions.length > 0);
 				setReportBlockReason(analysis.decisions.length > 0 ? null : "报告还没有生成");
 				setLoaded(true);
+				setResearchStatus(analysis.research_status || null);
 				setLoading(false);
 			} catch (caught) {
 				if (isAbort(caught) || signal.aborted) return;
@@ -155,6 +160,12 @@ export function useCandidates(
 		setEvidenceError(null);
 	};
 
+	const clear = () => {
+		setSelectedId(null);
+		setEvidence(null);
+		setEvidenceError(null);
+	};
+
 	const openEvidence = (evidenceId: string) => {
 		evidenceAbortRef.current?.abort();
 		const controller = new AbortController();
@@ -179,11 +190,13 @@ export function useCandidates(
 		analysisPipelineId,
 		loading,
 		loaded,
+		researchStatus,
 		loadError,
 		decisionsReady,
 		reportBlockReason,
 		selectedId,
 		select,
+		clear,
 		evidence,
 		evidenceError,
 		openEvidence,
