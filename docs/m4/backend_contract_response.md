@@ -695,3 +695,30 @@ Cron 自测每 9 分钟跑一次访客全链路（通过正式域名 ✓），�
 - [ ] 配音或字幕 ✓✓
 - [ ] 把视频与截图放入 `docs/m4/demo/` ✓ 并在 §6 登记链接 ✓
 - [ ] （可选）快速预览按钮：**不需要** ✓——交付只有录屏视频，没有现场演示 ✓✓，不必为此再加 UI ✓
+
+## 7.10 阶段原因码对照表（2026-11-07，后端发布，前端按此映射中文）
+
+`GET /api/projects/{id}/pipeline/{pipeline_id}` 的 `stages[].error_code` 现在会写**具体原因** ✓，
+不再一律 `PIPELINE_STAGE_FAILED` ✓。顶层 `error` 仍是笼统的 `PIPELINE_STAGE_FAILED` ✓（对外稳定 ✓）。
+
+| 阶段 | error_code | 含义 | 建议中文 |
+| --- | --- | --- | --- |
+| RESEARCH | `NO_SOURCE_BACKED_CANDIDATES` | 找到的页面里没有能支撑该需求的公开声明 | 找到的公开资料里没有能支撑这条需求的证据。 |
+| RESEARCH | `NO_FETCHED_EVIDENCE` | 没有取到任何页面正文 | 没有取到公开页面正文，这次无法核对。 |
+| RESEARCH | `SOURCE_FETCH_FAILED` | 取页失败 | 公开页面读取失败，这次无法核对。 |
+| RESEARCH | `BUDGET_EXHAUSTED` | 研究预算用完（研究阶段 PARTIAL） | 研究预算用完了，这次只覆盖了一部分公开来源。 |
+| RESEARCH | `INVALID_RESEARCH_INPUT` / `RESEARCH_INPUT_REJECTED` | 需求无法整理成可研究的问题 | 这次需求没能整理成可研究的问题。 |
+| RESEARCH | `SEARCH_PROVIDER_TIMEOUT` / `SEARCH_PROVIDER_RATE_LIMITED` | 搜索服务超时或限流 | 公开检索服务这次没有响应。 |
+| RESEARCH | `RESEARCH_FAILED` / `RESEARCH_EXECUTION_FAILED` | 研究执行失败（无更细原因） | 这次寻源没有完成，可以再试一次。 |
+| EVALUATING | `STAGE_SERVICE_ERROR` | 核验服务调用失败（容器刚重启/被杀） | 供应商核验这一步没有完成，可以再试一次。 |
+| EVALUATING | `SPEC_EVALUATION_FAILED` | 核验返回了不可用的结果 | 供应商核验没有给出可用的结论，可以再试一次。 |
+| DECIDING | `DECISION_FAILED` | 采购建议生成失败 | 采购建议没有生成，可以再试一次。 |
+| DECIDING | `MODEL_TIMEOUT` / `MODEL_RATE_LIMIT` | 模型超时或限流 | 模型服务这次没有响应，可以再试一次。 |
+| 任意阶段 | `SNAPSHOT_MISSING` / `SNAPSHOT_CONFLICT` / `SNAPSHOT_INTEGRITY_ERROR` | 冻结快照缺失/冲突/校验失败 | 这次结果没有保存下来，可以再试一次。 |
+
+**注意**：
+- `NO_CANDIDATES` **永远不会出现** ✓——研究找到 0 个候选不算失败 ✓，流水线会继续 ✓；
+  "这次没有候选供应商"只能由**分析里确实加载到 0 个候选**触发 ✓✓。
+- `/analysis` 返回 **409** 有两种情况 ✓：`analysis_version_unavailable`（快照还没写好 ✓，**继续轮询** ✓，
+  不要显示"没有结果" ✓）与 `analysis_snapshot_integrity_error`（500 ✓，真错误 ✓）。
+  前端请保留 5 秒重试 ✓✓，只有在流水线已终态而快照仍缺失时，才显示"这次没有结果" ✓✓。
