@@ -144,6 +144,11 @@ describe("adapter", () => {
 		expect(raw.summary).toBe("服务暂时不可用。");
 		expect(raw.technical).toBeUndefined();
 		expect(messageForApiError(new ApiError(429, "rate_limited", null)).summary).toBe("请求过于频繁，请稍后再试。");
+		expect(messageForApiError(new ApiError(401, "session_required", null)).summary).toBe("会话已失效，请刷新页面。");
+		expect(messageForApiError(new ApiError(503, "sample_not_configured", null)).summary).toBe("示例还没有准备好。");
+		expect(messageForApiError(new ApiError(404, "sample_not_found", null)).summary).toBe("没有找到可查看的示例。");
+		expect(messageForApiError(new ApiError(500, "sample_exploded", null)).summary).toBe("服务暂时不可用。");
+		expect(messageForApiError(new ApiError(500, "sample_exploded", null)).summary).not.toContain("sample_exploded");
 		expect(messageForApiError(new ApiError(403, "forbidden", null)).summary).toBe("访问被拒绝。");
 		const parsed = messageForApiError(
 			new ApiError(500, "history_import_failed", {

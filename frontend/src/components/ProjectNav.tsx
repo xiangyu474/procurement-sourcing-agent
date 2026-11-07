@@ -17,9 +17,11 @@ export function ProjectNav(props: {
 	projects: ProjectSummary[];
 	activeProjectId: string | null;
 	busy: boolean;
+	sampleBusy: boolean;
 	onCreate: (title: string) => Promise<boolean>;
 	onOpen: (projectId: string) => Promise<boolean>;
 	onSelect: (projectId: string) => void;
+	onSample: () => Promise<void>;
 }) {
 	const [title, setTitle] = useState("");
 	const [openId, setOpenId] = useState("");
@@ -52,6 +54,9 @@ export function ProjectNav(props: {
 					创建
 				</button>
 			</form>
+			<button className="ghost sample" type="button" disabled={props.busy || props.sampleBusy} onClick={() => void props.onSample()}>
+				{props.sampleBusy ? "正在打开示例" : "查看示例结果"}
+			</button>
 			<div className="project-list">
 				{props.projects.map((project) => {
 					const raw = listStatus(project.latest_run?.status ?? null, null);

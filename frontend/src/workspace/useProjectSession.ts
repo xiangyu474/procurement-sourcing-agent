@@ -44,6 +44,8 @@ export type ProjectSession = {
 	onUpload: (purpose: "REQUIREMENT" | "HISTORY", file: File) => Promise<void>;
 	onImportHistory: () => Promise<void>;
 	onStart: () => Promise<void>;
+	onSample: () => Promise<void>;
+	sampleBusy: boolean;
 	runHistory: ProjectRunSummary[];
 	selectRun: (runId: string) => void;
 	pipelineLine: string | null;
@@ -86,8 +88,11 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 	const [pipelineStatus, setPipelineStatus] = useState<string | null>(null);
 	const [pipelineRunId, setPipelineRunId] = useState<string | null>(null);
 	const pipelineStatusRef = useRef<string | null>(null);
+	const sampleBusyRef = useRef(false);
+	const pinnedPipelineRef = useRef<{ projectId: string; pipelineId: string } | null>(null);
 	const [reportStatus, setReportStatus] = useState<string | null>(null);
 	const [startOffer, setStartOffer] = useState<"retry" | null>(null);
+	const [sampleBusy, setSampleBusy] = useState(false);
 	const runHistoryRef = useRef<ProjectRunSummary[]>([]);
 	const pipelineActiveRef = useRef(false);
 	const followedRunRef = useRef<string | null>(null);
@@ -139,24 +144,39 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		setReportStatus(snapshot.report_status);
 	}
 
-	/** The runs row can appear after the pipeline id. A 404 is ignored so the next poll can bind it. */
-	async function ensureRun(runId: string, signal: AbortSignal): Promise<boolean> {
-		if (followedRunRef.current === runId) return true;
+	/** The runs row can appear after the pipeline id. A 404 means the row is not there yet. */
+	async function ensureRun(runId: string, signal: AbortSignal): Promise<"ready" | "missing" | "unavailable"> {
+		if (followedRunRef.current === runId) return "ready";
 		try {
 			const loaded = await clientRef.current.getRun(runId, { signal });
-			if (signal.aborted) return false;
+			if (signal.aborted) return "unavailable";
 			rememberRun(loaded);
 			followedRunRef.current = runId;
 			void runsRef.current.watch(runId, signal, noteRun).catch((caught) => {
 				if (!isAbort(caught) && !signal.aborted) setError(messageForApiError(caught));
 			});
-			return true;
+			return "ready";
 		} catch (caught) {
-			if (isAbort(caught) || signal.aborted) return false;
-			if (caught instanceof ApiError && caught.status === 404) return false;
+			if (isAbort(caught) || signal.aborted) return "unavailable";
+			if (caught instanceof ApiError && caught.status === 404) return "missing";
 			setError(messageForApiError(caught));
-			return false;
+			return "unavailable";
 		}
+	}
+
+	/** A finished sample has a pipeline and a snapshot, and may have no runs row. */
+	function runFromPipeline(snapshot: Pipeline): Run {
+		const status = snapshot.status === "PARTIAL" || snapshot.status === "FAILED" ? snapshot.status : "COMPLETED";
+		return {
+			id: snapshot.run_id,
+			project_id: snapshot.project_id,
+			status,
+			current_stage: snapshot.stage ?? status,
+			artifact_key: null,
+			last_error: null,
+			created_at: snapshot.created_at,
+			updated_at: snapshot.updated_at,
+		};
 	}
 
 	/** Poll the saved pipeline. Returns false when the task is gone, so the caller can fall back. */
@@ -202,10 +222,15 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 			showPipeline(snapshot);
 			const terminal = snapshot.status === "COMPLETED" || snapshot.status === "PARTIAL" || snapshot.status === "FAILED";
 			markPipelineActive(snapshot.status === "QUEUED" || snapshot.status === "RUNNING");
-			const bound = snapshot.run_id ? await ensureRun(snapshot.run_id, signal) : true;
+			const bound = snapshot.run_id ? await ensureRun(snapshot.run_id, signal) : "ready";
 			if (signal.aborted) return true;
 			if (terminal) {
-				if (snapshot.run_id && !bound) {
+				if (bound === "missing" && snapshot.run_id) {
+					const adopted = runFromPipeline(snapshot);
+					runsRef.current.adopt(adopted);
+					rememberRun(adopted);
+					followedRunRef.current = snapshot.run_id;
+				} else if (snapshot.run_id && bound !== "ready") {
 					missedRun += 1;
 					if (missedRun >= 20) return true;
 					try {
@@ -384,6 +409,13 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 				const listed = await clientRef.current.listRuns(projectId, { signal });
 				runHistoryRef.current = listed;
 				setRunHistory(listed);
+				const pinned = pinnedPipelineRef.current;
+				if (pinned?.projectId === projectId) {
+					pinnedPipelineRef.current = null;
+					writePipelineId(projectId, pinned.pipelineId);
+					const followed = await followPipeline(projectId, pinned.pipelineId, signal);
+					if (signal.aborted || followed) return;
+				}
 				// A refresh must find the task again. The backend lists it; the tab
 				// memory is only a fallback.
 				const recovered = await recoverPipeline(projectId, signal);
@@ -452,6 +484,40 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 			return false;
 		} finally {
 			setBusy(false);
+		}
+	};
+
+	const onSample = async () => {
+		if (busy || sampleBusyRef.current) return;
+		sampleBusyRef.current = true;
+		setSampleBusy(true);
+		setError(null);
+		try {
+			const sample = await clientRef.current.copySample();
+			const listed = await refreshList();
+			if (!listed.some((item) => item.id === sample.project_id)) {
+				const loaded = await clientRef.current.getProject(sample.project_id);
+				setProjects((current) => [
+					{
+						id: loaded.id,
+						title: loaded.title,
+						history_availability: loaded.history_availability,
+						demand_revision: loaded.demand_revision,
+						analysis_version: loaded.analysis_version,
+						created_at: loaded.created_at,
+						latest_run: null,
+					},
+					...current.filter((item) => item.id !== loaded.id),
+				]);
+			}
+			pinnedPipelineRef.current = { projectId: sample.project_id, pipelineId: sample.pipeline_id };
+			writePipelineId(sample.project_id, sample.pipeline_id);
+			remember(sample.project_id);
+		} catch (caught) {
+			if (!isAbort(caught)) setError(messageForApiError(caught));
+		} finally {
+			sampleBusyRef.current = false;
+			setSampleBusy(false);
 		}
 	};
 
@@ -680,6 +746,8 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		onUpload,
 		onImportHistory,
 		onStart,
+		onSample,
+		sampleBusy,
 		runHistory,
 		selectRun,
 		pipelineLine,

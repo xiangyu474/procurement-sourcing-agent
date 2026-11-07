@@ -19,6 +19,23 @@ describe("ApiClient", () => {
 		await expect(client(fetchImpl).createProject("相机")).resolves.toMatchObject({ project_id: "p1" });
 	});
 
+	it("asks for the sample with the session cookie and no body", async () => {
+		const fetchImpl = vi.fn(async () =>
+			jsonResponse({ project_id: "p-sample", pipeline_id: "pipe-sample", report_id: null }, 201),
+		);
+		await expect(client(fetchImpl).copySample()).resolves.toEqual({
+			project_id: "p-sample",
+			pipeline_id: "pipe-sample",
+			report_id: null,
+		});
+		const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+		expect(url).toBe("http://gateway.test/api/demo/sample");
+		expect(init.method).toBe("POST");
+		expect(init.credentials).toBe("same-origin");
+		expect(init.body).toBeUndefined();
+		expect(JSON.stringify(init.headers ?? {}).toLowerCase()).not.toContain("authorization");
+	});
+
 	it("creates a project without sending an authorization header", async () => {
 		const fetchImpl = vi.fn(async () => jsonResponse({ project_id: "p1", source_id: null, analysis_version: 0 }, 201));
 		await client(fetchImpl).createProject("  工业相机  ");

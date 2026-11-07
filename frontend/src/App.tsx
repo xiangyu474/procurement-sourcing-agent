@@ -41,9 +41,11 @@ export function App() {
 					projects={workspace.projects}
 					activeProjectId={workspace.activeProjectId}
 					busy={workspace.busy}
+					sampleBusy={workspace.sampleBusy}
 					onCreate={workspace.onCreate}
 					onOpen={workspace.onOpen}
 					onSelect={workspace.onSelect}
+					onSample={workspace.onSample}
 				/>
 			}
 		>

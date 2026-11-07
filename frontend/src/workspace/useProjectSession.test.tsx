@@ -115,6 +115,9 @@ function client(methods: Partial<ApiClient>): ApiClient {
 			duplicate_import: false,
 			analysis_version: 1,
 		}),
+		copySample: async () => {
+			throw new Error("copySample was not expected");
+		},
 		startRun: async () => ({ run_id: "run-1", status: "QUEUED", reused: false }),
 		listProjectPipelines: async () => [],
 		getAnalysis: async () => ({
@@ -336,6 +339,9 @@ describe("useProjectSession", () => {
 				{ stage: "EVALUATING", status: "FAILED", started_at: pipeline.updated_at, finished_at: pipeline.updated_at, error_code: "STAGE_SERVICE_ERROR" },
 			],
 		};
+		const getAnalysis = vi.fn(async () => {
+			throw new ApiError(409, "analysis_version_unavailable", { error: "analysis_version_unavailable" });
+		});
 		const { result } = renderHook(() =>
 			useWorkspace(
 				client({
@@ -343,6 +349,7 @@ describe("useProjectSession", () => {
 					getPipeline: async () => failed,
 					getRequirements: readyRequirements,
 					getRun: async () => run,
+					getAnalysis,
 				}),
 			),
 		);
@@ -357,7 +364,12 @@ describe("useProjectSession", () => {
 		expect(result.current.pipelineActive).toBe(false);
 		expect(result.current.pipelineRunId).toBe(run.id);
 		expect(analysisInProgress(result.current.pipelineStatus, "RUNNING")).toBe(false);
-		await waitFor(() => expect(result.current.candidates.loaded).toBe(true));
+		await waitFor(() => expect(getAnalysis).toHaveBeenCalled());
+		expect(result.current.candidates.loaded).toBe(false);
+		expect(result.current.candidates.loadError).toBeNull();
+		expect(result.current.candidates.rows).toEqual([]);
+		expect(result.current.candidates.reportBlockReason).toBeNull();
+		expect(result.current.error).toBeNull();
 		expect(
 			showNoCandidateLine({
 				pipelineStatus: result.current.pipelineStatus,
@@ -366,6 +378,132 @@ describe("useProjectSession", () => {
 				candidateCount: result.current.candidates.rows.length,
 			}),
 		).toBe(false);
+	});
+
+	it("opens the sample project on the returned pipeline", async () => {
+		const sampleProjectId = "22222222-2222-4222-8222-222222222222";
+		const samplePipelineId = "33333333-3333-4333-8333-333333333333";
+		const sampleRunId = "44444444-4444-4444-8444-444444444444";
+		const copySample = vi.fn(async () => ({ project_id: sampleProjectId, pipeline_id: samplePipelineId, report_id: "rep-sample" }));
+		const getPipeline = vi.fn(async () => ({
+			...pipeline,
+			pipeline_id: samplePipelineId,
+			project_id: sampleProjectId,
+			run_id: sampleRunId,
+			status: "COMPLETED",
+			stage: "COMPLETED",
+			report_status: "COMPLETED",
+		}));
+		const getAnalysis = vi.fn(async () => ({
+			project_id: sampleProjectId,
+			pipeline_id: samplePipelineId,
+			run_id: sampleRunId,
+			demand_revision: 1,
+			research_status: "COMPLETED",
+			decision_version: "version-1",
+			requirements: [],
+			candidates: [],
+			assessments: [],
+			decisions: [],
+			price_contexts: [],
+			evidence: [],
+			summary: {
+				requirements: 1,
+				candidate_rows: 22,
+				distinct_models: 2,
+				distinct_suppliers: 2,
+				models: [],
+				assessments: 23,
+				by_verdict: { PASS: 22, UNKNOWN: 1 },
+				decisions: 23,
+				by_recommendation: {},
+				evidence: 29,
+				coverage_warnings: [],
+			},
+			report: {
+				report_id: "rep-sample",
+				status: "COMPLETED",
+				error_code: null,
+				decision_version: "version-1",
+				download_path: `/api/projects/${sampleProjectId}/reports/rep-sample/download`,
+				warning_codes: [],
+			},
+		}));
+		const { result } = renderHook(() =>
+			useWorkspace(
+				client({
+					copySample,
+					listProjects: async () => [
+						{
+							...summary,
+							id: sampleProjectId,
+							title: "示例：一次已经完成的寻源与核验",
+						},
+					],
+					getProject: async () => ({ ...project, id: sampleProjectId, title: "示例：一次已经完成的寻源与核验" }),
+					getPipeline,
+					getRun: async () => {
+						throw new ApiError(404, "not_found", { error: "not_found" });
+					},
+					getAnalysis,
+				}),
+			),
+		);
+		await waitFor(() => expect(result.current.sessionReady).toBe(true));
+		await act(async () => {
+			await result.current.onSample();
+		});
+		await waitFor(() => expect(result.current.activeProjectId).toBe(sampleProjectId));
+		await waitFor(() => expect(getPipeline).toHaveBeenCalledWith(sampleProjectId, samplePipelineId, expect.anything()));
+		await waitFor(() => expect(result.current.pipelineStatus).toBe("COMPLETED"));
+		await waitFor(() => expect(getAnalysis).toHaveBeenCalledWith(sampleProjectId, { runId: sampleRunId }, expect.anything()));
+		await waitFor(() => expect(result.current.candidates.loaded).toBe(true));
+		expect(result.current.candidates.loadError).toBeNull();
+		expect(result.current.error).toBeNull();
+		expect(copySample).toHaveBeenCalledTimes(1);
+	});
+
+	it("shows a short Chinese message when the sample cannot be opened", async () => {
+		const copySample = vi.fn(async () => {
+			throw new ApiError(429, "rate_limited", { error: "rate_limited" });
+		});
+		const { result } = renderHook(() => useWorkspace(client({ copySample })));
+		await waitFor(() => expect(result.current.sessionReady).toBe(true));
+		await act(async () => {
+			await result.current.onSample();
+		});
+		expect(result.current.error?.summary).toBe("请求过于频繁，请稍后再试。");
+		expect(result.current.error?.summary).not.toContain("rate_limited");
+		expect(result.current.activeProjectId).toBeNull();
+		expect(result.current.sampleBusy).toBe(false);
+	});
+
+	it("does not copy the sample twice while the first request is still open", async () => {
+		let release: (() => void) | undefined;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const copySample = vi.fn(async () => {
+			await gate;
+			return { project_id: projectId, pipeline_id: "pipe-sample", report_id: null };
+		});
+		const { result } = renderHook(() => useWorkspace(client({ copySample, getPipeline: async () => pipeline, getRun: async () => run })));
+		await waitFor(() => expect(result.current.sessionReady).toBe(true));
+		let first: Promise<void> = Promise.resolve();
+		act(() => {
+			first = result.current.onSample();
+		});
+		await waitFor(() => expect(copySample).toHaveBeenCalledTimes(1));
+		await act(async () => {
+			await result.current.onSample();
+		});
+		expect(copySample).toHaveBeenCalledTimes(1);
+		expect(result.current.sampleBusy).toBe(true);
+		release?.();
+		await act(async () => {
+			await first;
+		});
+		expect(result.current.sampleBusy).toBe(false);
 	});
 
 	it("follows a pipeline id saved in the tab after reload", async () => {

@@ -385,6 +385,22 @@ export class ApiClient {
 		});
 	}
 
+	/**
+	 * Copy the published finished sample into the current guest's own project.
+	 * No body and no credential: the session cookie is the only identity.
+	 * Each success creates a new project. The server does not take an idempotency key.
+	 */
+	copySample(call?: CallOptions): Promise<{ project_id: string; pipeline_id: string; report_id: string | null }> {
+		return this.request("/api/demo/sample", { method: "POST", call }).then((payload) => {
+			const row = asRecord(payload, "sample");
+			return {
+				project_id: asString(row, "project_id"),
+				pipeline_id: asString(row, "pipeline_id"),
+				report_id: asOptionalString(row.report_id),
+			};
+		});
+	}
+
 	createProject(title: string | undefined, call?: CallOptions): Promise<CreatedProject> {
 		const body: { title?: string } = {};
 		const trimmed = title?.trim();
