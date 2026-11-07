@@ -26,6 +26,8 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Pt
 
+from procurement_agent.domain.supplier_identity import group_by_supplier, merge_supplier_names
+
 VERDICT_LABELS = {
     "PASS": "通过",
     "FAIL": "不通过",
@@ -371,25 +373,40 @@ def _candidate_section(document: Document, data: ReportInput) -> None:
     document.add_paragraph(
         "下表是本次公开寻源发现的所有候选。长名单不是合格名单：只有技术核对通过并经过程序化闸门的候选才会进入建议询价。"
     )
+    # The same manufacturer is found under many names. The rows are grouped by
+    # the company they point at, so a buyer reads one company, not one page.
+    groups = group_by_supplier(data.candidates)
     rows = []
-    for candidate in data.candidates:
+    merged_rows = 0
+    for group in groups:
+        candidate = group[0]
         candidate_id = _text(candidate.get("candidate_id"))
         assessment = data.assessment_for(_text(candidate.get("requirement_id")), candidate_id)
         decision = data.decision_for(_text(candidate.get("requirement_id")), candidate_id)
+        names = [_text(item.get("supplier_name")) for item in group if _text(item.get("supplier_name"))]
+        evidence = sorted({str(item) for row in group for item in (row.get("evidence_ids") or [])})
+        models = sorted({_text(row.get("product_model")) for row in group if _text(row.get("product_model"))})
+        merged_rows += len(group) - 1
         rows.append(
             [
-                _text(candidate.get("supplier_name")) or "未知供应商",
-                _text(candidate.get("product_model")) or "（型号未确认）",
+                merge_supplier_names(names),
+                "、".join(models) or "（型号未确认）",
                 STAGE_LABELS.get(_text(candidate.get("stage")), _text(candidate.get("stage"))),
                 VERDICT_LABELS.get(
                     _text(assessment.get("hard_spec_overall")), _text(assessment.get("hard_spec_overall")) or "—"
                 ),
                 RECOMMENDATION_LABELS.get(_text(decision.get("recommendation")), _text(decision.get("recommendation")) or "—"),
-                str(len(candidate.get("evidence_ids") or [])),
+                str(len(evidence)),
+                str(len(group)),
             ]
         )
     if rows:
-        _table(document, ["供应商", "型号", "阶段", "技术结论", "建议", "证据数"], rows)
+        _table(document, ["供应商", "型号", "阶段", "技术结论", "建议", "证据数", "发现条数"], rows)
+        if merged_rows:
+            document.add_paragraph(
+                f"（本次共发现 {len(data.candidates)} 条候选记录，其中 {merged_rows} 条来自同一供应主体的不同页面写法，已按主体归并；"
+                "原始发现与各自证据仍完整保留在证据清单中。）"
+            )
     else:
         document.add_paragraph("（没有候选）")
 

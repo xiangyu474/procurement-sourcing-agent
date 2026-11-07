@@ -58,3 +58,19 @@ it("warns when the run found one model only or no evidence", () => {
 	assert.ok(summary.coverage_warnings.some(warning => warning.includes("只找到一个型号")));
 	assert.ok(summary.coverage_warnings.some(warning => warning.includes("没有取到公开来源")));
 });
+
+it("counts one supplier when the same company was found under several names", () => {
+	const summary = sourcingSummary({
+		candidates: [
+			{ candidate_id: "c1", product_model: "NBN-80052-BA", product_id: "p1", supplier_id: "s1", supplier_name: "Bosch" },
+			{ candidate_id: "c2", product_model: "NBN-80052-BA", product_id: "p1", supplier_id: "s2", supplier_name: "Bosch Security Systems B.V." },
+			{ candidate_id: "c3", product_model: "NBN-80052-BA", product_id: "p1", supplier_id: "s3", supplier_name: "boschsecurity.com" },
+		],
+		assessments: [{ hard_spec_overall: "PASS" }],
+		evidence: [{ evidence_id: "e1" }],
+	});
+	// Three discoveries, one company.
+	assert.equal(summary.distinct_suppliers, 1);
+	assert.equal(summary.supplier_discoveries, 3);
+	assert.equal(summary.models[0].supplier_count, 1);
+});
