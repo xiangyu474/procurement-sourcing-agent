@@ -46,6 +46,34 @@ describe("RunPanel", () => {
 		expect(screen.queryByRole("alert")).toBeNull();
 	});
 
+	it("uses the pipeline failure as the heading when research itself finished", () => {
+		render(
+			<RunPanel
+				run={run({ status: "COMPLETED", current_stage: "COMPLETED" })}
+				events={[]}
+				stopReason={null}
+				pipelineStatus="FAILED"
+			/>,
+		);
+		expect(screen.getByTestId("run-status").textContent).toBe("需要处理");
+		expect(screen.getByTestId("run-status").textContent).not.toContain("寻源已结束");
+		expect(screen.getByTestId("run-status").className).toContain("tone-fail");
+	});
+
+	it("drops the in-progress stamp when the pipeline has already failed", () => {
+		render(
+			<RunPanel
+				run={run({ status: "RUNNING", current_stage: "WEB_RESEARCH" })}
+				events={[]}
+				stopReason={null}
+				pipelineStatus="FAILED"
+			/>,
+		);
+		expect(screen.getByTestId("run-status").textContent).toBe("需要处理");
+		expect(screen.getByTestId("run-version").textContent).not.toContain("开始");
+		expect(screen.getByTestId("run-version").textContent).toContain("的寻源");
+	});
+
 	it("wraps a failed reason that names an internal role", () => {
 		render(
 			<RunPanel

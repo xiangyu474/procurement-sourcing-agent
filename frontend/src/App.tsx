@@ -1,4 +1,5 @@
 import { isTerminalRun } from "./api/adapter";
+import { analysisInProgress, showNoCandidateLine } from "./view/pipeline";
 import { CandidateTable } from "./components/CandidateTable";
 import { DemandForm } from "./components/DemandForm";
 import { EvidencePane } from "./components/EvidencePane";
@@ -12,10 +13,10 @@ export function App() {
 	const workspace = useWorkspace();
 	const project = workspace.project;
 	const run = workspace.run && workspace.run.project_id === project?.id ? workspace.run : null;
-	const runActive = Boolean(run && !isTerminalRun(run.status));
-	const analysisActive = workspace.pipelineActive || runActive;
+	const pipelineForRun = workspace.pipelineRunId && run?.id === workspace.pipelineRunId ? workspace.pipelineStatus : null;
+	const analysisActive = analysisInProgress(workspace.pipelineStatus, run?.status ?? null);
 	const collapsed = Boolean(run && isTerminalRun(run.status));
-	const startLabel = workspace.startOffer === "retry" ? "重试" : analysisActive ? "分析进行中" : run ? "再次分析" : "开始分析";
+	const startLabel = workspace.startOffer === "retry" && !analysisActive ? "重试" : analysisActive ? "分析进行中" : run ? "再次分析" : "开始分析";
 	const downloadPhase = reportPhase({
 		// A task that failed has no report. The button is not shown at all.
 		runStatus: workspace.pipelineStatus === "FAILED" ? "FAILED" : run?.status ?? null,
@@ -26,13 +27,12 @@ export function App() {
 	});
 	const candidateRows = workspace.candidates.rows;
 	const selected = candidateRows.find((row) => row.id === workspace.candidates.selectedId) ?? null;
-	const showEmptyCandidates = Boolean(
-		run &&
-			(run.status === "COMPLETED" || run.status === "PARTIAL") &&
-			!workspace.candidates.loading &&
-			!workspace.candidates.loadError &&
-			candidateRows.length === 0,
-	);
+	const showEmptyCandidates = showNoCandidateLine({
+		pipelineStatus: pipelineForRun,
+		runStatus: run?.status ?? null,
+		analysisLoaded: workspace.candidates.loaded,
+		candidateCount: candidateRows.length,
+	});
 
 	return (
 		<WorkspaceShell
@@ -117,6 +117,7 @@ export function App() {
 					) : null}
 					<RunPanel
 						run={run}
+						pipelineStatus={pipelineForRun}
 						events={workspace.events}
 						stopReason={workspace.stopReason}
 						candidateCount={workspace.candidateCount}

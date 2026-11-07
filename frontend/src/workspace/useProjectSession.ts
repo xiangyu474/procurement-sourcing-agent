@@ -50,6 +50,8 @@ export type ProjectSession = {
 	pipelineNote: string | null;
 	pipelineActive: boolean;
 	pipelineStatus: string | null;
+	/** Run that the current pipeline status describes. A different run keeps its own heading. */
+	pipelineRunId: string | null;
 	reportStatus: string | null;
 	startOffer: "retry" | null;
 };
@@ -82,6 +84,8 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 	const [pipelineNote, setPipelineNote] = useState<string | null>(null);
 	const [pipelineActive, setPipelineActive] = useState(false);
 	const [pipelineStatus, setPipelineStatus] = useState<string | null>(null);
+	const [pipelineRunId, setPipelineRunId] = useState<string | null>(null);
+	const pipelineStatusRef = useRef<string | null>(null);
 	const [reportStatus, setReportStatus] = useState<string | null>(null);
 	const [startOffer, setStartOffer] = useState<"retry" | null>(null);
 	const runHistoryRef = useRef<ProjectRunSummary[]>([]);
@@ -96,6 +100,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 	activeRef.current = activeProjectId;
 	textRef.current = text;
 	runsRef.current = runs;
+	pipelineStatusRef.current = pipelineStatus;
 
 	function replaceAbort(): AbortSignal {
 		abortRef.current?.abort();
@@ -128,6 +133,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 
 	function showPipeline(snapshot: Pipeline): void {
 		setPipelineStatus(snapshot.status);
+		setPipelineRunId(snapshot.run_id);
 		setPipelineLine(pipelineProgressLine(snapshot.status, snapshot.stage, snapshot.report_status));
 		setPipelineNote(pipelineProblemLine(snapshot.status, snapshot.error, snapshot.stages));
 		setReportStatus(snapshot.report_status);
@@ -155,7 +161,6 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 
 	/** Poll the saved pipeline. Returns false when the task is gone, so the caller can fall back. */
 	async function followPipeline(projectId: string, pipelineId: string, signal: AbortSignal): Promise<boolean> {
-		markPipelineActive(true);
 		followedRunRef.current = null;
 		let missedRun = 0;
 		let reportWait = 0;
@@ -169,6 +174,8 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 				if (caught instanceof ApiError && caught.status === 404) {
 					writePipelineId(projectId, null);
 					markPipelineActive(false);
+					setPipelineStatus(null);
+					setPipelineRunId(null);
 					setPipelineLine(null);
 					setPipelineNote(null);
 					setReportStatus(null);
@@ -194,7 +201,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 			}
 			showPipeline(snapshot);
 			const terminal = snapshot.status === "COMPLETED" || snapshot.status === "PARTIAL" || snapshot.status === "FAILED";
-			if (terminal) markPipelineActive(false);
+			markPipelineActive(snapshot.status === "QUEUED" || snapshot.status === "RUNNING");
 			const bound = snapshot.run_id ? await ensureRun(snapshot.run_id, signal) : true;
 			if (signal.aborted) return true;
 			if (terminal) {
@@ -267,6 +274,9 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		}
 		const target = items[0];
 		if (!target) return false;
+		setPipelineStatus(target.status);
+		setPipelineRunId(target.run_id);
+		markPipelineActive(target.status === "QUEUED" || target.status === "RUNNING");
 		const followed = await followPipeline(projectId, target.pipeline_id, signal);
 		if (followed) writePipelineId(projectId, target.pipeline_id);
 		return followed;
@@ -342,6 +352,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 			setPipelineLine(null);
 			setPipelineNote(null);
 			setPipelineStatus(null);
+			setPipelineRunId(null);
 			setReportStatus(null);
 			setStartOffer(null);
 			return;
@@ -532,8 +543,10 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 
 	const onStart = async () => {
 		if (!project || busy || pipelineActiveRef.current) return;
+		const pipelineNow = pipelineStatusRef.current;
+		const pipelineTerminal = pipelineNow === "COMPLETED" || pipelineNow === "PARTIAL" || pipelineNow === "FAILED";
 		const currentRun = runsRef.current.runRef.current;
-		if (currentRun && currentRun.project_id === project.id && !isTerminalRun(currentRun.status)) return;
+		if (!pipelineTerminal && currentRun && currentRun.project_id === project.id && !isTerminalRun(currentRun.status)) return;
 		const signal = replaceAbort();
 		setBusy(true);
 		setError(null);
@@ -619,7 +632,10 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 			writePipelineId(current.id, accepted.pipeline_id);
 			acceptedProjectId = current.id;
 			setStartOffer(null);
-			markPipelineActive(true);
+			setPipelineStatus(accepted.status);
+			setPipelineRunId(accepted.run_id);
+			setPipelineLine(pipelineProgressLine(accepted.status, null, null));
+			markPipelineActive(accepted.status === "QUEUED" || accepted.status === "RUNNING");
 		} catch (caught) {
 			if (!isAbort(caught)) setError(messageForApiError(caught));
 		} finally {
@@ -670,6 +686,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		pipelineNote,
 		pipelineActive,
 		pipelineStatus,
+		pipelineRunId,
 		reportStatus,
 		startOffer,
 	};

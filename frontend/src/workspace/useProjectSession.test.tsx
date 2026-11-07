@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { ApiClient } from "../api/client";
 import { ApiError, type Pipeline, type Project, type ProjectRunSummary, type ProjectSummary, type Run, type StartedPipeline } from "../api/types";
+import { analysisInProgress, showNoCandidateLine } from "../view/pipeline";
 import { readPipelineKey } from "./pipelineState";
 import { useWorkspace } from "./useWorkspace";
 
@@ -314,6 +315,57 @@ describe("useProjectSession", () => {
 		});
 		expect(keys[1]).toBe(keys[0]);
 		await waitFor(() => expect(result.current.pipelineLine).toBe("已完成"));
+	});
+
+	it("keeps an assessment failure off the finished-search heading and off the empty-candidate line", async () => {
+		sessionStorage.setItem("psi.activeProjectId", projectId);
+		const failed: Pipeline = {
+			...pipeline,
+			status: "FAILED",
+			stage: "EVALUATING",
+			error: "PIPELINE_STAGE_FAILED",
+			decision_version: null,
+			report_id: null,
+			report_status: "NOT_STARTED",
+			download_path: null,
+			candidates_found: 8,
+			models_found: 2,
+			evidence_found: 51,
+			stages: [
+				{ stage: "RESEARCH", status: "COMPLETED", started_at: pipeline.created_at, finished_at: pipeline.updated_at, error_code: null },
+				{ stage: "EVALUATING", status: "FAILED", started_at: pipeline.updated_at, finished_at: pipeline.updated_at, error_code: "STAGE_SERVICE_ERROR" },
+			],
+		};
+		const { result } = renderHook(() =>
+			useWorkspace(
+				client({
+					startPipeline: async () => started,
+					getPipeline: async () => failed,
+					getRequirements: readyRequirements,
+					getRun: async () => run,
+				}),
+			),
+		);
+		await waitFor(() => expect(result.current.compileView).toMatchObject({ phase: "ready", requirementCount: 1 }));
+		await act(async () => {
+			await result.current.onStart();
+		});
+		await waitFor(() => expect(result.current.pipelineNote).toBe("供应商核验这一步没有完成，可以再试一次。"));
+		expect(result.current.pipelineStatus).toBe("FAILED");
+		expect(result.current.pipelineLine).toBe("需要处理");
+		expect(result.current.pipelineNote).not.toContain("没有候选供应商");
+		expect(result.current.pipelineActive).toBe(false);
+		expect(result.current.pipelineRunId).toBe(run.id);
+		expect(analysisInProgress(result.current.pipelineStatus, "RUNNING")).toBe(false);
+		await waitFor(() => expect(result.current.candidates.loaded).toBe(true));
+		expect(
+			showNoCandidateLine({
+				pipelineStatus: result.current.pipelineStatus,
+				runStatus: result.current.run?.status ?? null,
+				analysisLoaded: result.current.candidates.loaded,
+				candidateCount: result.current.candidates.rows.length,
+			}),
+		).toBe(false);
 	});
 
 	it("follows a pipeline id saved in the tab after reload", async () => {

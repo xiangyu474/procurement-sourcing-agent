@@ -1,5 +1,6 @@
 import { explainRun, runStatusLabel, stageLabel } from "../api/adapter";
 import type { ProjectRunSummary, Run, RunEvent } from "../api/types";
+import { analysisInProgress, pipelineHeading } from "../view/pipeline";
 
 function formatRunStamp(iso: string): string {
 	const date = new Date(iso);
@@ -29,17 +30,21 @@ export function RunPanel(props: {
 	reportNote?: { at: string | null; decisionVersion: string | null } | null;
 	runs?: ProjectRunSummary[];
 	onSelectRun?: (runId: string) => void;
+	/** Pipeline status for this run. It decides the heading when the task is terminal. */
+	pipelineStatus?: string | null;
 }) {
 	const { run, events, stopReason, candidateCount = null } = props;
 	if (!run) return null;
 	const abnormal = explainRun({ status: run.status, lastError: run.last_error, stopReason, candidateCount });
-	const tone = statusTone(run.status);
-	const inProgress = run.status === "QUEUED" || run.status === "RUNNING";
+	const toneStatus = props.pipelineStatus && ["QUEUED", "RUNNING", "PARTIAL", "FAILED", "COMPLETED"].includes(props.pipelineStatus) ? props.pipelineStatus : run.status;
+	const tone = statusTone(toneStatus);
+	const heading = pipelineHeading(props.pipelineStatus) ?? statusText(run);
+	const inProgress = analysisInProgress(props.pipelineStatus, run.status);
 	const when = `${formatRunStamp(run.created_at)} ${inProgress ? "开始" : "的寻源"}`;
 	return (
 		<section className="progress" aria-label="进度">
 			<h2 className={tone ? `status ${tone}` : "status"} data-testid="run-status">
-				{statusText(run)}
+				{heading}
 			</h2>
 			<p className="version" data-testid="run-version">
 				{when}
