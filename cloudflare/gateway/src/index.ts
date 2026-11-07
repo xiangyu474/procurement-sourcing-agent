@@ -2649,6 +2649,16 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 		if (sampleMatch && request.method === "POST") {
 			const sourceId = env.DEMO_SAMPLE_PIPELINE_ID;
 			if (!sourceId) return json({ error: "sample_not_configured" }, 503);
+			// One sample per visitor: a second click opens the same one.
+			const existing = guestSessionId ? await env.DB.prepare(
+				`SELECT p.id AS project_id, pp.id AS pipeline_id, pp.report_id
+				 FROM projects p JOIN project_pipelines pp ON pp.project_id = p.id
+				 WHERE p.session_id = ?1 AND p.title = '示例：一次已经完成的寻源与核验'
+				 ORDER BY p.created_at DESC LIMIT 1`,
+			).bind(guestSessionId).first<{ project_id: string; pipeline_id: string; report_id: string | null }>() : null;
+			if (existing) {
+				return json({ project_id: existing.project_id, pipeline_id: existing.pipeline_id, report_id: existing.report_id, reused: true });
+			}
 			const source = await env.DB.prepare(
 				`SELECT id, project_id, run_id, decision_version, report_id, report_status
 				 FROM project_pipelines WHERE id = ?1`,
@@ -2669,6 +2679,16 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 			final.project_title = "示例：一次已经完成的寻源与核验";
 			const payload = JSON.stringify(final);
 			const version = await sha256Hex(new TextEncoder().encode(payload));
+			// The counters and the stages come from the run the sample was taken
+			// from, so the page shows the same numbers as the analysis.
+			const candidates = Array.isArray(final.candidates) ? final.candidates as Record<string, unknown>[] : [];
+			const models = new Set(
+				candidates.map(row => stringField(row, "product_model")).filter(Boolean).map(name => name.toUpperCase()),
+			);
+			const evidenceCount = Array.isArray(final.evidence) ? (final.evidence as unknown[]).length : 0;
+			const sourceStages = await env.DB.prepare(
+				"SELECT stage, status, started_at, finished_at FROM pipeline_stages WHERE pipeline_id = ?1 ORDER BY started_at",
+			).bind(sourceId).all<{ stage: string; status: string; started_at: string; finished_at: string | null }>();
 			await batchD1(env, [
 				env.DB.prepare(
 					`INSERT INTO projects (id, title, created_at, analysis_version, demand_revision, history_availability, session_id)
@@ -2676,14 +2696,25 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 				).bind(projectId, "示例：一次已经完成的寻源与核验", now, 1, 1, "NOT_PROVIDED", guestSessionId),
 				env.DB.prepare(
 					`INSERT INTO project_pipelines (id, workspace_id, project_id, session_id, run_id, demand_revision,
-					 status, stage, stages_json, decision_version, created_at, updated_at, report_status)
-					 VALUES (?1, 'default', ?2, ?3, ?4, ?5, 'COMPLETED', 'COMPLETED', '{}', ?6, ?7, ?7, 'NOT_STARTED')`,
-				).bind(pipelineId, projectId, guestSessionId, runId, 1, version, now),
+					 status, stage, stages_json, decision_version, created_at, updated_at, report_status,
+					 candidates_found, models_found, evidence_found)
+					 VALUES (?1, 'default', ?2, ?3, ?4, ?5, 'COMPLETED', 'COMPLETED', '{}', ?6, ?7, ?7, 'NOT_STARTED', ?8, ?9, ?10)`,
+				).bind(pipelineId, projectId, guestSessionId, runId, 1, version, now, candidates.length, models.size, evidenceCount),
 				env.DB.prepare(
 					`INSERT INTO pipeline_snapshots (pipeline_id, snapshot_type, payload_json, sha256, created_at)
 					 VALUES (?1, 'FINAL_CONTEXT', ?2, ?3, ?4)`,
 				).bind(pipelineId, payload, version, now),
 			]);
+			for (const stage of sourceStages.results.length ? sourceStages.results : [
+				{ stage: "RESEARCH", status: "COMPLETED", started_at: now, finished_at: now },
+				{ stage: "EVALUATING", status: "COMPLETED", started_at: now, finished_at: now },
+				{ stage: "DECIDING", status: "COMPLETED", started_at: now, finished_at: now },
+			]) {
+				await env.DB.prepare(
+					`INSERT INTO pipeline_stages (pipeline_id, stage, status, started_at, finished_at, error_code)
+					 VALUES (?1, ?2, ?3, ?4, ?5, NULL)`,
+				).bind(pipelineId, stage.stage, stage.status, stage.started_at, stage.finished_at).run();
+			}
 			// The report comes with the sample, so the visitor can download the
 			// very document the judges will see.
 			const sourceReport = source.report_id
