@@ -6,7 +6,7 @@ import { recordPipelineStage, sha256, storePipelineSnapshot } from "./pipeline_s
 import { buildFinalContext } from "./pipeline_final";
 import { startPipelineReport } from "./pipeline_report";
 import { releaseGuestAdmission } from "./guest_admission";
-import { containerReasonCode, stageErrorCode } from "./stage_error";
+import { containerReasonCode, SAFE_STAGE_CODES, stageErrorCode } from "./stage_error";
 import { pipelineInstanceName } from "./container_instance";
 
 export interface PipelineRequest { pipelineId: string; projectId: string; runId: string; probeOnly?: boolean; researchBudget?: { max_search_calls: number; max_fetches: number; max_tasks: number; max_rounds: number; max_model_calls: number } }
@@ -68,6 +68,7 @@ export class ProcurementPipelineWorkflow extends WorkflowEntrypoint<Env, Pipelin
 		}
 		let activeStage = "RESEARCH";
 		let researchStatus = "";
+		let researchReason: string | null = null;
 		let analysisFrozen = false;
 		try {
 			await step.do("freeze-history-and-start-research", { retries: { limit: 1, delay: "10 seconds", backoff: "constant" }, timeout: "2 minutes" }, async () => {
@@ -104,14 +105,25 @@ export class ProcurementPipelineWorkflow extends WorkflowEntrypoint<Env, Pipelin
 			// here only leaves a visitor looking at a task that cannot finish.
 			for (let i = 0; i < 70; i++) {
 				const state = await step.do(`read-research-${i}`, { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "30 seconds" }, async () => {
-					const row = await this.env.DB.prepare("SELECT status FROM runs WHERE id = ?1 AND project_id = ?2").bind(runId, projectId).first<{ status: string }>();
-					return row?.status ?? "MISSING";
+					const row = await this.env.DB.prepare(
+						`SELECT r.status,
+						        (SELECT c.stop_reason_code FROM research_run_costs c WHERE c.run_id = r.id) AS stop_reason_code
+						 FROM runs r WHERE r.id = ?1 AND r.project_id = ?2`,
+					).bind(runId, projectId).first<{ status: string; stop_reason_code: string | null }>();
+					return { status: row?.status ?? "MISSING", reason: row?.stop_reason_code ?? null };
 				});
-				if (["COMPLETED", "PARTIAL", "FAILED"].includes(state)) { researchStatus = state; break; }
+				if (["COMPLETED", "PARTIAL", "FAILED"].includes(state.status)) {
+					researchStatus = state.status;
+					researchReason = state.reason;
+					break;
+				}
 				await step.sleep(`wait-research-${i}`, "20 seconds");
 			}
 			if (!researchStatus) throw new Error("RESEARCH_TIMEOUT");
-			if (researchStatus === "FAILED") throw new Error("RESEARCH_FAILED");
+			if (researchStatus === "FAILED") {
+				// The research says why it stopped; the page should say the same.
+				throw new Error(researchReason && SAFE_STAGE_CODES.has(researchReason) ? researchReason : "RESEARCH_FAILED");
+			}
 			await step.do("freeze-spec-context", { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "2 minutes" }, async () => {
 				// What the research found is visible before the slower stages, so a
 				// visitor can see progress instead of a silent wait.
@@ -148,7 +160,11 @@ export class ProcurementPipelineWorkflow extends WorkflowEntrypoint<Env, Pipelin
 					if (context.project_id !== projectId || context.run_id !== runId || !context.requirements.length) throw new Error("SPEC_CONTEXT_INVALID");
 					await save(this.env.DB, pipelineId, "SPEC_CONTEXT", context);
 				}
-				await recordPipelineStage(this.env.DB, pipelineId, "RESEARCH", researchStatus === "PARTIAL" ? "PARTIAL" : "COMPLETED");
+				await recordPipelineStage(
+					this.env.DB, pipelineId, "RESEARCH",
+					researchStatus === "PARTIAL" ? "PARTIAL" : "COMPLETED",
+					researchReason && SAFE_STAGE_CODES.has(researchReason) ? researchReason : null,
+				);
 				await update(this.env.DB, pipelineId, "RUNNING", "EVALUATING");
 				await recordPipelineStage(this.env.DB, pipelineId, "EVALUATING", "RUNNING");
 			});

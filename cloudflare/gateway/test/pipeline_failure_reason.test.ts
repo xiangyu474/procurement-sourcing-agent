@@ -50,3 +50,16 @@ it("admits a report retry of a visitor under the daily unit budget", async () =>
 	const units = sqlite.prepare("SELECT sum(reserved_units) AS n FROM guest_task_admissions WHERE operation_kind = 'REPORT'").get()?.n;
 	assert.equal(units, 2);
 });
+
+it("keeps the research stop reasons as the reason of the research stage", () => {
+	// The codes a research stops with are the codes the page may show.
+	for (const code of [
+		"BUDGET_EXHAUSTED", "NO_FETCHED_EVIDENCE", "NO_SOURCE_BACKED_CANDIDATES",
+		"SOURCE_FETCH_FAILED", "INVALID_RESEARCH_INPUT", "RESEARCH_INPUT_REJECTED",
+		"SEARCH_PROVIDER_TIMEOUT", "SEARCH_PROVIDER_RATE_LIMITED",
+	]) {
+		assert.equal(stageErrorCode(new Error(code)), code);
+	}
+	// An unknown reason stays the generic code.
+	assert.equal(stageErrorCode(new Error("SOMETHING_ELSE")), "PIPELINE_STAGE_FAILED");
+});
