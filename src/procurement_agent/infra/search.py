@@ -101,14 +101,29 @@ class TavilyContentProvider:
     def fetch(self, url: str, *, query: str, max_chars: int = 80_000) -> FetchedPage:
         from tavily import TavilyClient
 
-        response = TavilyClient(api_key=self._api_key).extract(
+        client = TavilyClient(api_key=self._api_key)
+        # The full extraction is what a specification table needs: the cheap one
+        # truncates the page and can drop the very row that states the
+        # measurement, which leaves the verdict UNKNOWN for no good reason.
+        response = client.extract(
             urls=[url],
-            extract_depth="basic",
+            extract_depth="advanced",
             format="markdown",
-            timeout=30,
+            timeout=45,
             query=query[:500],
         )
         results = response.get("results", [])
+        if not results:
+            # The full extraction is not available for every page; fall back
+            # rather than losing the source altogether.
+            response = client.extract(
+                urls=[url],
+                extract_depth="basic",
+                format="markdown",
+                timeout=30,
+                query=query[:500],
+            )
+            results = response.get("results", [])
         if not results:
             raise RuntimeError("Tavily Extract returned no source content")
         result = results[0]
