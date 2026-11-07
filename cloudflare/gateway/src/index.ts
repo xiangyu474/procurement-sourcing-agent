@@ -2660,7 +2660,7 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 				return json({ project_id: existing.project_id, pipeline_id: existing.pipeline_id, report_id: existing.report_id, reused: true });
 			}
 			const source = await env.DB.prepare(
-				`SELECT id, project_id, run_id, decision_version, report_id, report_status
+				`SELECT id, project_id, run_id, decision_version, report_id, report_status, status, stage, created_at
 				 FROM project_pipelines WHERE id = ?1`,
 			).bind(sourceId).first<Record<string, unknown>>();
 			if (!source) return json({ error: "sample_not_found" }, 404);
@@ -2698,8 +2698,13 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 					`INSERT INTO project_pipelines (id, workspace_id, project_id, session_id, run_id, demand_revision,
 					 status, stage, stages_json, decision_version, created_at, updated_at, report_status,
 					 candidates_found, models_found, evidence_found)
-					 VALUES (?1, 'default', ?2, ?3, ?4, ?5, 'COMPLETED', 'COMPLETED', '{}', ?6, ?7, ?7, 'NOT_STARTED', ?8, ?9, ?10)`,
-				).bind(pipelineId, projectId, guestSessionId, runId, 1, version, now, candidates.length, models.size, evidenceCount),
+					 VALUES (?1, 'default', ?2, ?3, ?4, ?5, ?6, ?7, '{}', ?8, ?9, ?10, 'NOT_STARTED', ?11, ?12, ?13)`,
+				).bind(pipelineId, projectId, guestSessionId, runId, 1,
+					// The status of the run the sample was taken from: a run whose
+					// research ran out of budget says so, instead of claiming to
+					// have finished.
+					String(source.status ?? "COMPLETED"), String(source.stage ?? "COMPLETED"),
+					version, now, now, candidates.length, models.size, evidenceCount),
 				env.DB.prepare(
 					`INSERT INTO pipeline_snapshots (pipeline_id, snapshot_type, payload_json, sha256, created_at)
 					 VALUES (?1, 'FINAL_CONTEXT', ?2, ?3, ?4)`,
