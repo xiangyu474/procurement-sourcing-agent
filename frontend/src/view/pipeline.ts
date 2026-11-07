@@ -110,11 +110,44 @@ export type StageProblem = {
  * The report has its own status. A finished analysis with a report that is
  * still being written says so instead of claiming the work is done.
  */
-export function pipelineProgressLine(status: string, stage: string | null, reportStatus?: string | null): string | null {
-	if (status === "COMPLETED") {
-		return reportStatus === "QUEUED" || reportStatus === "RUNNING" ? "正在生成报告" : "已完成";
+/**
+ * One status for the result header.
+ * A finished analysis whose research stage (or `research_status`) is PARTIAL
+ * is 「部分完成」, even when the top-level pipeline status was stored as COMPLETED.
+ * FAILED stays a failure. A running task is not rewritten.
+ */
+export function sourcingOutcome(input: {
+	pipelineStatus: string | null | undefined;
+	stages?: Array<{ stage?: string | null; status?: string | null }>;
+	researchStatus?: string | null;
+}): string | null {
+	const status = input.pipelineStatus ?? null;
+	if (!status) return null;
+	if (status === "FAILED" || status === "QUEUED" || status === "RUNNING") return status;
+	const researchPartial =
+		input.researchStatus === "PARTIAL" ||
+		(input.stages ?? []).some((stage) => {
+			const name = stage.stage?.trim().toUpperCase() ?? "";
+			return (name === "RESEARCH" || name === "RESEARCHING") && stage.status === "PARTIAL";
+		});
+	if (status === "PARTIAL" || researchPartial) return "PARTIAL";
+	if (status === "COMPLETED") return "COMPLETED";
+	return status;
+}
+
+export function pipelineProgressLine(
+	status: string,
+	stage: string | null,
+	reportStatus?: string | null,
+	stages?: Array<{ stage?: string | null; status?: string | null }>,
+	researchStatus?: string | null,
+): string | null {
+	const outcome = sourcingOutcome({ pipelineStatus: status, stages, researchStatus });
+	// The heading already names a finished analysis. A second word (已完成 / 需要处理) contradicts it.
+	if (outcome === "COMPLETED" || outcome === "PARTIAL") {
+		return reportStatus === "QUEUED" || reportStatus === "RUNNING" ? "正在生成报告" : null;
 	}
-	if (status === "PARTIAL" || status === "FAILED") return "需要处理";
+	if (status === "FAILED") return "需要处理";
 	const normalized = stage?.trim().toUpperCase() ?? "";
 	if (STAGE_LINES[normalized]) return STAGE_LINES[normalized];
 	if (status === "QUEUED" || (status === "RUNNING" && normalized.length === 0)) return "正在寻找供应商";

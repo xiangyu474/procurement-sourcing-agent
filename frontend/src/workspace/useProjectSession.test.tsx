@@ -251,7 +251,8 @@ describe("useProjectSession", () => {
 		expect(startPipeline).toHaveBeenCalledWith(projectId, "same-key", 1, expect.anything());
 		expect(readPipelineKey(projectId, 1)).toBeNull();
 		expect(JSON.parse(sessionStorage.getItem("psi.pipelineId.v1") ?? "{}")).toMatchObject({ [projectId]: "pipe-1" });
-		await waitFor(() => expect(result.current.pipelineLine).toBe("已完成"));
+		await waitFor(() => expect(result.current.pipelineStatus).toBe("COMPLETED"));
+		expect(result.current.pipelineLine).toBeNull();
 		await waitFor(() => expect(result.current.run?.id).toBe("run-9"));
 		expect(result.current.pipelineNote).toBeNull();
 	});
@@ -317,7 +318,8 @@ describe("useProjectSession", () => {
 			await result.current.onStart();
 		});
 		expect(keys[1]).toBe(keys[0]);
-		await waitFor(() => expect(result.current.pipelineLine).toBe("已完成"));
+		await waitFor(() => expect(result.current.pipelineStatus).toBe("COMPLETED"));
+		expect(result.current.pipelineLine).toBeNull();
 	});
 
 	it("keeps an assessment failure off the finished-search heading and off the empty-candidate line", async () => {

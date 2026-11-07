@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { EvidenceDetail } from "../api/types";
 import type { CandidateRowView, CheckView } from "../view/candidates";
 import { untranslatedNote } from "../view/analysis";
@@ -21,14 +21,30 @@ function EvidenceBody(props: {
 	evidenceError: string | null;
 	onOpenEvidence: (evidenceId: string) => void;
 	onSelect: (id: string) => void;
+	onClose: () => void;
 }) {
 	const [showBasis, setShowBasis] = useState(false);
 	const row = props.row;
+	useEffect(() => {
+		const onKey = (event: KeyboardEvent) => {
+			if (event.key !== "Escape") return;
+			const target = event.target;
+			if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
+			props.onClose();
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, [props.onClose]);
 	const source = [row.sourceTitle].filter(Boolean).join(" · ");
 	const pending = untranslatedNote(row.decision);
 	return (
 		<aside className="detail linked" aria-label="所选型号">
-			<h2>{row.model}</h2>
+			<div className="detail-head">
+				<h2>{row.model}</h2>
+				<button className="close-detail" type="button" aria-label="关闭" onClick={props.onClose}>
+					×
+				</button>
+			</div>
 			<p className="who">{row.supplier}</p>
 			<p>
 				<span className={toneClass(row.stage.tone, "stage")}>{row.stage.label}</span>
@@ -148,14 +164,25 @@ function EvidenceBody(props: {
 			{row.prices.length > 0 ? (
 				<>
 					<h3>价格</h3>
-					<dl className="prices">
-						{row.prices.map((price) => (
-							<div key={price.label}>
-								<dt>{price.label}</dt>
-								<dd>{price.text}</dd>
-							</div>
+					{row.prices.some((price) => !price.muted) ? (
+						<dl className="prices">
+							{row.prices
+								.filter((price) => !price.muted)
+								.map((price) => (
+									<div key={price.label}>
+										<dt>{price.label}</dt>
+										<dd>{price.text}</dd>
+									</div>
+								))}
+						</dl>
+					) : null}
+					{row.prices
+						.filter((price) => price.muted)
+						.map((price) => (
+							<p className="quiet" key={price.text}>
+								{price.text}
+							</p>
 						))}
-					</dl>
 				</>
 			) : null}
 		</aside>
@@ -181,6 +208,7 @@ export function EvidencePane(props: {
 	evidenceError: string | null;
 	onOpenEvidence: (evidenceId: string) => void;
 	onSelect: (id: string) => void;
+	onClose: () => void;
 }) {
 	if (!props.row) {
 		return (
@@ -197,6 +225,7 @@ export function EvidencePane(props: {
 			evidenceError={props.evidenceError}
 			onOpenEvidence={props.onOpenEvidence}
 			onSelect={props.onSelect}
+			onClose={props.onClose}
 		/>
 	);
 }

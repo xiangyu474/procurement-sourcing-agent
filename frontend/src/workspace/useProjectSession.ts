@@ -13,7 +13,7 @@ import {
 	type UiError,
 } from "../api/adapter";
 import type { ApiClient } from "../api/client";
-import { ApiError, type CompileJob, type Pipeline, type PipelineListItem, type Project, type ProjectRunSummary, type ProjectSummary, type Run, type StartedPipeline } from "../api/types";
+import { ApiError, type CompileJob, type Pipeline, type PipelineListItem, type PipelineStage, type Project, type ProjectRunSummary, type ProjectSummary, type Run, type StartedPipeline } from "../api/types";
 import { pipelineProblemLine, pipelineProgressLine } from "../view/pipeline";
 import { loadDraft, saveDraft } from "../storage";
 import { newIdempotencyKey, readPipelineId, readPipelineKey, writePipelineId, writePipelineKey } from "./pipelineState";
@@ -54,6 +54,7 @@ export type ProjectSession = {
 	pipelineStatus: string | null;
 	/** Run that the current pipeline status describes. A different run keeps its own heading. */
 	pipelineRunId: string | null;
+	pipelineStages: PipelineStage[];
 	reportStatus: string | null;
 	startOffer: "retry" | null;
 };
@@ -87,6 +88,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 	const [pipelineActive, setPipelineActive] = useState(false);
 	const [pipelineStatus, setPipelineStatus] = useState<string | null>(null);
 	const [pipelineRunId, setPipelineRunId] = useState<string | null>(null);
+	const [pipelineStages, setPipelineStages] = useState<PipelineStage[]>([]);
 	const pipelineStatusRef = useRef<string | null>(null);
 	const sampleBusyRef = useRef(false);
 	const pinnedPipelineRef = useRef<{ projectId: string; pipelineId: string } | null>(null);
@@ -139,7 +141,8 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 	function showPipeline(snapshot: Pipeline): void {
 		setPipelineStatus(snapshot.status);
 		setPipelineRunId(snapshot.run_id);
-		setPipelineLine(pipelineProgressLine(snapshot.status, snapshot.stage, snapshot.report_status));
+		setPipelineStages(snapshot.stages);
+		setPipelineLine(pipelineProgressLine(snapshot.status, snapshot.stage, snapshot.report_status, snapshot.stages));
 		setPipelineNote(pipelineProblemLine(snapshot.status, snapshot.error, snapshot.stages));
 		setReportStatus(snapshot.report_status);
 	}
@@ -196,6 +199,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 					markPipelineActive(false);
 					setPipelineStatus(null);
 					setPipelineRunId(null);
+					setPipelineStages([]);
 					setPipelineLine(null);
 					setPipelineNote(null);
 					setReportStatus(null);
@@ -378,6 +382,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 			setPipelineNote(null);
 			setPipelineStatus(null);
 			setPipelineRunId(null);
+			setPipelineStages([]);
 			setReportStatus(null);
 			setStartOffer(null);
 			return;
@@ -755,6 +760,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		pipelineActive,
 		pipelineStatus,
 		pipelineRunId,
+		pipelineStages,
 		reportStatus,
 		startOffer,
 	};

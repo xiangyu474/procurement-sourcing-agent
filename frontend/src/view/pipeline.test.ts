@@ -7,18 +7,19 @@ import {
 	pipelineProblemLine,
 	pipelineProgressLine,
 	showNoCandidateLine,
+	sourcingOutcome,
 } from "./pipeline";
 
 describe("pipeline progress", () => {
-	it("maps both research spellings and never describes a report", () => {
+	it("maps both research spellings and leaves a finished analysis to the heading", () => {
 		expect(pipelineProgressLine("RUNNING", "RESEARCH")).toBe("正在寻找供应商");
 		expect(pipelineProgressLine("RUNNING", "RESEARCHING")).toBe("正在寻找供应商");
 		expect(pipelineProgressLine("RUNNING", "EVALUATING")).toBe("正在核对技术与价格");
 		expect(pipelineProgressLine("RUNNING", "DECIDING")).toBe("正在整理采购建议");
 		expect(pipelineProgressLine("QUEUED", null)).toBe("正在寻找供应商");
-		expect(pipelineProgressLine("COMPLETED", "COMPLETED")).toBe("已完成");
-		expect(pipelineProgressLine("COMPLETED", "COMPLETED")).not.toContain("报告");
-		expect(pipelineProgressLine("PARTIAL", "EVALUATING")).toBe("需要处理");
+		expect(pipelineProgressLine("COMPLETED", "COMPLETED")).toBeNull();
+		expect(pipelineProgressLine("COMPLETED", "COMPLETED", "QUEUED")).toBe("正在生成报告");
+		expect(pipelineProgressLine("PARTIAL", "EVALUATING")).toBeNull();
 		expect(pipelineProgressLine("FAILED", "RESEARCH")).toBe("需要处理");
 	});
 
@@ -60,6 +61,22 @@ describe("pipeline progress", () => {
 		expect(pipelineHeading("FAILED")).toBe("需要处理");
 		expect(note).toBe("这次没有候选供应商。");
 		expect(note).not.toContain("NO_CANDIDATES");
+	});
+
+	it("says 部分完成 once when research stopped short, even if the pipeline was stored as completed", () => {
+		const stages = [
+			{ stage: "RESEARCH", status: "PARTIAL" },
+			{ stage: "EVALUATING", status: "COMPLETED" },
+			{ stage: "DECIDING", status: "COMPLETED" },
+		];
+		expect(sourcingOutcome({ pipelineStatus: "COMPLETED", stages })).toBe("PARTIAL");
+		expect(sourcingOutcome({ pipelineStatus: "COMPLETED", researchStatus: "PARTIAL" })).toBe("PARTIAL");
+		expect(sourcingOutcome({ pipelineStatus: "PARTIAL", stages: [{ stage: "RESEARCH", status: "COMPLETED" }] })).toBe("PARTIAL");
+		expect(pipelineHeading(sourcingOutcome({ pipelineStatus: "COMPLETED", stages }))).toBe("部分完成");
+		expect(pipelineProgressLine("COMPLETED", "COMPLETED", "COMPLETED", stages)).toBeNull();
+		expect(pipelineProgressLine("COMPLETED", "COMPLETED", null, stages)).not.toBe("已完成");
+		expect(pipelineHeading("COMPLETED")).toBe("寻源已结束");
+		expect(sourcingOutcome({ pipelineStatus: "FAILED", stages })).toBe("FAILED");
 	});
 
 	it("keeps the other terminal headings and only locks the button while queued or running", () => {
