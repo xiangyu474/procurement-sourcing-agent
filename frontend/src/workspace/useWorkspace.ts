@@ -29,6 +29,7 @@ export function useWorkspace(client: ApiClient = createApiClient()): WorkspaceMo
 		run?.id ?? null,
 		run?.status ?? null,
 		projectSession.pipelineActive,
+		projectSession.pipelineStatus,
 	);
 	const report = useReport(
 		clientRef,

@@ -23,9 +23,11 @@ describe("ProjectNav", () => {
 				projects={[project]}
 				activeProjectId="p1"
 				busy={false}
+				sampleBusy={false}
 				onCreate={onCreate}
 				onOpen={async () => true}
 				onSelect={() => {}}
+				onSample={async () => {}}
 			/>,
 		);
 		fireEvent.change(screen.getByLabelText("新项目名称"), { target: { value: "新项目" } });
@@ -48,10 +50,55 @@ describe("ProjectNav", () => {
 			created_at: `2026-10-${String(day).padStart(2, "0")}T08:30:00.000Z`,
 			latest_run: null,
 		}));
-		render(<ProjectNav projects={projects} activeProjectId="p1" busy={false} onCreate={async () => true} onOpen={async () => true} onSelect={() => {}} />);
+		render(
+			<ProjectNav
+				projects={projects}
+				activeProjectId="p1"
+				busy={false}
+				sampleBusy={false}
+				onCreate={async () => true}
+				onOpen={async () => true}
+				onSelect={() => {}}
+				onSample={async () => {}}
+			/>,
+		);
 		expect(screen.getAllByText("M3 cloud acceptance")).toHaveLength(2);
 		expect(screen.getByText(formatProjectDate(projects[0].created_at))).toBeTruthy();
 		expect(screen.getByText(formatProjectDate(projects[1].created_at))).toBeTruthy();
 		expect(screen.queryByRole("button", { name: "更多" })).toBeNull();
+	});
+
+	it("asks for the sample once and stays disabled while that request is open", () => {
+		const onSample = vi.fn(async () => {});
+		const { rerender } = render(
+			<ProjectNav
+				projects={[]}
+				activeProjectId={null}
+				busy={false}
+				sampleBusy={false}
+				onCreate={async () => true}
+				onOpen={async () => true}
+				onSelect={() => {}}
+				onSample={onSample}
+			/>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "查看示例结果" }));
+		expect(onSample).toHaveBeenCalledTimes(1);
+		rerender(
+			<ProjectNav
+				projects={[]}
+				activeProjectId={null}
+				busy={false}
+				sampleBusy
+				onCreate={async () => true}
+				onOpen={async () => true}
+				onSelect={() => {}}
+				onSample={onSample}
+			/>,
+		);
+		const button = screen.getByRole("button", { name: "正在打开示例" }) as HTMLButtonElement;
+		expect(button.disabled).toBe(true);
+		fireEvent.click(button);
+		expect(onSample).toHaveBeenCalledTimes(1);
 	});
 });

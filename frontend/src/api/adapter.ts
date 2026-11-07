@@ -67,6 +67,8 @@ const REASONS: Record<string, string> = {
 	history_import_failed: "历史数据导入失败。",
 	not_found: "找不到这个项目或已无权访问。",
 	not_compiled: "需求还没有整理完成。",
+	sample_not_configured: "示例还没有准备好。",
+	sample_not_found: "没有找到可查看的示例。",
 };
 
 export function stageLabel(stage: string): string {

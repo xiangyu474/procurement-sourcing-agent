@@ -43,6 +43,7 @@ export function useCandidates(
 	runId: string | null,
 	runStatus: string | null,
 	pipelineActive: boolean,
+	pipelineStatus: string | null,
 ): CandidateModel {
 	const [rows, setRows] = useState<CandidateRowView[]>([]);
 	const [summaryLine, setSummaryLine] = useState<string | null>(null);
@@ -116,15 +117,20 @@ export function useCandidates(
 			} catch (caught) {
 				if (isAbort(caught) || signal.aborted) return;
 				if (caught instanceof ApiError && caught.status === 409) {
-					// The run row turns terminal before the decision snapshot is
-					// written. Ask again while the task is still running.
+					// No frozen snapshot for this run. That is not zero candidates
+					// and not a broken page. While the task is still running, ask
+					// again. After a failed stage, the stage sentence is the message.
 					setLoadError(null);
 					setRows([]);
-					setReportBlockReason(ANALYSIS_VERSION_MISSING);
+					setLoaded(false);
 					setLoading(false);
-					if (pipelineActive) {
+					const waiting = pipelineActive || pipelineStatus === "QUEUED" || pipelineStatus === "RUNNING";
+					if (waiting) {
+						setReportBlockReason(null);
 						retryRef.current = setTimeout(() => setAttempt((value) => value + 1), ANALYSIS_RETRY_MS);
+						return;
 					}
+					setReportBlockReason(pipelineStatus === "FAILED" ? null : ANALYSIS_VERSION_MISSING);
 					return;
 				}
 				if (caught instanceof ApiError && caught.status === 404) {
@@ -141,7 +147,7 @@ export function useCandidates(
 			}
 		})();
 		return () => controller.abort();
-	}, [clientRef, projectId, runId, runStatus, pipelineActive, attempt]);
+	}, [clientRef, projectId, runId, runStatus, pipelineActive, pipelineStatus, attempt]);
 
 	const select = (id: string) => {
 		setSelectedId(id);

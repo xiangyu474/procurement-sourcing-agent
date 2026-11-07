@@ -9,6 +9,7 @@
 | 接口 | 什么时候调 | 取什么 | 页面上对应哪一块 |
 | --- | --- | --- | --- |
 | `POST /api/session` | 打开页面 | `expires_at` | 不直接显示，只决定访客身份是否可用 |
+| `POST /api/demo/sample` | 点「查看示例结果」 | `project_id`、`pipeline_id`、`report_id` | 打开复制来的示例项目，并显示这次结果 |
 | `GET /api/session` | 标签页重新可见 | `expires_at` | 同上 |
 | `GET /api/projects?limit=50` | 打开页面 | `id`、`title`、`demand_revision`、`analysis_version`、`latest_run.status` | 左侧项目栏 |
 | `POST /api/projects` | 点「创建」 | `project_id` | 左侧项目栏 |
@@ -68,6 +69,12 @@
 **不展示内部字段。** 页面上不出现 `r2_key`、`normalized_r2_key`、`snapshot_r2_key`、`locator`、`content_sha256`、`claim_ids`、`workflow_id`、`job_id`、内部阶段名（`SUPERVISOR:` 一类）和 `metrics` 里的 token 数与搜索次数。运行编号只出现在「过程记录」里。
 
 **不显示原始错误文本。** 主标题看流水线顶层 `status`：`FAILED` 是「需要处理」，`PARTIAL` 是「部分完成」，`COMPLETED` 是「寻源已结束」。失败时的副标题看 `stages[]` 里失败的那一行，按阶段和 `error_code` 各写一句中文。例如核验阶段的 `STAGE_SERVICE_ERROR` 是「供应商核验这一步没有完成，可以再试一次。」，研究阶段的 `NO_CANDIDATES` 才是「这次没有候选供应商。」。没见过的码用该阶段的笼统句（「供应商核验这一步没有完成，可以再试一次。」这一类），不显示原始码。阶段码优先于顶层的 `PIPELINE_STAGE_FAILED`。报告失败仍只看 `report_error_code`，不放进 `stages[]`。按钮只在顶层 `QUEUED` 或 `RUNNING` 时显示「分析进行中」并禁用。
+
+核验失败时 `/analysis` 返回 409（没有冻结快照）。这是「这次没有结果」，不是 0 个候选，也不是页面故障。页面不写「这次没有候选供应商」，说明用失败阶段那一句。
+
+`GET /api/projects` 现在接受 `offset`。前端仍只请求 `limit=50` 的第一页，不做翻页。
+
+「查看示例结果」在项目栏里，创建按钮下面。它 `POST /api/demo/sample`（没有请求体，只靠访客 Cookie），然后打开返回的项目和那次流水线。进行中按钮禁用，避免点出两份。
 
 **不在浏览器里存凭证。** 生产构建不带 Bearer。凭证只存在于开发代理（`frontend/proxyAuth.ts`），浏览器包不引用这个模块。访客身份只有 Worker 签发的 HttpOnly Cookie。
 
