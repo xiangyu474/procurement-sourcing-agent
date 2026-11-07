@@ -193,6 +193,26 @@ export function priceRows(context: AnalysisPriceContext | null): PriceRow[] {
 	return rows;
 }
 
+/**
+ * The company count for this model, only when `summary.models[]` names this
+ * group. `supplier_count` is the backend's entity count. A model shared by
+ * two requirements is left unmatched so the row does not borrow another group's number.
+ */
+function publishedModelCount(models: Analysis["summary"]["models"], model: string, discoveries: number): number | null {
+	const matches = models.filter((item) => item.product_model === model && item.candidate_rows === discoveries);
+	if (matches.length !== 1) return null;
+	const count = matches[0].supplier_count;
+	return typeof count === "number" && count > 0 ? count : null;
+}
+
+/** Discoveries in the group. Companies are added only from the API's per-model count. */
+export function groupDiscoveryLabel(discoveries: number, supplierEntities: number | null): string {
+	if (supplierEntities != null && supplierEntities !== discoveries) {
+		return `${discoveries} 条发现 · ${supplierEntities} 家供应来源`;
+	}
+	return `${discoveries} 条发现`;
+}
+
 function groupKey(requirementId: string | null, model: string | null): string {
 	return `${requirementId ?? ""}\u001f${model ?? ""}`;
 }
@@ -300,11 +320,8 @@ export function buildAnalysisRows(analysis: Analysis): CandidateRowView[] {
 		const groupStage = memberStages.size === 1 ? members[0].stage : MIXED_STAGE;
 		const memberCodes = new Set(members.map((member) => member.decision?.code ?? ""));
 		const groupSummary = memberCodes.size === 1 ? members[0].decision : null;
-		// One supplier can offer the same model more than once. The row counts the
-		// suppliers, not the candidate lines.
-		const supplierCount = new Set(
-			bucket.candidates.map((candidate) => candidate.supplier_id ?? candidate.supplier_name ?? candidate.candidate_id),
-		).size;
+		const discoveries = members.length;
+		const published = publishedModelCount(analysis.summary.models, bucket.model, discoveries);
 
 		const groupEvidence = members.flatMap((member) =>
 			(member.evidenceId ? [{ id: member.evidenceId, title: member.sourceTitle || "来源" }] : []).concat(member.otherEvidence),
@@ -313,8 +330,8 @@ export function buildAnalysisRows(analysis: Analysis): CandidateRowView[] {
 
 		rows.push({
 			id: key,
-			supplier: supplierCount === 1 ? members[0].supplier : `${supplierCount} 家供应商`,
-			supplierCount,
+			supplier: discoveries === 1 ? members[0].supplier : groupDiscoveryLabel(discoveries, published),
+			supplierCount: published ?? discoveries,
 			model: bucket.model,
 			stage: groupStage,
 			technical,

@@ -4,6 +4,7 @@ import {
 	analysisSummaryLine,
 	coverageWarningText,
 	buildAnalysisRows,
+	groupDiscoveryLabel,
 	decisionStage,
 	isRecommendedInquiry,
 	priceRows,
@@ -147,7 +148,8 @@ describe("analysis view", () => {
 		const first = rows.find((row) => row.model === "型号A");
 		expect(first?.groupCount).toBe(2);
 		expect(first?.supplierCount).toBe(2);
-		expect(first?.supplier).toBe("2 家供应商");
+		expect(first?.supplier).toBe("2 条发现");
+		expect(first?.supplier).not.toContain("家供应商");
 		expect(first?.technical.label).toBe("满足");
 		expect(first?.stage.label).toBe("建议询价");
 		expect(first?.members.map((member) => member.supplier)).toEqual(["乙公司", "甲公司"].sort((a, b) => a.localeCompare(b, "zh-Hans-CN")));
@@ -155,6 +157,32 @@ describe("analysis view", () => {
 		expect(second?.technical.label).toBe("还不能判断");
 		expect(second?.stage.label).toBe("待补证");
 		expect(second?.supplier).toBe("丙公司");
+		const withEntities = buildAnalysisRows(
+			analysis({
+				candidates: [
+					candidate({ candidate_id: "c1", supplier_name: "甲公司" }),
+					candidate({ candidate_id: "c2", supplier_name: "乙公司" }),
+				],
+				summary: {
+					requirements: 1,
+					candidate_rows: 2,
+					distinct_models: 1,
+					distinct_suppliers: 1,
+					supplier_discoveries: 2,
+					models: [{ product_model: "型号A", product_id: "p1", candidate_rows: 2, supplier_count: 1 }],
+					assessments: 0,
+					by_verdict: {},
+					decisions: 0,
+					by_recommendation: {},
+					evidence: 0,
+					coverage_warnings: [],
+				},
+			}),
+		);
+		expect(withEntities[0]?.supplier).toBe("2 条发现 · 1 家供应来源");
+		expect(groupDiscoveryLabel(22, 3)).toBe("22 条发现 · 3 家供应来源");
+		expect(groupDiscoveryLabel(22, 22)).toBe("22 条发现");
+		expect(groupDiscoveryLabel(22, null)).toBe("22 条发现");
 	});
 
 	it("shows the Chinese decision summary and says that the original text is not translated", () => {
