@@ -2694,12 +2694,17 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 				if (object) {
 					reportId = `pr_${pipelineId}`;
 					const key = `workspaces/default/projects/${projectId}/reports/${pipelineId}/sample.docx`;
-					await env.BUCKET.put(key, object.body, { httpMetadata: { contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" } });
+					await env.BUCKET.put(key, object.body, {
+						httpMetadata: { contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
+						// The download route checks the object against the report
+						// row, so the copy carries the same proof as the original.
+						customMetadata: { sha256: sourceReport.sha256 ?? "", decision_version: version },
+					});
 					await env.DB.prepare(
 						`INSERT INTO project_reports (id, workspace_id, project_id, run_id, decision_version, status,
 						 r2_key, sha256, byte_size, created_at, updated_at, pipeline_id, workflow_id, attempt)
 						 VALUES (?1, 'default', ?2, ?3, ?4, 'COMPLETED', ?5, ?6, ?7, ?8, ?8, ?9, ?10, 1)`,
-					).bind(reportId, projectId, runId, version, key, sourceReport.sha256, sourceReport.byte_size, now, pipelineId, `sample_${pipelineId}`);
+					).bind(reportId, projectId, runId, version, key, sourceReport.sha256, sourceReport.byte_size, now, pipelineId, `sample_${pipelineId}`).run();
 					await env.DB.prepare(
 						"UPDATE project_pipelines SET report_id = ?2, report_status = 'COMPLETED' WHERE id = ?1",
 					).bind(pipelineId, reportId).run();
