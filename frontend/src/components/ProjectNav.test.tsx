@@ -129,4 +129,32 @@ describe("ProjectNav", () => {
 		);
 		expect(document.querySelector(".sample-tag")?.textContent).toBe("示例");
 	});
+
+	it("follows the pipeline while the research run has already ended", () => {
+		render(
+			<ProjectNav
+				projects={[
+					{
+						id: "p1",
+						title: "摄像机",
+						history_availability: "NOT_PROVIDED",
+						demand_revision: 1,
+						analysis_version: 1,
+						created_at: "2026-11-07T00:00:00.000Z",
+						latest_run: { id: "run-1", status: "COMPLETED", current_stage: "COMPLETED", updated_at: "2026-11-07T01:00:00.000Z" },
+					},
+				]}
+				activeProjectId="p1"
+				pipelineStatus="RUNNING"
+				busy={false}
+				sampleBusy={false}
+				onCreate={async () => true}
+				onOpen={async () => true}
+				onSelect={() => {}}
+				onSample={async () => {}}
+			/>,
+		);
+		expect(screen.getByText("进行中")).toBeTruthy();
+		expect(screen.queryByText("已结束")).toBeNull();
+	});
 });

@@ -16,6 +16,8 @@ function statusTone(label: string): string {
 export function ProjectNav(props: {
 	projects: ProjectSummary[];
 	activeProjectId: string | null;
+	/** Pipeline status of the open project. The rail must not use the research run instead. */
+	pipelineStatus?: string | null;
 	busy: boolean;
 	sampleBusy: boolean;
 	onCreate: (title: string) => Promise<boolean>;
@@ -59,7 +61,8 @@ export function ProjectNav(props: {
 			</button>
 			<div className="project-list">
 				{props.projects.map((project) => {
-					const raw = listStatus(project.latest_run?.status ?? null, null);
+					const followed = project.id === props.activeProjectId ? props.pipelineStatus : null;
+					const raw = listStatus(followed || project.latest_run?.status || null, null);
 					const label = statusText(raw);
 					const tone = statusTone(raw);
 					const created = formatProjectDate(project.created_at);

@@ -129,7 +129,7 @@ describe("ApiClient", () => {
 					excerpt: "摘录",
 					snapshot_text: "正文",
 					snapshot_r2_key: "workspaces/default/secret",
-					content_sha256: "abc",
+					content_sha256: "3f2a9c1b7d0e4a55ffff",
 				},
 			});
 		});
@@ -139,8 +139,9 @@ describe("ApiClient", () => {
 		expect(listed[0].supplier_name).toBe("海康威视");
 		const evidence = await api.getEvidence("ev_1");
 		expect(evidence.snapshot_text).toBe("正文");
+		expect(evidence.content_sha256).toBe("3f2a9c1b7d0e4a55ffff");
 		expect(JSON.stringify(evidence)).not.toContain("secret");
-		expect(JSON.stringify(evidence)).not.toContain("content_sha256");
+		expect(JSON.stringify(evidence)).not.toContain("snapshot_r2_key");
 	});
 
 	it("uses the formal report routes and refuses the spike download", async () => {

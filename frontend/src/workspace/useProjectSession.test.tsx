@@ -174,7 +174,7 @@ function client(methods: Partial<ApiClient>): ApiClient {
 		listAssessments: async () => [],
 		listDecisions: async () => [],
 		getJobStatus: async () => ({ status: "IDLE", job_id: null, demand_revision: 1, error: null }),
-		getEvidence: async () => ({ evidence_id: "e", title: null, source_url: null, retrieved_at: null, excerpt: null, snapshot_text: null }),
+		getEvidence: async () => ({ evidence_id: "e", title: null, source_url: null, retrieved_at: null, excerpt: null, snapshot_text: null, content_sha256: null }),
 		...methods,
 	} as ApiClient;
 }

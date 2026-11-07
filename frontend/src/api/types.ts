@@ -276,6 +276,7 @@ export type EvidenceDetail = {
 	retrieved_at: string | null;
 	excerpt: string | null;
 	snapshot_text: string | null;
+	content_sha256: string | null;
 };
 
 export class ApiError extends Error {
