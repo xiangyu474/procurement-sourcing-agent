@@ -14,6 +14,8 @@ export type CandidateModel = {
 	analysisReport: AnalysisReport | null;
 	analysisPipelineId: string | null;
 	loading: boolean;
+	/** True only after this run's analysis response was read. A 409 or a failure is not zero candidates. */
+	loaded: boolean;
 	loadError: string | null;
 	decisionsReady: boolean;
 	reportBlockReason: string | null;
@@ -49,6 +51,7 @@ export function useCandidates(
 	const [analysisReport, setAnalysisReport] = useState<AnalysisReport | null>(null);
 	const [analysisPipelineId, setAnalysisPipelineId] = useState<string | null>(null);
 	const [loading, setLoading] = useState(false);
+	const [loaded, setLoaded] = useState(false);
 	const [loadError, setLoadError] = useState<string | null>(null);
 	const [decisionsReady, setDecisionsReady] = useState(false);
 	const [reportBlockReason, setReportBlockReason] = useState<string | null>(null);
@@ -78,6 +81,7 @@ export function useCandidates(
 		setWarnings([]);
 		setAnalysisReport(null);
 		setAnalysisPipelineId(null);
+		setLoaded(false);
 		if (!projectId || !runId || !runStatus) {
 			setLoading(false);
 			return;
@@ -107,6 +111,7 @@ export function useCandidates(
 				setAnalysisPipelineId(analysis.pipeline_id || null);
 				setDecisionsReady(analysis.decisions.length > 0);
 				setReportBlockReason(analysis.decisions.length > 0 ? null : "报告还没有生成");
+				setLoaded(true);
 				setLoading(false);
 			} catch (caught) {
 				if (isAbort(caught) || signal.aborted) return;
@@ -167,6 +172,7 @@ export function useCandidates(
 		analysisReport,
 		analysisPipelineId,
 		loading,
+		loaded,
 		loadError,
 		decisionsReady,
 		reportBlockReason,

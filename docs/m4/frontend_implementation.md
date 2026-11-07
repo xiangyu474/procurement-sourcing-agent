@@ -67,7 +67,7 @@
 
 **不展示内部字段。** 页面上不出现 `r2_key`、`normalized_r2_key`、`snapshot_r2_key`、`locator`、`content_sha256`、`claim_ids`、`workflow_id`、`job_id`、内部阶段名（`SUPERVISOR:` 一类）和 `metrics` 里的 token 数与搜索次数。运行编号只出现在「过程记录」里。
 
-**不显示原始错误文本。** 任务失败时，阶段里的 `error_code` 决定一句中文（`RESEARCH_FAILED` → 「寻源没有完成。」、`MODEL_TIMEOUT` → 「分析超时。」、`DECISION_FAILED` → 「采购建议没有生成，可以再试一次。」、`STAGE_SERVICE_ERROR` → 「这一步没有完成，可以再试一次。」、`SNAPSHOT_MISSING` → 「这次结果没有保存下来，可以再试一次。」）。阶段码优先于任务顶层的 `PIPELINE_STAGE_FAILED`，后者只是笼统的结论。
+**不显示原始错误文本。** 主标题看流水线顶层 `status`：`FAILED` 是「需要处理」，`PARTIAL` 是「部分完成」，`COMPLETED` 是「寻源已结束」。失败时的副标题看 `stages[]` 里失败的那一行，按阶段和 `error_code` 各写一句中文。例如核验阶段的 `STAGE_SERVICE_ERROR` 是「供应商核验这一步没有完成，可以再试一次。」，研究阶段的 `NO_CANDIDATES` 才是「这次没有候选供应商。」。没见过的码用该阶段的笼统句（「供应商核验这一步没有完成，可以再试一次。」这一类），不显示原始码。阶段码优先于顶层的 `PIPELINE_STAGE_FAILED`。报告失败仍只看 `report_error_code`，不放进 `stages[]`。按钮只在顶层 `QUEUED` 或 `RUNNING` 时显示「分析进行中」并禁用。
 
 **不在浏览器里存凭证。** 生产构建不带 Bearer。凭证只存在于开发代理（`frontend/proxyAuth.ts`），浏览器包不引用这个模块。访客身份只有 Worker 签发的 HttpOnly Cookie。
 

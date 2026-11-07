@@ -102,7 +102,7 @@ test("fixture path shows a failed run", async ({ page }) => {
 	await page.getByRole("button", { name: "创建" }).click();
 	await page.getByLabel("需求文字").fill("采购 10 套工业摄像机。");
 	await page.getByRole("button", { name: "开始分析" }).click();
-	await expect(page.getByTestId("run-status")).toHaveText("未能完成", { timeout: 30_000 });
+	await expect(page.getByTestId("run-status")).toHaveText("需要处理", { timeout: 30_000 });
 	await expect(page.getByRole("alert")).toContainText("分析超时");
 	await page.screenshot({ path: `${screenshots}/f1-failed.png`, fullPage: true });
 });
