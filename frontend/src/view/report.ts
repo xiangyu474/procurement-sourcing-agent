@@ -57,6 +57,13 @@ export function decisionCoversRun(input: {
 	return { ready: true, reason: "报告还没有生成" };
 }
 
+/** First 8 characters of the frozen analysis hash, or nothing when it is absent. */
+export function reportVersionChip(decisionVersion: string | null | undefined): string | null {
+	const value = decisionVersion?.trim() ?? "";
+	if (!value) return null;
+	return `这一版：${value.slice(0, 8)}`;
+}
+
 export function reportButtonLabel(phase: ReportPhase, hasFile: boolean): string {
 	if (phase === "generating") return "正在生成报告";
 	if (phase === "failed") return "重新生成";

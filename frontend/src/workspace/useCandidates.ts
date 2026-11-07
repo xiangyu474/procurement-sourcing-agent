@@ -3,7 +3,7 @@ import { isAbort, isTerminalRun, messageForApiError } from "../api/adapter";
 import { ApiError } from "../api/types";
 import type { ApiClient } from "../api/client";
 import type { AnalysisReport, EvidenceDetail } from "../api/types";
-import { analysisSummaryLine, buildAnalysisRows, recommendationText } from "../view/analysis";
+import { analysisSummaryLine, buildAnalysisRows, coverageWarningText, recommendationText } from "../view/analysis";
 import type { CandidateRowView } from "../view/candidates";
 
 export type CandidateModel = {
@@ -17,6 +17,8 @@ export type CandidateModel = {
 	/** True only after this run's analysis response was read. A 409 or a failure is not zero candidates. */
 	loaded: boolean;
 	researchStatus: string | null;
+	decisionVersion: string | null;
+	isSample: boolean;
 	loadError: string | null;
 	decisionsReady: boolean;
 	reportBlockReason: string | null;
@@ -56,6 +58,8 @@ export function useCandidates(
 	const [loading, setLoading] = useState(false);
 	const [loaded, setLoaded] = useState(false);
 	const [researchStatus, setResearchStatus] = useState<string | null>(null);
+	const [decisionVersion, setDecisionVersion] = useState<string | null>(null);
+	const [isSample, setIsSample] = useState(false);
 	const [loadError, setLoadError] = useState<string | null>(null);
 	const [decisionsReady, setDecisionsReady] = useState(false);
 	const [reportBlockReason, setReportBlockReason] = useState<string | null>(null);
@@ -87,6 +91,8 @@ export function useCandidates(
 		setAnalysisPipelineId(null);
 		setLoaded(false);
 		setResearchStatus(null);
+		setDecisionVersion(null);
+		setIsSample(false);
 		if (!projectId || !runId || !runStatus) {
 			setLoading(false);
 			return;
@@ -111,13 +117,15 @@ export function useCandidates(
 				setSummaryLine(analysisSummaryLine(analysis.summary));
 				const recommendation = recommendationText(analysis.summary.by_recommendation);
 				setRecommendationLine(recommendation || null);
-				setWarnings(analysis.summary.coverage_warnings);
+				setWarnings(analysis.summary.coverage_warnings.map(coverageWarningText));
 				setAnalysisReport(analysis.report);
 				setAnalysisPipelineId(analysis.pipeline_id || null);
 				setDecisionsReady(analysis.decisions.length > 0);
 				setReportBlockReason(analysis.decisions.length > 0 ? null : "报告还没有生成");
 				setLoaded(true);
 				setResearchStatus(analysis.research_status || null);
+				setDecisionVersion(analysis.decision_version);
+				setIsSample(analysis.is_sample === true);
 				setLoading(false);
 			} catch (caught) {
 				if (isAbort(caught) || signal.aborted) return;
@@ -191,6 +199,8 @@ export function useCandidates(
 		loading,
 		loaded,
 		researchStatus,
+		decisionVersion,
+		isSample,
 		loadError,
 		decisionsReady,
 		reportBlockReason,

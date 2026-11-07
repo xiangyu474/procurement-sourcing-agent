@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Analysis, AnalysisAssessment, AnalysisCandidate, AnalysisDecision, AnalysisEvidence } from "../api/types";
 import {
 	analysisSummaryLine,
+	coverageWarningText,
 	buildAnalysisRows,
 	decisionStage,
 	isRecommendedInquiry,
@@ -348,6 +349,41 @@ describe("analysis view", () => {
 		});
 		expect(line).toContain("3 个型号");
 		expect(line).toContain("23 家供应来源");
+		expect(line).not.toContain("归并");
+		const grouped = analysisSummaryLine({
+			requirements: 1,
+			candidate_rows: 23,
+			distinct_models: 1,
+			distinct_suppliers: 3,
+			supplier_discoveries: 23,
+			models: [],
+			assessments: 23,
+			by_verdict: { PASS: 22, UNKNOWN: 1 },
+			decisions: 23,
+			by_recommendation: {},
+			evidence: 29,
+			coverage_warnings: [],
+		});
+		expect(grouped).toBe("1 个型号 · 23 条发现，归并为 3 家供应来源 · 核验 23 条：满足 22 · 还不能判断 1 · 29 份证据");
+		const same = analysisSummaryLine({
+			requirements: 1,
+			candidate_rows: 3,
+			distinct_models: 1,
+			distinct_suppliers: 3,
+			supplier_discoveries: 3,
+			models: [],
+			assessments: 3,
+			by_verdict: { PASS: 3 },
+			decisions: 3,
+			by_recommendation: {},
+			evidence: 3,
+			coverage_warnings: [],
+		});
+		expect(same).toContain("3 家供应来源");
+		expect(same).not.toContain("归并");
+		expect(coverageWarningText("这次只找到一个型号，候选行来自不同供应商，而不是不同型号。")).toBe(
+			"这次只找到一个型号，下表按供应来源列出。",
+		);
 		expect(line).toContain("满足 22");
 		expect(line).toContain("还不能判断 1");
 		expect(line).toContain("29 份证据");

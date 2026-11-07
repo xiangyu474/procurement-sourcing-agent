@@ -49,6 +49,31 @@ describe("DemandForm", () => {
 		const button = screen.getByRole("button", { name: "再次分析" });
 		expect(button.className).toContain("ghost");
 		expect(button.className).not.toContain("primary");
+		expect(screen.queryByRole("button", { name: "再次分析" })).not.toBeNull();
 		expect(notice.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+	});
+
+	it("hides another analysis on a sample project", () => {
+		render(
+			<DemandForm
+				project={project}
+				text="采购 10 套工业摄像机"
+				busy={false}
+				locked={false}
+				collapsed
+				compileCount={1}
+				compileNotices={[]}
+				historyNote={null}
+				synthetic={null}
+				startLabel="再次分析"
+				quietStart
+				showStart={false}
+				onText={() => {}}
+				onUpload={async () => {}}
+				onImport={async () => {}}
+				onStart={async () => {}}
+			/>,
+		);
+		expect(screen.queryByRole("button", { name: "再次分析" })).toBeNull();
 	});
 });

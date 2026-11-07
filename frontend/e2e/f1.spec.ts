@@ -281,8 +281,8 @@ test("generating a report stays honest until the file is ready", async ({ page }
 	// The backend starts the report on its own. The visitor does not post for it.
 	expect(posts).toEqual([]);
 	expect(m0).toEqual([]);
-	await page.getByText("过程记录").click();
-	await expect(page.getByText("决策版本 3f2a9c1b7d0e4a55")).toBeVisible();
+	await expect(page.getByTestId("report-version")).toHaveText("这一版：3f2a9c1b");
+	await expect(page.getByText("决策版本 3f2a9c1b7d0e4a55")).toHaveCount(0);
 });
 
 test("an existing report downloads without generating another", async ({ page }) => {
@@ -296,8 +296,8 @@ test("an existing report downloads without generating another", async ({ page })
 	]).then((items) => items[0]);
 	expect(download.suggestedFilename()).toMatch(/正式报告项目-.+\.docx/);
 	expect(posts).toEqual([]);
-	await page.getByText("过程记录").click();
-	await expect(page.getByText("决策版本 3f2a9c1b7d0e4a55")).toBeVisible();
+	await expect(page.getByTestId("report-version")).toHaveText("这一版：3f2a9c1b");
+	await expect(page.getByText("决策版本 3f2a9c1b7d0e4a55")).toHaveCount(0);
 	await page.screenshot({ path: `${screenshots}/f3-completed.png` });
 });
 

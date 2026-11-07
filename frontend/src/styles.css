@@ -75,6 +75,12 @@ button.sample {
 .project-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .project-name, .file-name, .technical, h1 { overflow-wrap: break-word; min-width: 0; }
 .project-created { color: var(--muted); font-size: var(--text-meta); line-height: var(--leading-meta); }
+.sample-tag { margin-left: 6px; color: var(--muted); font-size: var(--text-meta); font-weight: 400; }
+.version-chip {
+	color: var(--muted);
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: var(--text-meta);
+}
 .project-status { color: var(--muted); white-space: nowrap; }
 .project-status.st-run { color: var(--running); }
 .project-status.st-partial { color: var(--partial); }

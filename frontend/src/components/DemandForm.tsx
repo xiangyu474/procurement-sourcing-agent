@@ -16,6 +16,8 @@ export function DemandForm(props: {
 	startLabel: string;
 	/** A finished result keeps the button, but it is no longer the black primary. */
 	quietStart?: boolean;
+	/** A sample project does not offer another analysis. */
+	showStart?: boolean;
 	onText: (value: string) => void;
 	onUpload: (purpose: "REQUIREMENT" | "HISTORY", file: File) => Promise<void>;
 	onImport: () => Promise<void>;
@@ -109,9 +111,11 @@ export function DemandForm(props: {
 					导入历史数据
 				</button>
 			) : null}
-			<button className={props.quietStart ? "ghost" : "primary"} type="submit" disabled={props.busy || props.locked}>
-				{props.startLabel}
-			</button>
+			{props.showStart === false ? null : (
+				<button className={props.quietStart ? "ghost" : "primary"} type="submit" disabled={props.busy || props.locked}>
+					{props.startLabel}
+				</button>
+			)}
 		</div>
 	);
 

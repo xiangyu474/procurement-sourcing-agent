@@ -19,6 +19,8 @@ export type ProjectSource = {
 export type Project = {
 	id: string;
 	title: string;
+	/** True when the backend marks this project as a handed-over sample. */
+	is_sample?: boolean;
 	analysis_version: number;
 	demand_revision: number;
 	history_availability: string;
@@ -71,6 +73,7 @@ export type ListedRun = {
 export type ProjectSummary = {
 	id: string;
 	title: string;
+	is_sample?: boolean;
 	history_availability: string;
 	demand_revision: number;
 	analysis_version: number;

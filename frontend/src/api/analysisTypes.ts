@@ -160,6 +160,8 @@ export type AnalysisSummary = {
 	candidate_rows: number;
 	distinct_models: number;
 	distinct_suppliers: number;
+	/** Distinct supplier pages. Absent on older responses. */
+	supplier_discoveries?: number | null;
 	models: AnalysisSummaryModel[];
 	assessments: number;
 	by_verdict: Record<string, number>;
@@ -184,6 +186,8 @@ export type Analysis = {
 	run_id: string;
 	demand_revision: number;
 	research_status: string;
+	is_sample?: boolean;
+	/** Frozen snapshot hash on the analysis itself. Prefer this over the pipeline row. */
 	decision_version: string | null;
 	requirements: AnalysisRequirement[];
 	candidates: AnalysisCandidate[];
