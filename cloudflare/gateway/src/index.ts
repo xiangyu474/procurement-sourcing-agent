@@ -2677,6 +2677,22 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 			final.pipeline_id = pipelineId;
 			final.run_id = runId;
 			final.project_title = "示例：一次已经完成的寻源与核验";
+			// The frozen context of the sample predates the price-kind field, so
+			// it is filled in from the demand it was compiled from.
+			const requirements = Array.isArray(final.requirements) ? final.requirements as Record<string, unknown>[] : [];
+			const unitPriceRequirements = new Set(
+				requirements.filter(row => row.planned_unit_price && !row.planned_total_budget).map(row => String(row.requirement_id ?? "")),
+			);
+			const totalBudgetRequirements = new Set(
+				requirements.filter(row => row.planned_total_budget && !row.planned_unit_price).map(row => String(row.requirement_id ?? "")),
+			);
+			const priceContexts = Array.isArray(final.price_contexts) ? final.price_contexts as Record<string, unknown>[] : [];
+			for (const context of priceContexts) {
+				if (context.budget_kind) continue;
+				const requirementId = String(context.requirement_id ?? "");
+				if (unitPriceRequirements.has(requirementId)) context.budget_kind = "PLANNED_UNIT_PRICE";
+				else if (totalBudgetRequirements.has(requirementId)) context.budget_kind = "PLANNED_TOTAL_BUDGET";
+			}
 			const payload = JSON.stringify(final);
 			const version = await sha256Hex(new TextEncoder().encode(payload));
 			// The counters and the stages come from the run the sample was taken
@@ -2713,6 +2729,32 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 					`INSERT INTO pipeline_snapshots (pipeline_id, snapshot_type, payload_json, sha256, created_at)
 					 VALUES (?1, 'FINAL_CONTEXT', ?2, ?3, ?4)`,
 				).bind(pipelineId, payload, version, now),
+			]);
+			const sourceRun = await env.DB.prepare(
+				"SELECT id, created_at, updated_at FROM runs WHERE id = ?1",
+			).bind(String(source.run_id ?? "")).first<{ id: string; created_at: string; updated_at: string }>();
+			const sampleRunId = String(final.run_id ?? runId);
+			const evidenceIds = Array.isArray(final.evidence)
+				? (final.evidence as Record<string, unknown>[]).map(row => String(row.evidence_id ?? "")).filter(Boolean)
+				: [];
+			await batchD1(env, [
+				// The run of the sample, so the visitor can read it.
+				env.DB.prepare(
+					`INSERT INTO runs (id, project_id, status, current_stage, artifact_key, created_at, updated_at)
+					 VALUES (?1, ?2, 'COMPLETED', 'COMPLETED', NULL, ?3, ?4)`,
+				).bind(sampleRunId, projectId, sourceRun?.created_at ?? now, sourceRun?.updated_at ?? now),
+				// The demand the sample was compiled from.
+				env.DB.prepare(
+					`INSERT INTO demand_compilations (id, project_id, demand_revision, analysis_version,
+					 compiler_version, compilation_json, source_refs_json, created_at)
+					 VALUES (?1, ?2, 1, 1, 'req-dsl-1.0', ?3, '[]', ?4)`,
+				).bind(`dc_${pipelineId}`, projectId, JSON.stringify({ requirements }), now),
+				// The source snapshots the sample cites, attached to its run, so the
+				// visitor can open every piece of evidence.
+				...evidenceIds.map((evidenceId, index) => env.DB.prepare(
+					`INSERT INTO research_evidence_tasks (workspace_id, run_id, task_id, evidence_id)
+					 VALUES ('default', ?1, ?2, ?3) ON CONFLICT DO NOTHING`,
+				).bind(sampleRunId, `sample_${index}`, evidenceId)),
 			]);
 			for (const stage of sourceStages.results.length ? sourceStages.results : [
 				{ stage: "RESEARCH", status: "COMPLETED", started_at: now, finished_at: now },

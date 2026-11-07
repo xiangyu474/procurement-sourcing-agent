@@ -97,7 +97,7 @@
 		"CONTAINER_INSTANCE_NAME": "sourcing-v27",
 		"PUBLIC_BASE_URL": "https://procurement-sourcing-agent.com",
 		"DEMO_SAMPLE_PIPELINE_ID": "768899d7-e236-46ca-8b53-aa058c11a6e3",
-		"SELFTEST_ENABLED": "true",
+		"SELFTEST_ENABLED": "false",
 		// B1 is available only through the existing protected server-side bearer
 		// path. Guest Session and its expensive operations remain disabled.
 		"PIPELINE_ENABLED": "true",
