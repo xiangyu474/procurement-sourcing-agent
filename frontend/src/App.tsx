@@ -55,6 +55,7 @@ export function App() {
 				<ProjectNav
 					projects={workspace.projects}
 					activeProjectId={workspace.activeProjectId}
+					pipelineStatus={workspace.pipelineStatus}
 					busy={workspace.busy}
 					sampleBusy={workspace.sampleBusy}
 					onCreate={workspace.onCreate}

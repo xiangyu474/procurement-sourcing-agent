@@ -46,6 +46,20 @@ describe("RunPanel", () => {
 		expect(screen.queryByRole("alert")).toBeNull();
 	});
 
+	it("does not call a running assessment a finished search", () => {
+		render(
+			<RunPanel
+				run={run({ status: "COMPLETED", current_stage: "COMPLETED" })}
+				events={[]}
+				stopReason={null}
+				pipelineStatus="RUNNING"
+			/>,
+		);
+		expect(screen.getByTestId("run-status").textContent).toBe("进行中");
+		expect(screen.getByTestId("run-status").textContent).not.toContain("寻源已结束");
+		expect(screen.getByTestId("run-status").className).toContain("tone-running");
+	});
+
 	it("uses the pipeline failure as the heading when research itself finished", () => {
 		render(
 			<RunPanel

@@ -156,15 +156,16 @@ export function pipelineProgressLine(
 }
 
 /**
- * Main heading from the pipeline's own status.
- * FAILED is 「需要处理」. COMPLETED stays 「寻源已结束」 and PARTIAL stays 「部分完成」.
- * Returns null while the task is still running, so the research-run heading can show the current step.
+ * Main heading from the pipeline's own status, never from the research run.
+ * QUEUED is 「排队中」, RUNNING is 「进行中」, COMPLETED stays 「寻源已结束」,
+ * PARTIAL is 「部分完成」, FAILED is 「需要处理」.
  */
 export function pipelineHeading(status: string | null | undefined): string | null {
 	if (status === "FAILED") return "需要处理";
 	if (status === "PARTIAL") return "部分完成";
 	if (status === "COMPLETED") return "寻源已结束";
 	if (status === "QUEUED") return "排队中";
+	if (status === "RUNNING") return "进行中";
 	return null;
 }
 

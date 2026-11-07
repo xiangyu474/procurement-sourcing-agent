@@ -26,7 +26,7 @@ test("fixture path creates a project, accepts files, and restores a partial run"
 	await expect(page.getByText("历史采购.xlsx 已接收")).toBeVisible();
 	await page.screenshot({ path: `${screenshots}/f1-input.png`, fullPage: true });
 	await page.getByRole("button", { name: "开始分析" }).click();
-	await expect(page.getByTestId("run-status")).toHaveText("正在查阅公开资料", { timeout: 20_000 });
+	await expect(page.getByTestId("run-status")).toHaveText("进行中", { timeout: 20_000 });
 	await page.screenshot({ path: `${screenshots}/f1-running.png`, fullPage: true });
 	await expect(page.getByTestId("run-status")).toHaveText("部分完成", { timeout: 30_000 });
 	await expect(page.getByRole("alert")).toContainText("没有找到有公开资料支撑的候选供应商。");

@@ -38,7 +38,7 @@ export function RunPanel(props: {
 	const abnormal = explainRun({ status: run.status, lastError: run.last_error, stopReason, candidateCount });
 	const toneStatus = props.pipelineStatus && ["QUEUED", "RUNNING", "PARTIAL", "FAILED", "COMPLETED"].includes(props.pipelineStatus) ? props.pipelineStatus : run.status;
 	const tone = statusTone(toneStatus);
-	const heading = pipelineHeading(props.pipelineStatus) ?? statusText(run);
+	const heading = props.pipelineStatus ? pipelineHeading(props.pipelineStatus) ?? "进行中" : statusText(run);
 	const inProgress = analysisInProgress(props.pipelineStatus, run.status);
 	const when = `${formatRunStamp(run.created_at)} ${inProgress ? "开始" : "的寻源"}`;
 	return (

@@ -730,6 +730,7 @@ export class ApiClient {
 				retrieved_at: asOptionalString(evidence.retrieved_at),
 				excerpt: asOptionalString(evidence.excerpt),
 				snapshot_text: asOptionalString(evidence.snapshot_text),
+				content_sha256: asOptionalString(evidence.content_sha256),
 			};
 		});
 	}

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { CandidateRowView } from "../view/candidates";
-import { EvidencePane } from "./EvidencePane";
+import { EvidencePane, snapshotHashLabel } from "./EvidencePane";
 
 const row: CandidateRowView = {
 	id: "c1",
@@ -61,5 +61,56 @@ describe("EvidencePane", () => {
 		const field = screen.getByLabelText("需求文字");
 		fireEvent.keyDown(field, { key: "Escape" });
 		expect(onClose).not.toHaveBeenCalled();
+	});
+
+	it("shows the source url, hash and meta, and omits lines that are missing", () => {
+		const withSource = { ...row, evidenceId: "ev_1" };
+		const { rerender } = render(
+			<EvidencePane
+				row={withSource}
+				evidence={{
+					evidence_id: "ev_1",
+					title: "规格页",
+					source_url: "https://example.com/very/long/specification/page",
+					retrieved_at: "2026-11-07T08:05:00.000Z",
+					excerpt: "像素不低于 5MP。",
+					snapshot_text: null,
+					content_sha256: "3f2a9c1b7d0e4a55ffff",
+				}}
+				evidenceError={null}
+				onOpenEvidence={() => {}}
+				onSelect={() => {}}
+				onClose={() => {}}
+			/>,
+		);
+		const link = screen.getByRole("link", { name: "https://example.com/very/long/specification/page" });
+		expect(link.getAttribute("href")).toBe("https://example.com/very/long/specification/page");
+		expect(screen.getByText("像素不低于 5MP。")).toBeTruthy();
+		expect(screen.getByText("快照哈希 3f2a9c1b7d0e4a55")).toBeTruthy();
+		expect(screen.getByText(/规格页/)).toBeTruthy();
+		expect(snapshotHashLabel("3f2a9c1b7d0e4a55ffff")).toBe("快照哈希 3f2a9c1b7d0e4a55");
+		expect(snapshotHashLabel(null)).toBeNull();
+		rerender(
+			<EvidencePane
+				row={withSource}
+				evidence={{
+					evidence_id: "ev_1",
+					title: null,
+					source_url: null,
+					retrieved_at: null,
+					excerpt: null,
+					snapshot_text: null,
+					content_sha256: null,
+				}}
+				evidenceError={null}
+				onOpenEvidence={() => {}}
+				onSelect={() => {}}
+				onClose={() => {}}
+			/>,
+		);
+		expect(screen.queryByRole("link")).toBeNull();
+		expect(screen.queryByText(/快照哈希/)).toBeNull();
+		expect(screen.queryByText("规格页")).toBeNull();
+		expect(screen.queryByText("像素不低于 5MP。")).toBeNull();
 	});
 });

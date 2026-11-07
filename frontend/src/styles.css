@@ -76,6 +76,13 @@ button.sample {
 .project-name, .file-name, .technical, h1 { overflow-wrap: break-word; min-width: 0; }
 .project-created { color: var(--muted); font-size: var(--text-meta); line-height: var(--leading-meta); }
 .sample-tag { margin-left: 6px; color: var(--muted); font-size: var(--text-meta); font-weight: 400; }
+.evidence-url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.evidence-url a { color: inherit; }
+.snapshot-hash {
+	color: var(--muted);
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: var(--text-meta);
+}
 .version-chip {
 	color: var(--muted);
 	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

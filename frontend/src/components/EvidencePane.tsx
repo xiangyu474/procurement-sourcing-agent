@@ -1,7 +1,15 @@
 import { useEffect, useState } from "react";
+import { formatTimestamp } from "../api/adapter";
 import type { EvidenceDetail } from "../api/types";
 import type { CandidateRowView, CheckView } from "../view/candidates";
 import { untranslatedNote } from "../view/analysis";
+
+/** First 16 characters of the published snapshot hash. */
+export function snapshotHashLabel(hash: string | null | undefined): string | null {
+	const value = hash?.trim() ?? "";
+	if (!value) return null;
+	return `快照哈希 ${value.slice(0, 16)}`;
+}
 
 function toneClass(tone: string, kind: "stage" | "tech"): string {
 	if (kind === "tech") {
@@ -37,6 +45,10 @@ function EvidenceBody(props: {
 	}, [props.onClose]);
 	const source = [row.sourceTitle].filter(Boolean).join(" · ");
 	const pending = untranslatedNote(row.decision);
+	const detail = props.evidence && props.evidence.evidence_id === row.evidenceId ? props.evidence : null;
+	const excerpt = detail?.excerpt || row.excerpt;
+	const meta = [detail?.title, detail?.retrieved_at ? formatTimestamp(detail.retrieved_at) : null].filter((item): item is string => Boolean(item));
+	const hash = snapshotHashLabel(detail?.content_sha256);
 	return (
 		<aside className="detail linked" aria-label="所选型号">
 			<div className="detail-head">
@@ -101,10 +113,10 @@ function EvidenceBody(props: {
 			) : (
 				<p className="quiet">还没有来源。</p>
 			)}
-			{row.excerpt ? (
+			{excerpt ? (
 				<>
 					<h3>摘录</h3>
-					<blockquote>{row.excerpt}</blockquote>
+					<blockquote>{excerpt}</blockquote>
 				</>
 			) : null}
 			{row.evidenceId ? (
@@ -122,6 +134,15 @@ function EvidenceBody(props: {
 					) : null}
 				</p>
 			) : null}
+			{detail?.source_url ? (
+				<p className="evidence-url">
+					<a href={detail.source_url} target="_blank" rel="noreferrer">
+						{detail.source_url}
+					</a>
+				</p>
+			) : null}
+			{meta.length > 0 ? <p className="quiet">{meta.join(" · ")}</p> : null}
+			{hash ? <p className="snapshot-hash">{hash}</p> : null}
 			{props.evidenceError ? <p className="quiet">{props.evidenceError}</p> : null}
 			{props.evidence && props.evidence.evidence_id === row.evidenceId && props.evidence.snapshot_text ? (
 				<blockquote className="snapshot">{props.evidence.snapshot_text}</blockquote>

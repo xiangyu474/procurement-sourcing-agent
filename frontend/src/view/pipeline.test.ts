@@ -63,6 +63,15 @@ describe("pipeline progress", () => {
 		expect(note).not.toContain("NO_CANDIDATES");
 	});
 
+	it("keeps the heading on a running pipeline after research has finished", () => {
+		expect(pipelineHeading("RUNNING")).toBe("进行中");
+		expect(pipelineHeading("RUNNING")).not.toBe("寻源已结束");
+		expect(pipelineProgressLine("RUNNING", "EVALUATING")).toBe("正在核对技术与价格");
+		expect(pipelineProgressLine("RUNNING", "RESEARCHING")).toBe("正在寻找供应商");
+		expect(pipelineProgressLine("RUNNING", "DECIDING")).toBe("正在整理采购建议");
+		expect(sourcingOutcome({ pipelineStatus: "RUNNING", researchStatus: "COMPLETED", stages: [{ stage: "RESEARCH", status: "COMPLETED" }, { stage: "EVALUATING", status: "RUNNING" }] })).toBe("RUNNING");
+	});
+
 	it("says 部分完成 once when research stopped short, even if the pipeline was stored as completed", () => {
 		const stages = [
 			{ stage: "RESEARCH", status: "PARTIAL" },
@@ -83,7 +92,7 @@ describe("pipeline progress", () => {
 		expect(pipelineHeading("COMPLETED")).toBe("寻源已结束");
 		expect(pipelineHeading("PARTIAL")).toBe("部分完成");
 		expect(pipelineHeading("QUEUED")).toBe("排队中");
-		expect(pipelineHeading("RUNNING")).toBeNull();
+		expect(pipelineHeading("RUNNING")).toBe("进行中");
 		expect(analysisInProgress("QUEUED", null)).toBe(true);
 		expect(analysisInProgress("RUNNING", "COMPLETED")).toBe(true);
 		expect(analysisInProgress("COMPLETED", "RUNNING")).toBe(false);
