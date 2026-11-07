@@ -62,7 +62,7 @@ export function shapePipelineAnalysis(final: Row, report: Row): Row {
 	return { ...pick(final, ["project_id", "pipeline_id", "run_id", "demand_revision", "research_status"]),
 		// A finished run handed over for reading: the page does not offer to
 		// start another research from it.
-		is_sample: str(final.project_title).startsWith("示例："),
+		is_sample: String(final.project_title ?? "").startsWith("示例："),
 		requirements, candidates, assessments, decisions, price_contexts: priceContexts, evidence,
 		summary: sourcingSummary(final), report: reportView };
 }
