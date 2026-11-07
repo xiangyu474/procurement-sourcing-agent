@@ -2904,7 +2904,12 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 			)
 				.bind(projectMatch[1])
 				.all();
-			return json({ ...project, sources });
+			return json({
+				...project,
+				// A sample is a finished run handed over for reading.
+				is_sample: String(project.title ?? "").startsWith("示例："),
+				sources,
+			});
 		}
 
 		const textMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/requirement-text$/);
