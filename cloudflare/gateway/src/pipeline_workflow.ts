@@ -153,7 +153,10 @@ export class ProcurementPipelineWorkflow extends WorkflowEntrypoint<Env, Pipelin
 				await recordPipelineStage(this.env.DB, pipelineId, "EVALUATING", "RUNNING");
 			});
 			activeStage = "EVALUATING";
-			await step.do("evaluate-frozen-context", { retries: { limit: 0, delay: "10 seconds", backoff: "constant" }, timeout: "30 minutes" }, async () => {
+			// The research leaves the container near its memory limit, so the
+			// evaluation can meet a container that just died. The frozen input is
+			// in the database, so one retry on a fresh container is safe.
+			await step.do("evaluate-frozen-context", { retries: { limit: 1, delay: "15 seconds", backoff: "constant" }, timeout: "30 minutes" }, async () => {
 				const output = await callContainer(this.env, "/internal/evaluate-spec", {
 					project_id: projectId, pipeline_id: pipelineId, gateway_url: this.env.CONTAINER_GATEWAY_URL,
 					token: this.env.INTERNAL_GATEWAY_TOKEN, runtime_config: runtime(this.env),
@@ -176,7 +179,7 @@ export class ProcurementPipelineWorkflow extends WorkflowEntrypoint<Env, Pipelin
 				await update(this.env.DB, pipelineId, "RUNNING", "DECIDING");
 				await recordPipelineStage(this.env.DB, pipelineId, "DECIDING", "RUNNING");
 			});
-			await step.do("decide-frozen-context", { retries: { limit: 0, delay: "10 seconds", backoff: "constant" }, timeout: "30 minutes" }, async () => {
+			await step.do("decide-frozen-context", { retries: { limit: 1, delay: "15 seconds", backoff: "constant" }, timeout: "30 minutes" }, async () => {
 				const output = await callContainer(this.env, "/internal/decide", {
 					project_id: projectId, pipeline_id: pipelineId, gateway_url: this.env.CONTAINER_GATEWAY_URL,
 					token: this.env.INTERNAL_GATEWAY_TOKEN, runtime_config: runtime(this.env),
