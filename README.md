@@ -1,105 +1,142 @@
-# Procurement Sourcing Intelligence Agent
+# Procurement Sourcing Agent
 
-采购智能寻源比价助理。以采购需求为入口的寻源研究 Agent：拆解需求、发现并核验公开供应来源、
-逐属性判断技术符合性、区分不同口径的价格、诚实标注证据缺口，并输出可追溯、可下载 DOCX 的
-《采购寻源调查与参考比价报告》。
+面向采购团队的公开寻源研究 Agent。系统把文字或 PPTX 需求转换为可核验约束，从公开网页发现供应商与具体型号，按统一口径比对规格和价格，并输出带来源快照的冻结分析、网页结果和 DOCX 报告。
 
-## 产品边界
+- **在线演示**：<https://procurement-sourcing-agent.com>
+- **技术手册**：[`docs/technical_documentation.md`](docs/technical_documentation.md)
+- **许可证**：MIT
 
-- **需求是唯一必需输入**：一段文字或一份 PPTX 至少提供一种。
-- **历史采购数据完全可选**：没有历史数据时寻源照常运行，历史分析显示 `NOT_PROVIDED`，
-  不伪造历史价格、趋势或供应商绩效。
-- **公开收集的事实不写成历史采购订单**：网页发现的企业与价格属于公开市场情报，与内部历史
-  交易是分开的命名空间。
-- **官方模拟历史供应商不与同名真实企业自动合并**：历史主体始终标记为模拟主体。
-- **价格类型严格隔离**：`PLANNED_PRICE` / `HISTORICAL_TRANSACTION` / `PUBLIC_REFERENCE` /
-  `FORMAL_QUOTATION` / `HYPOTHETICAL`。口径不一致时给出 `NOT_COMPARABLE` 及原因，
-  不输出“最低价”“节支比例”这类无依据结论。
-- **规格逐属性判定**：`PASS` / `FAIL` / `UNKNOWN` / `NOT_APPLICABLE`。缺证据就是 `UNKNOWN`，
-  硬约束 `FAIL` 不会被低价抵消。
-- **证据可追溯**：重要外部事实必须带来源 URL、抓取时间与可定位片段；内部数字绑定原始文件坐标。
-- **不做**：自动外发询价邮件、谈判、下单、供应商定标、在线富文本编辑器、PPT/XLSX 导出。
+## 核心能力
 
-## 技术栈
+- **需求驱动**：接收文字、PPTX 或两者组合。历史采购 XLSX 可选。
+- **公开寻源**：使用 Tavily Search 发现来源，使用 Tavily Extract 读取页面正文。
+- **证据可追溯**：每项外部声明引用页面快照、URL、内容哈希和逐字引文。
+- **规格核验**：模型负责语义对齐，纯 Python 计算器负责单位换算、数值比较和硬约束聚合。
+- **价格可比性**：区分计划预算、历史成交价、公开参考价和正式报价。口径不一致时不做比较。
+- **版本化输出**：网页和 DOCX 读取同一决策快照。历史报告不会随供应商情报更新而变化。
+- **数据隔离**：项目、访客会话、公开情报和模拟历史供应商使用独立作用域。
 
-| 层 | 选型 |
+`UNKNOWN` 表示现有证据不足以判断，不等于不合格。系统提供初步寻源和询价建议，不执行自动询价、供应商准入、定标或下单。
+
+## 工作流程
+
+```mermaid
+flowchart LR
+    U[文字或 PPTX 需求] --> C[Requirement DSL]
+    C --> P[Sourcing Plan]
+    P --> R[Supplier Research]
+    R --> E[Evidence Snapshots]
+    E --> A[Semantic Alignment]
+    A --> G[Python Calculator]
+    G --> V[Decision Gate]
+    V --> S[Frozen Decision Snapshot]
+    S --> W[Web Analysis]
+    S --> D[DOCX Report]
+```
+
+公开网页摘要是发现线索，不是证据。只有抓取后的页面正文可以支持声明。
+
+## 系统架构
+
+| 层 | 技术与职责 |
 | --- | --- |
-| Agent Harness | Python `deepagents`（LangGraph）；v1.3.1 的 Supervisor + 1–3 个同类型 Researcher 属于 M2 |
-| 模型 | OpenAI 兼容接口（环境变量配置），结构化输出使用 function calling |
-| 搜索 | Tavily（经 `SearchProvider` 抽象，可替换） |
-| 云端 | Cloudflare Workers + Containers + D1 + R2 + Workflows |
-| 报告 | `python-docx`，网页预览与 DOCX 草稿 |
+| 前端 | React、Vite。提供需求输入、运行进度、候选分析、证据查看和报告下载。 |
+| API 网关 | TypeScript、Cloudflare Workers。负责会话、归属、限流、任务预约和公开 API。 |
+| 编排 | Cloudflare Workflows。持久化长任务阶段、重试和终态。 |
+| Agent 服务 | Python、FastAPI、Deep Agents。执行需求编译、公开寻源、规格核验、决策和报告生成。 |
+| 模型 | OpenAI 兼容接口。用于语义提取、属性对齐和结构化建议。 |
+| 搜索 | Tavily Search 与 Extract。 |
+| 业务数据 | Cloudflare D1。保存项目、需求、情报、证据元数据、核验、决策和快照。 |
+| 文件 | 私有 Cloudflare R2。保存上传文件、网页正文和 DOCX 报告。 |
+| 追踪 | LangSmith。保存模型、工具和子任务轨迹。 |
 
-## 目录结构
+## 仓库结构
 
 ```text
-src/procurement_agent/
-  agents/     Deep Agents 主循环与角色提示词
-  api/        Container 内运行的 FastAPI 服务
-  infra/      环境配置、模型适配、SearchProvider 抽象
-  reports/    结构化报告与 DOCX 生成
-cloudflare/gateway/   Worker 网关（TypeScript）、D1 migration
-tests/        单元与接口测试
-scripts/      live 能力自检脚本
-docs/         实施日志与验收记录
+src/procurement_agent/   Python 领域模型、服务、Agent、API 和报告
+cloudflare/gateway/      Worker 网关、Workflow 和 D1 migrations
+frontend/                React 与 Vite 前端
+tests/                   Python、Worker 和前端测试
+scripts/                 本地、远程和云端验收脚本
+docs/                    技术手册、契约、验收和数据合规说明
 ```
 
 ## 本地开发
 
+### 前置条件
+
+- Python 3.11 与 [`uv`](https://docs.astral.sh/uv/)
+- Node.js 与 npm
+- OpenAI 兼容模型端点
+- Tavily API key
+
+### 安装依赖
+
 ```bash
 uv sync --python 3.11
-uv run pytest -q
+npm ci
+npm --prefix frontend ci
+cp .env.example .env
 ```
 
-密钥只从环境变量读取，本地放在未纳入版本控制的 `.env`，云端用 Cloudflare Secrets：
+在 `.env` 中填写模型和 Tavily 凭证。不要提交真实密钥。
+
+### 启动前端
 
 ```bash
-cp .env.example .env   # 填入 GENESIS_* / TAVILY_API_KEY
-uv run python scripts/live_model_smoke.py
-uv run python scripts/live_search_smoke.py
+npm --prefix frontend run dev
 ```
 
-## Cloudflare 部署
+Vite 开发服务器默认代理到已部署的网关。连接其他部署时，在 `frontend/.env.local` 中设置 `API_PROXY_TARGET`。
 
-Worker 网关负责鉴权、D1 状态、R2 产物与 Workflow 编排，Python Container 执行寻源任务。
+### 运行检查
 
 ```bash
-cf d1 create procurement-sourcing
-cf r2 buckets create procurement-sourcing-artifacts
+uv run --python 3.11 python -m pytest -q
+npm run check
+npm --prefix frontend test
+npm --prefix frontend run e2e
+```
+
+Playwright 首次运行前需要安装浏览器：
+
+```bash
+cd frontend && npx playwright install chromium
+```
+
+## 部署
+
+`main` 分支的更新由 Cloudflare Workers Builds 构建并发布。手动发布时执行：
+
+```bash
+npm --prefix frontend ci
+VITE_GUEST_SESSION=1 npm --prefix frontend run build
 npx wrangler d1 migrations apply DB --remote
 npx wrangler deploy
 ```
 
-Container 镜像由 Cloudflare 托管构建环境构建（`Dockerfile`），本地不需要安装 Docker。
-镜像构建与首次部署耗时较长，部署后需要等待实例预���绪。
+云端密钥通过 Wrangler Secret 配置，不写入 `wrangler.jsonc`。主要密钥包括：
 
-## 当前状态（M0/M1/M2 已通过云端验收）
+- `GENESIS_BASE_URL`
+- `GENESIS_ACCESS_TOKEN`
+- `GENESIS_MODEL_ID`
+- `TAVILY_API_KEY`
+- `GUEST_SESSION_SECRET`
+- `DEMO_ACCESS_TOKEN`
+- `INTERNAL_GATEWAY_TOKEN`
 
-- **M0 已实测部署**：Cloudflare Worker + Python Container + Workflow + D1/R2；验证任务在浏览器断连后继续、阶段事件、幂等、失败状态和 DOCX 写入/下载。Container 由 Cloudflare Workers Builds 构建，不需本地 Docker。当前仍未完成 SIGTERM 恢复和精确费用观测；已验证断连时长不等于完整的 2–5 分钟门槛证明。
-- **M1 需求抽取已改为模型主导**：PPTX 原文全量按行切分后一次交给模型，模型产出采购行、技术约束、冲突和非结构化需求。原先按固定表头词表抽取 14 条采购行的确定性解析器，以及按引文复核模型读数的校验层，已删除。每组 XLSX 1000 行、38 列、第 8 行表头，模拟供应商隔离不变。代价是需求条数、数量和金额不再由代码保证，结论出处是模型。
-- 编译器读回模型的**全部**工具调用。长文档下模型会一行需求一次调用，只读第一次会丢掉其余行。模型有时把整个编译包在 `result` 字段里当作 JSON 字符串，或把金额写成 JSON 字符串，这两种形状都会被读回。
-- 需求编译改成 **Workflow 异步执行**。模型读完一整份文档需要几分钟，Worker 请求撑不住这么久。客户端发起编译后轮询结果。
-- `scripts/live_official_demand_compile.py` 实测 **PASS**：官方两组 PPTX 各抽到 14 条采购行。Case 1 保留 58 万台与 63 万台的冲突，Case 2 由模型自行算出 5888.66 万元与表格合计 5888.64 万元的差额并报为冲突。`scripts/verify_m1_cloud_api.py` 云端 **PASS**：匿名 401、文本编译读回、官方 PPTX 14 条需求、Case A 冲突、历史导入与重复导入去重。
-- **M2 云端验收通过**：`scripts/verify_m2_cloud_api.py` 返回 **PASS**。冷启动一次寻源产出带来源的候选与精确型号，同项目重跑给出复用/刷新/忽略判断，跨项目复用共享情报但不共享项目候选。三段运行的 LangSmith root trace 都能从云端读回，metadata 里的 `sourcing_run_id` 与 D1 的 run 一一对应。
-- 部署走 Cloudflare 的 GitHub 构建：每次推 main，构建环境跑 `npm ci` 和 `npx wrangler deploy`，同时构建容器镜像并滚动发布。镜像固定 2 vCPU / 6 GiB，依赖版本在 `pyproject.toml` 里固定。
-- **M2 已部署并通过云端验收**：版本化 SourcingPlan；一个 Deep Agents Supervisor 和同类型 Supplier Researcher；精确 question ID/渠道边界；Tavily Search/Extract；共享预算；Claim 引文与 Evidence/R2 快照校验；D1 情报账本、R2 快照、项目 Longlist 和成本/模型调用指标。D1 migrations `0005`/`0006` 已远端应用；Cloudflare LangSmith secret 已配置。
-- 工具失败不再中断整轮研究。越界抓取、预算用尽、页面读不出来，都作为可执行指令回到研究器手里，它继续用已抓到的来源作答并把缺口记下来。
-- 研究器答成散文而不是结构化工具调用时，系统会带着已抓到的来源再问一次，这次强制要求工具调用。
-- 一次严格计划映射的 live 本地研究返回 `PARTIAL / BUDGET_EXHAUSTED`：**2 个 Researcher tasks、4 次搜索、4 次抓取、3 个候选、6 条来源支持 Claims、15 次模型调用**；找到了精确型号 `IPC501-5M-B` 与 `T-BC-IP5M-Z-2` 的公开资料。候选仍是未核实 Longlist，像素口径、身份和现售情况都未作采购结论。其他 live 尝试也曾出现模型超时或没有精确型号；均据实标为 PARTIAL。
-- **M3 的验收核对**（把《M3验收标准.md》逐条对着实现与实测过一遍，含实测 token 用量与尚未完成项）见 `docs/m3_verification.md`。
-- **系统的预期行为**（状态词表、关键行为、失败时的表现、验收方式、已知限制）整理在 `docs/expected_behavior.md`，供交付后的交接使用。
-- **M3 的技术核验已接通云端**：`POST /api/projects/{id}/spec-assessments` 触发，`GET /api/projects/{id}/spec-assessments` 读回。判定结果存进 D1 的 `spec_assessments` 表，唯一键是「项目 + 需求 + 候选 + 需求修订号」。
-- **M3 的决策与闸门已接通云端**：`POST /api/projects/{id}/decisions` 触发，`GET /api/projects/{id}/decisions` 读回。决策存进 D1 的 `sourcing_decisions` 表，**被闸门拒绝的决策也留着**，连同被拒的原因。
-- **M3 已启动**：实施计划见 `docs/m3_plan.md`，DSL 速查见 `docs/requirement_dsl.md`。M3-A1 已完成：需求与产品共用的对齐/评估契约、单位换算白名单，以及一个纯 Python 的约束计算器（不联网、不调模型），能对每条约束给出 PASS/FAIL/UNKNOWN、原因码和计算过程。
-- 最新本地验证：`pytest` **124 passed**，`npx tsc --noEmit`、Python `compileall` 和 Ruff 检查均通过。回归测试覆盖复用决策不猜关联、越界抓取的安全拒绝、多个工具调用的合并、JSON 字符串形状的读回、单任务预算上限、页面读不出来时的可恢复处理，以及研究器散文回答后的强制结构化补问。
+发布新容器镜像时需要更新 `CONTAINER_INSTANCE_NAME`。运行中的 Container 会继续使用启动时的镜像。
 
-本地验证命令：
+## 文档
 
-```bash
-uv run --python 3.11 python -m pytest -q
-npx tsc --noEmit
-uv run --python 3.11 python -m compileall -q src scripts tests
-uv run --python 3.11 python scripts/live_m2_research.py --product "industrial IP camera" --minimum-resolution-mp 5
-```
+| 文档 | 内容 |
+| --- | --- |
+| [`docs/technical_documentation.md`](docs/technical_documentation.md) | 产品契约、架构、判定语义、接口、安全、部署和限制。 |
+| [`docs/requirement_dsl.md`](docs/requirement_dsl.md) | Requirement DSL 字段、算子和使用约束。 |
+| [`docs/data_model.md`](docs/data_model.md) | 领域对象、D1 表和 R2 对象。 |
+| [`docs/m4/data_compliance.md`](docs/m4/data_compliance.md) | 数据来源、存储、访客隔离和合规边界。 |
+| [`docs/acceptance_commands.md`](docs/acceptance_commands.md) | 本地与云端验收命令。 |
 
-live 脚本需要本地 `.env`；它只打印经来源定位的公开结果，不打印密钥，且**不写 Cloudflare D1/R2**。云端 M2 验收脚本读取忽略文件 `.demo_access_token`，不输出 token；除访问 token 外还需要本地 `.env` 中的 LangSmith API key 来验证云端真实 trace。当前没有 Web UI；M3 的规格门禁已开工，比价、Data Fusion 和最终报告仍未开始。详细记录见 `docs/implementation_log.md`；全部数据模型的说明见 `docs/data_model.md`；需求 DSL 的字段、类型、算子和常见坑见 `docs/requirement_dsl.md`；交付交接用的预期行为说明见 `docs/expected_behavior.md`。
+## License
+
+[MIT](LICENSE)
