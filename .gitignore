@@ -41,6 +41,8 @@ tmp/
 .last_run_id
 .last_project_id
 *.docx
+!docs/m4/demo/*.docx
+!docs/m4/demo/*.pdf
 docx_dump.txt
 fail_events.txt
 NUL
