@@ -202,7 +202,7 @@ export async function authorizeGuest(request: Request, env: GuestEnv): Promise<G
 				EXISTS (SELECT 1 FROM research_evidence_tasks t JOIN runs r ON r.id = t.run_id JOIN projects p ON p.id = r.project_id WHERE t.workspace_id = e.workspace_id AND t.evidence_id = e.id AND p.session_id = ?2)
 				OR EXISTS (SELECT 1 FROM project_candidate_evidence ce JOIN project_candidates c ON c.id = ce.candidate_id AND c.workspace_id = ce.workspace_id JOIN projects p ON p.id = c.project_id WHERE ce.workspace_id = e.workspace_id AND ce.evidence_id = e.id AND p.session_id = ?2))`)
 				.bind(decodeURIComponent(evidence[1]), session.id).first<{ id: string }>();
-		} else if (url.pathname !== "/api/projects") {
+		} else if (url.pathname !== "/api/projects" && url.pathname !== "/api/demo/sample") {
 			return { response: error("not_found", 404) };
 		}
 	} catch (err) {
@@ -214,6 +214,8 @@ export async function authorizeGuest(request: Request, env: GuestEnv): Promise<G
 	// admitted by the server-side budget in the route itself, not here.
 	const allowedGuestWrite =
 		(url.pathname === "/api/projects" && request.method === "POST") ||
+		// A finished run handed over as a sample: no model call, no search.
+		(url.pathname === "/api/demo/sample" && request.method === "POST") ||
 		(project && request.method === "POST" && /\/(requirement-text|upload-sessions|requirement-compile|history-imports)$/.test(url.pathname)) ||
 		(project && request.method === "POST" && url.pathname.endsWith("/pipeline")) ||
 		// A visitor may regenerate a report that failed. It never restarts the
