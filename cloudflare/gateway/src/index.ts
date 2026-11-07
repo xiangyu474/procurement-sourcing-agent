@@ -37,6 +37,7 @@ export interface Env {
 	SOURCING_CONTAINER: DurableObjectNamespace<Container<Env>>;
 	INTERNAL_GATEWAY_TOKEN: string;
 	DEMO_ACCESS_TOKEN: string;
+	DEMO_SAMPLE_PIPELINE_ID?: string;
 	PUBLIC_BASE_URL?: string;
 	GUEST_SESSION_ENABLED?: string;
 	GUEST_SESSION_SECRET?: string;
@@ -2635,6 +2636,76 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 		if (pipelinesMatch && request.method === "GET") {
 			if (env.PIPELINE_ENABLED !== "true") return json({ error: "operation_unavailable" }, 503);
 			return listProjectPipelines(request, env.DB, decodeURIComponent(pipelinesMatch[1]), guestSessionId);
+		}
+
+		// A finished run can be handed to a visitor as a sample. The frozen
+		// snapshot is copied into a project of the visitor's own, so the whole
+		// reading path (project, analysis, report) works without any
+		// credential and without waiting for a new run.
+		const sampleMatch = url.pathname.match(/^\/api\/demo\/sample$/);
+		if (sampleMatch && request.method === "POST") {
+			const sourceId = env.DEMO_SAMPLE_PIPELINE_ID;
+			if (!sourceId) return json({ error: "sample_not_configured" }, 503);
+			const source = await env.DB.prepare(
+				`SELECT id, project_id, run_id, decision_version, report_id, report_status
+				 FROM project_pipelines WHERE id = ?1`,
+			).bind(sourceId).first<Record<string, unknown>>();
+			if (!source) return json({ error: "sample_not_found" }, 404);
+			const saved = await env.DB.prepare(
+				"SELECT payload_json, sha256 FROM pipeline_snapshots WHERE pipeline_id = ?1 AND snapshot_type = 'FINAL_CONTEXT'",
+			).bind(sourceId).first<{ payload_json: string; sha256: string }>();
+			if (!saved) return json({ error: "sample_not_found" }, 404);
+			const projectId = crypto.randomUUID();
+			const pipelineId = crypto.randomUUID();
+			const runId = crypto.randomUUID();
+			const now = new Date().toISOString();
+			const final = JSON.parse(saved.payload_json) as Record<string, unknown>;
+			final.project_id = projectId;
+			final.pipeline_id = pipelineId;
+			final.run_id = runId;
+			final.project_title = "示例：一次已经完成的寻源与核验";
+			const payload = JSON.stringify(final);
+			const version = await sha256Hex(new TextEncoder().encode(payload));
+			await batchD1(env, [
+				env.DB.prepare(
+					`INSERT INTO projects (id, title, created_at, analysis_version, demand_revision, history_availability, session_id)
+					 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+				).bind(projectId, "示例：一次已经完成的寻源与核验", now, 1, 1, "NOT_PROVIDED", guestSessionId),
+				env.DB.prepare(
+					`INSERT INTO project_pipelines (id, workspace_id, project_id, session_id, run_id, demand_revision,
+					 status, stage, stages_json, decision_version, created_at, updated_at, report_status)
+					 VALUES (?1, 'default', ?2, ?3, ?4, ?5, 'COMPLETED', 'COMPLETED', '{}', ?6, ?7, ?7, 'NOT_STARTED')`,
+				).bind(pipelineId, projectId, guestSessionId, runId, 1, version, now),
+				env.DB.prepare(
+					`INSERT INTO pipeline_snapshots (pipeline_id, snapshot_type, payload_json, sha256, created_at)
+					 VALUES (?1, 'FINAL_CONTEXT', ?2, ?3, ?4)`,
+				).bind(pipelineId, payload, version, now),
+			]);
+			// The report comes with the sample, so the visitor can download the
+			// very document the judges will see.
+			const sourceReport = source.report_id
+				? await env.DB.prepare(
+					"SELECT r2_key, sha256, byte_size FROM project_reports WHERE id = ?1 AND status = 'COMPLETED'",
+				).bind(String(source.report_id)).first<{ r2_key: string | null; sha256: string | null; byte_size: number | null }>()
+				: null;
+			let reportId: string | null = null;
+			if (sourceReport?.r2_key) {
+				const object = await env.BUCKET.get(sourceReport.r2_key);
+				if (object) {
+					reportId = `pr_${pipelineId}`;
+					const key = `workspaces/default/projects/${projectId}/reports/${pipelineId}/sample.docx`;
+					await env.BUCKET.put(key, object.body, { httpMetadata: { contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" } });
+					await env.DB.prepare(
+						`INSERT INTO project_reports (id, workspace_id, project_id, run_id, decision_version, status,
+						 r2_key, sha256, byte_size, created_at, updated_at, pipeline_id, workflow_id, attempt)
+						 VALUES (?1, 'default', ?2, ?3, ?4, 'COMPLETED', ?5, ?6, ?7, ?8, ?8, ?9, ?10, 1)`,
+					).bind(reportId, projectId, runId, version, key, sourceReport.sha256, sourceReport.byte_size, now, pipelineId, `sample_${pipelineId}`);
+					await env.DB.prepare(
+						"UPDATE project_pipelines SET report_id = ?2, report_status = 'COMPLETED' WHERE id = ?1",
+					).bind(pipelineId, reportId).run();
+				}
+			}
+			return json({ project_id: projectId, pipeline_id: pipelineId, report_id: reportId }, 201);
 		}
 
 		const analysisMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/analysis$/);
