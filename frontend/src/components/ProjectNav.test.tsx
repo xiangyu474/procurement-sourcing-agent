@@ -37,6 +37,7 @@ describe("ProjectNav", () => {
 		const item = screen.getByRole("button", { name: new RegExp(longName) });
 		expect(item.querySelector(".project-name")?.className).toContain("project-name");
 		expect(screen.getByText("未开始")).toBeTruthy();
+		expect(screen.queryByText("示例")).toBeNull();
 		expect(screen.getByText(formatProjectDate(project.created_at))).toBeTruthy();
 	});
 
@@ -100,5 +101,32 @@ describe("ProjectNav", () => {
 		expect(button.disabled).toBe(true);
 		fireEvent.click(button);
 		expect(onSample).toHaveBeenCalledTimes(1);
+	});
+
+	it("marks a sample project in the rail", () => {
+		render(
+			<ProjectNav
+				projects={[
+					{
+						id: "p-sample",
+						title: "示例：一次已经完成的寻源与核验",
+						is_sample: true,
+						history_availability: "NOT_PROVIDED",
+						demand_revision: 1,
+						analysis_version: 1,
+						created_at: "2026-11-07T00:00:00.000Z",
+						latest_run: null,
+					},
+				]}
+				activeProjectId="p-sample"
+				busy={false}
+				sampleBusy={false}
+				onCreate={async () => true}
+				onOpen={async () => true}
+				onSelect={() => {}}
+				onSample={async () => {}}
+			/>,
+		);
+		expect(document.querySelector(".sample-tag")?.textContent).toBe("示例");
 	});
 });

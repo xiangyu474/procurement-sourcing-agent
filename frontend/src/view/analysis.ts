@@ -193,6 +193,26 @@ export function priceRows(context: AnalysisPriceContext | null): PriceRow[] {
 	return rows;
 }
 
+/**
+ * The company count for this model, only when `summary.models[]` names this
+ * group. `supplier_count` is the backend's entity count. A model shared by
+ * two requirements is left unmatched so the row does not borrow another group's number.
+ */
+function publishedModelCount(models: Analysis["summary"]["models"], model: string, discoveries: number): number | null {
+	const matches = models.filter((item) => item.product_model === model && item.candidate_rows === discoveries);
+	if (matches.length !== 1) return null;
+	const count = matches[0].supplier_count;
+	return typeof count === "number" && count > 0 ? count : null;
+}
+
+/** Discoveries in the group. Companies are added only from the API's per-model count. */
+export function groupDiscoveryLabel(discoveries: number, supplierEntities: number | null): string {
+	if (supplierEntities != null && supplierEntities !== discoveries) {
+		return `${discoveries} 条发现 · ${supplierEntities} 家供应来源`;
+	}
+	return `${discoveries} 条发现`;
+}
+
 function groupKey(requirementId: string | null, model: string | null): string {
 	return `${requirementId ?? ""}\u001f${model ?? ""}`;
 }
@@ -228,6 +248,8 @@ export function buildAnalysisRows(analysis: Analysis): CandidateRowView[] {
 		analysis.price_contexts.filter((item) => Boolean(item.requirement_id)).map((item) => [item.requirement_id as string, item]),
 	);
 
+	// Candidates arrive one row per discovery. Supplier companies are counted in
+	// summary.distinct_suppliers; this table is not regrouped by that identity.
 	const groups = new Map<string, { requirementId: string | null; model: string; candidates: AnalysisCandidate[] }>();
 	for (const candidate of analysis.candidates) {
 		const model = modelOf(candidate);
@@ -298,11 +320,8 @@ export function buildAnalysisRows(analysis: Analysis): CandidateRowView[] {
 		const groupStage = memberStages.size === 1 ? members[0].stage : MIXED_STAGE;
 		const memberCodes = new Set(members.map((member) => member.decision?.code ?? ""));
 		const groupSummary = memberCodes.size === 1 ? members[0].decision : null;
-		// One supplier can offer the same model more than once. The row counts the
-		// suppliers, not the candidate lines.
-		const supplierCount = new Set(
-			bucket.candidates.map((candidate) => candidate.supplier_id ?? candidate.supplier_name ?? candidate.candidate_id),
-		).size;
+		const discoveries = members.length;
+		const published = publishedModelCount(analysis.summary.models, bucket.model, discoveries);
 
 		const groupEvidence = members.flatMap((member) =>
 			(member.evidenceId ? [{ id: member.evidenceId, title: member.sourceTitle || "来源" }] : []).concat(member.otherEvidence),
@@ -311,8 +330,8 @@ export function buildAnalysisRows(analysis: Analysis): CandidateRowView[] {
 
 		rows.push({
 			id: key,
-			supplier: supplierCount === 1 ? members[0].supplier : `${supplierCount} 家供应商`,
-			supplierCount,
+			supplier: discoveries === 1 ? members[0].supplier : groupDiscoveryLabel(discoveries, published),
+			supplierCount: published ?? discoveries,
 			model: bucket.model,
 			stage: groupStage,
 			technical,
@@ -339,12 +358,27 @@ export function buildAnalysisRows(analysis: Analysis): CandidateRowView[] {
 	});
 }
 
+/** The old one-model warning counted supplier pages as different companies. */
+const ONE_MODEL_PAGES = "这次只找到一个型号，候选行来自不同供应商，而不是不同型号。";
+
+/** Show the published warning. The one-model line matches supplier grouping. */
+export function coverageWarningText(warning: string): string {
+	if (warning === ONE_MODEL_PAGES) return "这次只找到一个型号，下表按供应来源列出。";
+	return warning;
+}
+
 /** The counts the backend published for this run. */
 export function analysisSummaryLine(summary: AnalysisSummary): string {
 	const parts: string[] = [];
 	// The backend counts the model names a buyer can see.
 	parts.push(`${summary.distinct_models} 个型号`);
-	parts.push(`${summary.distinct_suppliers} 家供应来源`);
+	const discoveries = summary.supplier_discoveries;
+	const suppliers = summary.distinct_suppliers;
+	if (typeof discoveries === "number" && discoveries !== suppliers) {
+		parts.push(`${discoveries} 条发现，归并为 ${suppliers} 家供应来源`);
+	} else {
+		parts.push(`${suppliers} 家供应来源`);
+	}
 	const verdicts = verdictText(summary.by_verdict);
 	if (verdicts) parts.push(`核验 ${summary.assessments} 条：${verdicts}`);
 	parts.push(`${summary.evidence} 份证据`);

@@ -48,9 +48,9 @@
 | 核验 N 条：满足 N · 不满足 N · 还不能判断 N | `summary.assessments` 与 `summary.by_verdict`，`PASS`/`FAIL`/`UNKNOWN` 依次显示为满足、不满足、还不能判断 |
 | 建议询价 N · 待补证 N · 已排除 N | `summary.by_recommendation`，`SHORTLIST`/`INVESTIGATE`/`EXCLUDE` 依次对应 |
 | N 份证据 | `summary.evidence` |
-| 覆盖提示 | `summary.coverage_warnings[]`，后端给的中文，原样显示 |
-| 型号 | `candidates[].product_model`，按 `requirement_id` 与型号名分组 |
-| N 家供应商 | 该组内 `supplier_id` 去重后的数量。只有一家时显示供应商名 |
+| 覆盖提示 | `summary.coverage_warnings[]`。其中「这次只找到一个型号，候选行来自不同供应商，而不是不同型号。」显示为「这次只找到一个型号，下表按供应来源列出。」其余原样显示 |
+| 型号 | `candidates[].product_model`，按 `requirement_id` 与型号名分组。组默认收起 |
+| N 条发现 | 这一组的候选行数。`summary.models[]` 里同一型号且 `candidate_rows` 等于这组行数时，用该条的 `supplier_count` 再写「· M 家供应来源」。不按供应商名字在前端归并。只有一条时显示供应商名 |
 | 阶段 | `decisions[]` 的建议档位 |
 | 技术 | `assessments[].hard_spec_overall` |
 | 结论摘要 | `decisions[].display.summary_zh` |

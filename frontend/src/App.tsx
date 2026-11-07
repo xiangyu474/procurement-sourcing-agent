@@ -7,7 +7,7 @@ import { ProjectNav } from "./components/ProjectNav";
 import { RunPanel } from "./components/RunPanel";
 import { WorkspaceShell } from "./components/WorkspaceShell";
 import { useWorkspace } from "./workspace/useWorkspace";
-import { reportButtonLabel, reportPhase } from "./view/report";
+import { reportButtonLabel, reportPhase, reportVersionChip } from "./view/report";
 
 export function App() {
 	const workspace = useWorkspace();
@@ -29,6 +29,9 @@ export function App() {
 	const analysisActive = analysisInProgress(workspace.pipelineStatus, run?.status ?? null);
 	const collapsed = Boolean(run && isTerminalRun(run.status));
 	const startLabel = workspace.startOffer === "retry" && !analysisActive ? "重试" : analysisActive ? "分析进行中" : run ? "再次分析" : "开始分析";
+	const isSample = project?.is_sample === true || workspace.candidates.isSample;
+	const showStart = !(isSample && startLabel === "再次分析");
+	const versionChip = reportVersionChip(workspace.candidates.decisionVersion);
 	const downloadPhase = reportPhase({
 		// A task that failed has no report. The button is not shown at all.
 		runStatus: workspace.pipelineStatus === "FAILED" ? "FAILED" : run?.status ?? null,
@@ -93,6 +96,11 @@ export function App() {
 								{downloadPhase === "blocked" ? (
 									<span className="quiet">{workspace.candidates.reportBlockReason ?? "报告还没有生成"}</span>
 								) : null}
+								{versionChip ? (
+									<span className="version-chip" data-testid="report-version">
+										{versionChip}
+									</span>
+								) : null}
 								{workspace.report.note && downloadPhase !== "blocked" ? <span className="quiet">{workspace.report.note}</span> : null}
 							</div>
 						) : null}
@@ -109,6 +117,7 @@ export function App() {
 						synthetic={workspace.historyNote?.synthetic ?? null}
 						startLabel={startLabel}
 						quietStart={startLabel === "再次分析"}
+						showStart={showStart}
 						onText={workspace.onText}
 						onUpload={workspace.onUpload}
 						onImport={workspace.onImportHistory}
@@ -140,7 +149,7 @@ export function App() {
 							workspace.report.report?.status === "COMPLETED"
 								? {
 										at: workspace.report.report.updated_at ?? workspace.report.report.created_at,
-										decisionVersion: workspace.report.report.decision_version,
+										decisionVersion: null,
 									}
 								: null
 						}

@@ -72,7 +72,10 @@ export function ProjectNav(props: {
 							onClick={() => props.onSelect(project.id)}
 						>
 							<span className="project-main">
-								<span className="project-name">{project.title}</span>
+								<span className="project-name">
+									{project.title}
+									{project.is_sample ? <span className="sample-tag">示例</span> : null}
+								</span>
 								{created ? <span className="project-created">{created}</span> : null}
 							</span>
 							<span className={tone ? `project-status ${tone}` : "project-status"}>{label}</span>

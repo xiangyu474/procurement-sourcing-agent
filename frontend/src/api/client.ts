@@ -146,6 +146,7 @@ function asProjectSummary(value: unknown): ProjectSummary {
 	return {
 		id: asString(row, "id"),
 		title: asString(row, "title"),
+		is_sample: row.is_sample === true,
 		history_availability: asString(row, "history_availability"),
 		demand_revision: asNumber(row, "demand_revision"),
 		analysis_version: asNumber(row, "analysis_version"),
@@ -188,6 +189,7 @@ function asProject(value: unknown): Project {
 	return {
 		id: asString(row, "id"),
 		title: asString(row, "title"),
+		is_sample: row.is_sample === true,
 		analysis_version: asNumber(row, "analysis_version"),
 		demand_revision: asNumber(row, "demand_revision"),
 		history_availability: asString(row, "history_availability"),
@@ -1068,6 +1070,7 @@ function asAnalysisSummary(value: unknown): AnalysisSummary {
 		candidate_rows: asOptionalNumber(row.candidate_rows) ?? 0,
 		distinct_models: asOptionalNumber(row.distinct_models) ?? 0,
 		distinct_suppliers: asOptionalNumber(row.distinct_suppliers) ?? 0,
+		supplier_discoveries: asOptionalNumber(row.supplier_discoveries),
 		models: Array.isArray(row.models) ? row.models.map(asSummaryModel) : [],
 		assessments: asOptionalNumber(row.assessments) ?? 0,
 		by_verdict: asCountMap(row.by_verdict),
@@ -1098,6 +1101,7 @@ function asAnalysis(value: unknown): Analysis {
 		run_id: asOptionalString(row.run_id) ?? "",
 		demand_revision: asOptionalNumber(row.demand_revision) ?? 0,
 		research_status: asOptionalString(row.research_status) ?? "",
+		is_sample: row.is_sample === true,
 		decision_version: asOptionalString(row.decision_version),
 		requirements: Array.isArray(row.requirements) ? row.requirements.map(asAnalysisRequirement) : [],
 		candidates: Array.isArray(row.candidates) ? row.candidates.map(asAnalysisCandidate) : [],

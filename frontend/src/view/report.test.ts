@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AnalysisReport, Report } from "../api/types";
-import { decisionCoversRun, reportFailure, reportFileName, reportFromAnalysis, reportPhase, selectReport } from "./report";
+import { decisionCoversRun, reportFailure, reportFileName, reportFromAnalysis, reportPhase, reportVersionChip, selectReport } from "./report";
 
 function report(patch: Partial<Report>): Report {
 	return {
@@ -79,5 +79,12 @@ describe("report download", () => {
 		});
 		expect(decisionCoversRun({ runUpdatedAt: "2026-11-01T11:00:00.000Z", projectDemandRevision: 2, job: { ...job, updated_at: null } }).ready).toBe(false);
 		expect(decisionCoversRun({ runUpdatedAt: "2026-11-01T11:00:00.000Z", projectDemandRevision: 2, job: { ...job, status: "IDLE" } }).reason).toBe("报告还没有生成");
+	});
+
+	it("shows eight characters of the frozen analysis hash and nothing when it is missing", () => {
+		expect(reportVersionChip("6f4a20a4c0ffee")).toBe("这一版：6f4a20a4");
+		expect(reportVersionChip("6f4a20a4c0ffee")).not.toContain("c0ffee");
+		expect(reportVersionChip(null)).toBeNull();
+		expect(reportVersionChip("")).toBeNull();
 	});
 });

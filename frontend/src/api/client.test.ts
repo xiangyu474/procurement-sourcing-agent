@@ -268,7 +268,8 @@ describe("ApiClient", () => {
 				run_id: "run-1",
 				demand_revision: 1,
 				research_status: "COMPLETED",
-				decision_version: "abc123",
+				is_sample: true,
+				decision_version: "6f4a20a4c0ffee",
 				requirements: [{ requirement_id: "r1", product_name: "摄像机", constraints: [] }],
 				candidates: [{ candidate_id: "c1", requirement_id: "r1", supplier_name: "海康威视", product_model: "DS-1", stage: "DISCOVERED_LONG_LIST", evidence_ids: ["ev_1"] }],
 				assessments: [{ assessment_id: "a1", requirement_id: "r1", product_candidate_id: "c1", product_model_ref: "DS-1", hard_spec_overall: "PASS", checks: [] }],
@@ -290,7 +291,8 @@ describe("ApiClient", () => {
 					requirements: 1,
 					candidate_rows: 1,
 					distinct_models: 1,
-					distinct_suppliers: 1,
+					distinct_suppliers: 3,
+					supplier_discoveries: 23,
 					models: [{ product_model: "DS-1", product_id: "p1", candidate_rows: 1, supplier_count: 1 }],
 					assessments: 1,
 					by_verdict: { PASS: 1 },
@@ -305,6 +307,10 @@ describe("ApiClient", () => {
 		const analysis = await client(fetchImpl).getAnalysis("p1", { runId: "run-1" });
 		const [analysisUrl] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
 		expect(analysisUrl).toBe("http://gateway.test/api/projects/p1/analysis?run_id=run-1");
+		expect(analysis.is_sample).toBe(true);
+		expect(analysis.decision_version).toBe("6f4a20a4c0ffee");
+		expect(analysis.summary.distinct_suppliers).toBe(3);
+		expect(analysis.summary.supplier_discoveries).toBe(23);
 		expect(analysis.summary.distinct_models).toBe(1);
 		expect(analysis.summary.by_verdict.PASS).toBe(1);
 		expect(analysis.decisions[0].display?.summary_zh).toBe("核验通过。");
