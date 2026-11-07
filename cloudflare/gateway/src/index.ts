@@ -2704,7 +2704,11 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 					// research ran out of budget says so, instead of claiming to
 					// have finished.
 					String(source.status ?? "COMPLETED"), String(source.stage ?? "COMPLETED"),
-					version, now, now, candidates.length, models.size, evidenceCount),
+					version,
+					// The sample carries the time of the run it was taken from, so
+					// the page does not claim that it just ran.
+					String(source.created_at ?? now), String(source.updated_at ?? now),
+					candidates.length, models.size, evidenceCount),
 				env.DB.prepare(
 					`INSERT INTO pipeline_snapshots (pipeline_id, snapshot_type, payload_json, sha256, created_at)
 					 VALUES (?1, 'FINAL_CONTEXT', ?2, ?3, ?4)`,

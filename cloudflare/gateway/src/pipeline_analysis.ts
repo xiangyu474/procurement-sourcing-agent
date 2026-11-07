@@ -60,6 +60,9 @@ export function shapePipelineAnalysis(final: Row, report: Row): Row {
 		typeof row.quote === "string" && row.quote.trim().length > 0 && evidenceDisplayExcerpt(row.quote).status !== "ORIGINAL");
 	const reportView = { ...report, warning_codes: legacyBoilerplate ? ["LEGACY_PLACEHOLDER_EXCERPT"] : [] };
 	return { ...pick(final, ["project_id", "pipeline_id", "run_id", "demand_revision", "research_status"]),
+		// A finished run handed over for reading: the page does not offer to
+		// start another research from it.
+		is_sample: str(final.project_title).startsWith("示例："),
 		requirements, candidates, assessments, decisions, price_contexts: priceContexts, evidence,
 		summary: sourcingSummary(final), report: reportView };
 }

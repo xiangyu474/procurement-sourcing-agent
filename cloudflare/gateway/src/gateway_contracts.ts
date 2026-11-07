@@ -153,6 +153,10 @@ export function shapeProject(row: Record<string, unknown>): Record<string, unkno
 	return {
 		id: row.id,
 		title: row.title,
+		// A sample is a finished run handed over for reading. Starting another
+		// research from it would cost model calls and may not answer the same
+		// question, so the page does not offer it.
+		is_sample: typeof row.title === "string" && row.title.startsWith("示例："),
 		history_availability: row.history_availability,
 		demand_revision: row.demand_revision,
 		analysis_version: row.analysis_version,
