@@ -1,0 +1,276 @@
+{
+  "version": 4,
+  "output_dir": ".",
+  "srt": "demo.srt",
+  "clips": [
+    {
+      "source": "segJ-full-raw.mkv",
+      "start": 28,
+      "end": 40,
+      "duration": 12,
+      "speed": 1.0,
+      "note": "开场：示例结果，正式域名",
+      "crop": [
+        260,
+        95,
+        1400,
+        875
+      ],
+      "zoom_hold": 3,
+      "zoom_transition": 1.5,
+      "timeline_start": 0,
+      "timeline_end": 12
+    },
+    {
+      "source": "segJ-full-raw.mkv",
+      "start": 194,
+      "end": 200,
+      "duration": 18,
+      "speed": 0.3333333333333333,
+      "note": "14条采购项、24条未整理、52条待确认；慢放以便阅读",
+      "crop": [
+        260,
+        90,
+        800,
+        500
+      ],
+      "zoom_hold": 2,
+      "zoom_transition": 1.5,
+      "timeline_start": 12,
+      "timeline_end": 30
+    },
+    {
+      "source": "segJ-full-raw.mkv",
+      "start": 38,
+      "end": 53,
+      "duration": 15,
+      "speed": 1.0,
+      "note": "示例结果：22满足、29证据；不是宣称全部完成",
+      "crop": [
+        260,
+        260,
+        1100,
+        687.5
+      ],
+      "zoom_hold": 2,
+      "zoom_transition": 1.5,
+      "timeline_start": 30,
+      "timeline_end": 45
+    },
+    {
+      "source": "segJ-full-raw.mkv",
+      "start": 55,
+      "end": 70,
+      "duration": 15,
+      "speed": 1.0,
+      "note": "Bosch未注型号：还不能判断",
+      "crop": [
+        700,
+        460,
+        960,
+        600
+      ],
+      "zoom_hold": 1,
+      "zoom_transition": 1.5,
+      "timeline_start": 45,
+      "timeline_end": 60
+    },
+    {
+      "source": "segJ-full-raw.mkv",
+      "start": 134,
+      "end": 142,
+      "duration": 15,
+      "speed": 0.5333333333333333,
+      "note": "真实来源展开：best-vsec URL、摘录、快照哈希36c35939c1b45862",
+      "crop": [
+        1280,
+        450,
+        640,
+        400
+      ],
+      "zoom_hold": 2,
+      "zoom_transition": 1.5,
+      "timeline_start": 60,
+      "timeline_end": 75
+    },
+    {
+      "source": "segN-report-raw.mkv",
+      "start": 64,
+      "end": 71,
+      "duration": 7,
+      "speed": 1.0,
+      "timeline_start": 75,
+      "timeline_end": 82,
+      "note": "正式域名与页面37c0c77b；平滑放大",
+      "freeze_seconds": 0
+    },
+    {
+      "source": "segN-report-raw.mkv",
+      "start": 82,
+      "end": 90,
+      "duration": 8,
+      "speed": 1.0,
+      "timeline_start": 82,
+      "timeline_end": 90,
+      "note": "真实下载点击与下载气泡；无加速",
+      "freeze_seconds": 0
+    },
+    {
+      "source": "segN-report-raw.mkv",
+      "start": 171,
+      "end": 177,
+      "duration": 15,
+      "speed": 1.0,
+      "timeline_start": 90,
+      "timeline_end": 105,
+      "note": "DOCX报告标识；页面版本实录裁切对照；前6秒原速，后9秒标注定格",
+      "freeze_seconds": 9
+    },
+    {
+      "source": "segH-A6-raw.mkv",
+      "start": 245,
+      "end": 250,
+      "duration": 5,
+      "speed": 1.0,
+      "note": "正确项目上传控件；不展示错字创建过程",
+      "crop": null,
+      "zoom_hold": 1,
+      "zoom_transition": 1.5,
+      "timeline_start": 105,
+      "timeline_end": 110
+    },
+    {
+      "source": "segH-A6-raw.mkv",
+      "start": 335,
+      "end": 1130,
+      "duration": 15,
+      "speed": 53.0,
+      "note": "实际等待795秒，53倍快进；不重复H范围",
+      "crop": [
+        390,
+        705,
+        720,
+        450
+      ],
+      "zoom_hold": 0,
+      "zoom_transition": 0,
+      "timeline_start": 110,
+      "timeline_end": 125
+    },
+    {
+      "source": "segJ-full-raw.mkv",
+      "start": 185,
+      "end": 189,
+      "duration": 4,
+      "speed": 1.0,
+      "note": "A部分完成，版本f072b4f5",
+      "crop": [
+        1200,
+        0,
+        720,
+        450
+      ],
+      "zoom_hold": 0.7,
+      "zoom_transition": 1,
+      "timeline_start": 125,
+      "timeline_end": 129
+    },
+    {
+      "source": "segJ-full-raw.mkv",
+      "start": 189,
+      "end": 194,
+      "duration": 5,
+      "speed": 1.0,
+      "note": "A结果：2型号、2来源、2条还不能判断、2证据",
+      "crop": [
+        260,
+        140,
+        1100,
+        687.5
+      ],
+      "zoom_hold": 0,
+      "zoom_transition": 0,
+      "timeline_start": 129,
+      "timeline_end": 134
+    },
+    {
+      "source": "segJ-full-raw.mkv",
+      "start": 194,
+      "end": 198,
+      "duration": 8,
+      "speed": 0.5,
+      "note": "A需求数量及研究预算用尽的真实说明",
+      "crop": [
+        260,
+        95,
+        1100,
+        687.5
+      ],
+      "zoom_hold": 0,
+      "zoom_transition": 0,
+      "timeline_start": 134,
+      "timeline_end": 142
+    },
+    {
+      "source": "segJ-full-raw.mkv",
+      "start": 235,
+      "end": 238,
+      "duration": 8,
+      "speed": 0.375,
+      "note": "海康来源：历史产品、停产、哈希8ddf71c40ab0ff40",
+      "crop": [
+        1200,
+        330,
+        720,
+        450
+      ],
+      "zoom_hold": 0.5,
+      "zoom_transition": 1.5,
+      "timeline_start": 142,
+      "timeline_end": 150
+    },
+    {
+      "source": "segJ-full-raw.mkv",
+      "start": 134,
+      "end": 142,
+      "duration": 20,
+      "speed": 0.4,
+      "note": "真实示例价格：100 CNY/套，暂无其他价格；慢放",
+      "crop": [
+        1280,
+        800,
+        640,
+        400
+      ],
+      "zoom_hold": 2,
+      "zoom_transition": 1.5,
+      "timeline_start": 150,
+      "timeline_end": 170
+    },
+    {
+      "source": "segJ-full-raw.mkv",
+      "start": 264,
+      "end": 274,
+      "duration": 10,
+      "speed": 1.0,
+      "note": "示例总览收尾",
+      "crop": [
+        260,
+        95,
+        1400,
+        875
+      ],
+      "zoom_hold": 3,
+      "zoom_transition": 1.5,
+      "timeline_start": 170,
+      "timeline_end": 180
+    }
+  ],
+  "report_check": {
+    "visible_page_version": "37c0c77b",
+    "visible_docx_version_prefix": "37c0c77b",
+    "matches_visible_prefix": true,
+    "verification": "Recorded DOCX table; full hash not claimed",
+    "layout": "Translucent fills; separate bottom subtitle band; matching cue90–105s"
+  }
+}
