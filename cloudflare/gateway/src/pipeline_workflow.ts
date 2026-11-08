@@ -45,7 +45,7 @@ async function callContainer(env: Env, path: string, payload: Record<string, unk
 		console.error("container stage failed", path, response.status, code, body.slice(0, 500));
 		throw new Error(`${code}:HTTP_${response.status}`);
 	}
-	return await response.json() as { status?: string; assessments?: number; decisions?: number };
+	return await response.json() as { status?: string; assessments?: number; decisions?: number; price_contexts?: unknown[] };
 }
 function runtime(env: Env) {
 	return {
@@ -216,7 +216,13 @@ export class ProcurementPipelineWorkflow extends WorkflowEntrypoint<Env, Pipelin
 				const assessed = await snapshot(this.env.DB, pipelineId, "SPEC_RESULTS") as { assessments?: unknown[] };
 				const assessmentCount = Array.isArray(assessed.assessments) ? assessed.assessments.length : 0;
 				if (assessmentCount === 0) {
-					await save(this.env.DB, pipelineId, "PRICE_CONTEXT", { price_contexts: [] });
+					// The prices do not depend on a decision. They are still read and
+					// frozen, so the page can show the budget and the history scope.
+					const prices = await callContainer(this.env, "/internal/projects/price-context", {
+						project_id: projectId, gateway_url: this.env.CONTAINER_GATEWAY_URL,
+						token: this.env.INTERNAL_GATEWAY_TOKEN, runtime_config: runtime(this.env),
+					}, pipelineId);
+					await save(this.env.DB, pipelineId, "PRICE_CONTEXT", { price_contexts: prices.price_contexts ?? [] });
 					await save(this.env.DB, pipelineId, "DECISION_RESULTS", { decisions: [] });
 					return;
 				}

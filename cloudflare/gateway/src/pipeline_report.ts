@@ -17,8 +17,15 @@ export async function startPipelineReport(env: Env, projectId: string, pipelineI
 	const snapshot = await env.DB.prepare("SELECT payload_json, sha256 FROM pipeline_snapshots WHERE pipeline_id = ?1 AND snapshot_type = 'FINAL_CONTEXT'")
 		.bind(pipelineId).first<{ payload_json: string; sha256: string }>();
 	if (!snapshot || snapshot.sha256 !== version || await sha256(snapshot.payload_json) !== version) return { kind: "DECISION_UNAVAILABLE" };
-	const final = JSON.parse(snapshot.payload_json) as { project_id?: string; pipeline_id?: string; run_id?: string; decisions?: { accepted?: boolean }[] };
-	if (final.project_id !== projectId || final.pipeline_id !== pipelineId || final.run_id !== pipeline.run_id || !final.decisions?.some(d => d.accepted === true)) {
+	const final = JSON.parse(snapshot.payload_json) as {
+		project_id?: string; pipeline_id?: string; run_id?: string;
+		decisions?: { accepted?: boolean }[]; candidates?: unknown[]; price_contexts?: unknown[];
+	};
+	// A report is written whenever the run produced an answer. A run that found
+	// no passing candidate still has something to report: what was searched,
+	// what the sources said, and what is still missing.
+	const answered = Boolean(final.decisions?.length || final.candidates?.length || final.price_contexts?.length);
+	if (final.project_id !== projectId || final.pipeline_id !== pipelineId || final.run_id !== pipeline.run_id || !answered) {
 		return { kind: "DECISION_UNAVAILABLE" };
 	}
 	const now = new Date().toISOString();
