@@ -45,3 +45,20 @@ def test_rows_of_one_company_are_grouped() -> None:
 def test_an_empty_name_stands_alone() -> None:
     assert not same_supplier("", "Bosch")
     assert supplier_key("") == ""
+
+
+def test_the_output_resolution_is_written_in_one_spelling() -> None:
+    """The models write the same measurement in a sentence."""
+    from procurement_agent.domain.attributes import canonical_attribute_key
+
+    for name in [
+        "output_resolution",
+        "video_output_resolution",
+        "Video output resolution (max)",
+        "Max. video resolution",
+        "resolution",
+    ]:
+        assert canonical_attribute_key(name) == "output_resolution", name
+    # An effective or sensor pixel count is another measurement.
+    for name in ["Effective Camera Resolution", "sensor_resolution", "total_sensor_pixels"]:
+        assert canonical_attribute_key(name) != "output_resolution", name

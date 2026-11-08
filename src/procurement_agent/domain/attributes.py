@@ -129,6 +129,24 @@ def canonical_attribute_key(attribute_key: str) -> str:
     model typed as "video_output_resolution" and a requirement that says
     "output_resolution" are the same quantity and must meet each other. A key
     that is not in a reviewed group is left exactly as it is.
+
+    The models also write the measurement in a sentence, for example
+    "Video output resolution (max)". A key that names the output resolution is
+    that measurement whatever else it carries, so it is written in the
+    canonical spelling too. An "effective" or sensor pixel count is a
+    different measurement and is left alone.
     """
     key = "_".join(part for part in "".join(ch if ch.isalnum() else " " for ch in attribute_key.casefold()).split())
-    return _ALIAS_CANONICAL.get(key, key[:120] or "attribute")
+    canonical = _ALIAS_CANONICAL.get(key)
+    if canonical:
+        return canonical
+    compact = key.replace("_", "")
+    if "outputresolution" in compact:
+        return "output_resolution"
+    # "Max. video resolution" is the output resolution too. A sensor or an
+    # effective pixel count is a different measurement and stays apart.
+    if "videoresolution" in compact and not any(
+        word in compact for word in ("effective", "sensor", "capture")
+    ):
+        return "output_resolution"
+    return key[:120] or "attribute"

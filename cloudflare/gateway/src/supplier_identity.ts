@@ -14,6 +14,20 @@ const LEGAL_INITIALS = new Set(["b", "v", "g", "m", "k", "s", "a", "ag", "as"]);
 const GENERIC_WORDS = new Set(["security", "systems", "solutions", "electronics", "group", "holding"]);
 const DOMAIN = /^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/;
 
+/** The reviewed groups of attribute keys that name the same measurement. */
+const ATTRIBUTE_ALIASES = new Map<string, string>();
+for (const [canonical, members] of [
+	["output_resolution", ["output_resolution", "image_output_resolution", "video_output_resolution", "resolution", "image_resolution"]],
+	["rated_output_power", ["rated_output_power", "output_power"]],
+	["operating_temperature", ["operating_temperature", "working_temperature", "operating_temperature_range"]],
+	["ingress_rating", ["ingress_rating", "protection_rating", "ip_rating"]],
+	["supported_protocols", ["supported_protocols", "protocol_support", "protocols"]],
+	["lens_focal_length", ["lens_focal_length", "focal_length"]],
+	["max_input_power", ["max_input_power", "input_power"]],
+] as Array<[string, string[]]>) {
+	for (const member of members) ATTRIBUTE_ALIASES.set(member, canonical);
+}
+
 function tokens(name: string): string[] {
 	const folded = name.toLowerCase().replace(/\([^)]*\)/g, " ").replace(/\bwww\b/g, " ");
 	return folded.replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).filter(Boolean);
@@ -45,6 +59,34 @@ export function supplierCore(name: string): string {
 /** A key that is equal for two names of the same company. */
 export function supplierKey(name: string): string {
 	return supplierCore(name).replace(/ /g, "");
+}
+
+/**
+ * The canonical spelling of an attribute key.
+ *
+ * The models write the same measurement under different keys, so the reviewed
+ * groups decide which spelling is used. A key that names the output
+ * resolution is that measurement whatever else it carries; an "effective" or
+ * sensor pixel count is a different measurement and is left alone.
+ */
+export function canonicalAttributeKey(attributeKey: string): string {
+	const key = attributeKey
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, " ")
+		.trim()
+		.split(/\s+/)
+		.filter(Boolean)
+		.join("");
+	const canonical = ATTRIBUTE_ALIASES.get(key);
+	if (canonical) return canonical;
+	const compact = key.replace(/_/g, "");
+	if (compact.includes("outputresolution")) return "output_resolution";
+	// "Max. video resolution" is the output resolution too. A sensor or an
+	// effective pixel count is a different measurement and stays apart.
+	if (compact.includes("videoresolution") && !["effective", "sensor", "capture"].some((word) => compact.includes(word))) {
+		return "output_resolution";
+	}
+	return key.slice(0, 120) || "attribute";
 }
 
 function isDomain(name: string): boolean {
