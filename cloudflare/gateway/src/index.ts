@@ -2706,12 +2706,29 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 			if (!sourceId) return json({ error: "sample_not_configured" }, 503);
 			// One sample per visitor: a second click opens the same one.
 			const existing = guestSessionId ? await env.DB.prepare(
-				`SELECT p.id AS project_id, pp.id AS pipeline_id, pp.report_id
+				`SELECT p.id AS project_id, pp.id AS pipeline_id, pp.report_id, pp.decision_version AS report_version
 				 FROM projects p JOIN project_pipelines pp ON pp.project_id = p.id
 				 WHERE p.session_id = ?1 AND p.title = '示例：一次已经完成的寻源与核验'
 				 ORDER BY p.created_at DESC LIMIT 1`,
-			).bind(guestSessionId).first<{ project_id: string; pipeline_id: string; report_id: string | null }>() : null;
+			).bind(guestSessionId).first<{ project_id: string; pipeline_id: string; report_id: string | null; report_version: string | null }>() : null;
 			if (existing) {
+				// A report that belongs to another version is not this sample's
+				// report. It is replaced before the sample is handed over.
+				const stale = await env.DB.prepare(
+					"SELECT decision_version FROM project_reports WHERE id = ?1 AND pipeline_id = ?2",
+				).bind(`pr_${existing.pipeline_id}`, existing.pipeline_id).first<{ decision_version: string | null }>();
+				if (!stale || stale.decision_version !== existing.report_version) {
+					await env.DB.prepare(
+						"DELETE FROM project_reports WHERE id = ?1 AND pipeline_id = ?2",
+					).bind(`pr_${existing.pipeline_id}`, existing.pipeline_id).run();
+					await env.DB.prepare(
+						"UPDATE project_pipelines SET report_id = NULL, report_status = 'NOT_STARTED', report_error_code = NULL WHERE id = ?1",
+					).bind(existing.pipeline_id).run();
+					await startPipelineReport(env, existing.project_id, existing.pipeline_id).catch((error) => {
+						console.error("sample report could not start", error);
+					});
+					return json({ project_id: existing.project_id, pipeline_id: existing.pipeline_id, report_id: null, reused: true, report: "GENERATING" });
+				}
 				return json({ project_id: existing.project_id, pipeline_id: existing.pipeline_id, report_id: existing.report_id, reused: true });
 			}
 			const source = await env.DB.prepare(
@@ -2821,35 +2838,16 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 					 VALUES (?1, ?2, ?3, ?4, ?5, NULL)`,
 				).bind(pipelineId, stage.stage, stage.status, stage.started_at, stage.finished_at).run();
 			}
-			// The report comes with the sample, so the visitor can download the
-			// very document the judges will see.
-			const sourceReport = source.report_id
-				? await env.DB.prepare(
-					"SELECT r2_key, sha256, byte_size FROM project_reports WHERE id = ?1 AND status = 'COMPLETED'",
-				).bind(String(source.report_id)).first<{ r2_key: string | null; sha256: string | null; byte_size: number | null }>()
-				: null;
-			let reportId: string | null = null;
-			if (sourceReport?.r2_key) {
-				const object = await env.BUCKET.get(sourceReport.r2_key);
-				if (object) {
-					reportId = `pr_${pipelineId}`;
-					const key = `workspaces/default/projects/${projectId}/reports/${pipelineId}/sample.docx`;
-					await env.BUCKET.put(key, object.body, {
-						httpMetadata: { contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
-						// The download route checks the object against the report
-						// row, so the copy carries the same proof as the original.
-						customMetadata: { sha256: sourceReport.sha256 ?? "", decision_version: version },
-					});
-					await env.DB.prepare(
-						`INSERT INTO project_reports (id, workspace_id, project_id, run_id, decision_version, status,
-						 r2_key, sha256, byte_size, created_at, updated_at, pipeline_id, workflow_id, attempt)
-						 VALUES (?1, 'default', ?2, ?3, ?4, 'COMPLETED', ?5, ?6, ?7, ?8, ?8, ?9, ?10, 1)`,
-					).bind(reportId, projectId, runId, version, key, sourceReport.sha256, sourceReport.byte_size, now, pipelineId, `sample_${pipelineId}`).run();
-					await env.DB.prepare(
-						"UPDATE project_pipelines SET report_id = ?2, report_status = 'COMPLETED' WHERE id = ?1",
-					).bind(pipelineId, reportId).run();
-				}
-			}
+			// The report of the sample is written for the sample, so it carries
+			// the version the page shows. A report left over from the run it was
+			// copied from is removed first.
+			const reportId = `pr_${pipelineId}`;
+			await env.DB.prepare(
+				"DELETE FROM project_reports WHERE id = ?1 AND pipeline_id = ?2",
+			).bind(reportId, pipelineId).run();
+			await env.DB.prepare(
+				"UPDATE project_pipelines SET report_id = NULL, report_status = 'NOT_STARTED', report_error_code = NULL WHERE id = ?1",
+			).bind(pipelineId).run();
 			// The report must describe this sample, not the run it was copied
 			// from, so it carries the version the page shows.
 			await startPipelineReport(env, projectId, pipelineId).catch((error) => {
