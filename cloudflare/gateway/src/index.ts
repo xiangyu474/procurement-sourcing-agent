@@ -31,6 +31,12 @@ import {
 	shapeRun,
 } from "./gateway_contracts";
 
+/** The reason a visitor may see for a failed compile. */
+function guestCompileReason(error: string): string {
+	const match = /\[([A-Z][A-Z0-9_]{2,60})\]/.exec(error ?? "");
+	return match ? match[1] : "COMPILE_FAILED";
+}
+
 export interface Env {
 	DB: D1Database;
 	BUCKET: R2Bucket;
@@ -751,7 +757,17 @@ export class SourcingCompileWorkflow extends WorkflowEntrypoint<Env, CompileRequ
 					}, () => new Promise(resolve => setTimeout(resolve, 3000)));
 					if (!response.ok) {
 						const body = await response.text().catch(() => "");
-						throw new Error(`compile failed with status ${response.status}: ${body.slice(0, 400)}`);
+						// The container names the reason when it can, so the page
+						// can say what went wrong instead of "the compile failed".
+						let reason = "";
+						try {
+							const parsed = JSON.parse(body) as { detail?: { reason_code?: string } };
+							reason = String(parsed.detail?.reason_code ?? "");
+						} catch { /* the body is not the reason shape */ }
+						throw new Error(
+							`compile failed with status ${response.status}: ${body.slice(0, 400)}`
+							+ (reason ? ` [${reason}]` : ""),
+						);
 					}
 					const compilation = (await response.json()) as {
 						requirements?: unknown[];
@@ -2576,7 +2592,7 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 				status: row.status,
 				analysis_version: detail.analysis_version ?? null,
 				demand_revision: detail.demand_revision ?? null,
-				error: guestSessionId && row.error ? "COMPILE_FAILED" : row.error,
+				error: guestSessionId && row.error ? guestCompileReason(String(row.error ?? "")) : row.error,
 			});
 		}
 

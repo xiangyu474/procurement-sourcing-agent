@@ -25,6 +25,7 @@ from procurement_agent.domain.sourcing import ResearchBudget
 from procurement_agent.infra import load_settings
 from procurement_agent.infra.llm import build_chat_model
 from procurement_agent.infra.search import TavilyContentProvider, TavilySearchProvider
+from procurement_agent.ingestion.compiler import UpstreamModelUnavailable
 from procurement_agent.ingestion.pptx import extract_pptx_fragments
 from procurement_agent.ingestion.text import extract_text_fragments
 from procurement_agent.ingestion.xlsx import HistoryFileRejected, import_historical_xlsx
@@ -259,13 +260,24 @@ async def compile_demand(payload: CompileDemandRequest, x_internal_token: str | 
         raise HTTPException(status_code=422, detail="at least one non-empty text/PPTX demand source is required")
 
     model = build_chat_model(load_settings(), timeout=600)
-    result = await run_in_threadpool(
-        build_demand_intake,
-        project_id=payload.project_id,
-        fragments=fragments,
-        model=model,
-        analysis_version=payload.analysis_version,
-    )
+    try:
+        result = await run_in_threadpool(
+            build_demand_intake,
+            project_id=payload.project_id,
+            fragments=fragments,
+            model=model,
+            analysis_version=payload.analysis_version,
+        )
+    except UpstreamModelUnavailable as exc:
+        # The model gateway failed before it answered. The visitor gets a
+        # reason they can act on instead of a generic failure.
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "reason_code": "COMPILE_UPSTREAM_UNAVAILABLE",
+                "message": "模型服务这次没有完成响应，请稍后重试。",
+            },
+        ) from exc
     return result.model_dump(mode="json")
 
 

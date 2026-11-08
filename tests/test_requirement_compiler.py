@@ -522,3 +522,26 @@ def test_a_line_item_written_under_another_name_is_read():
     assert len(result.requirements) == 1
     assert result.requirements[0].product_name == "5MP 工业网络摄像机"
     assert len(result.requirements[0].constraints) == 1
+
+
+def test_an_upstream_failure_is_retried_instead_of_failing_the_compile(monkeypatch):
+    """A dropped model stream is a transport problem, not a malformed demand."""
+    import procurement_agent.ingestion.compiler as compiler
+
+    calls = {"n": 0}
+
+    def flaky_stream(*_args, **_kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("Upstream response stream stalled")
+        return [{"requirements": []}], ""
+
+    monkeypatch.setattr(compiler, "stream_tool_call", flaky_stream)
+    result = compiler.compile_requirement_fragments(
+        project_id="p1",
+        fragments=[_fragment("user_text:p1:s1", "采购 10 套摄像机，输出分辨率不低于 5MP")],
+        model=object(),
+    )
+    # The stalled stream was tried again, and the compile finished.
+    assert calls["n"] >= 2
+    assert result.compilation.requirements == []

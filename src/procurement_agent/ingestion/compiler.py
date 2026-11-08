@@ -140,16 +140,25 @@ def compile_requirement_fragments(
     merged: dict[str, Any] = {}
     validated: RequirementCompilation | None = None
     prior_attempts: list[RequirementCompilation] = []
+    upstream_failures: list[str] = []
     for attempt in range(MAX_COMPILER_ATTEMPTS):
-        payloads, text = stream_tool_call(
-            model,
-            [
-                SystemMessage(content=SYSTEM_PROMPT),
-                HumanMessage(content=json.dumps(prompt, ensure_ascii=False)),
-            ]
-            + ([_follow_up_message(attempt, payloads)] if attempt else []),
-            RequirementCompilation,
-        )
+        try:
+            payloads, text = stream_tool_call(
+                model,
+                [
+                    SystemMessage(content=SYSTEM_PROMPT),
+                    HumanMessage(content=json.dumps(prompt, ensure_ascii=False)),
+                ]
+                + ([_follow_up_message(attempt, payloads)] if attempt else []),
+                RequirementCompilation,
+            )
+        except Exception as exc:
+            # The model gateway can drop a long stream. That is not a malformed
+            # demand, so the compile is tried again before it is called failed.
+            if not _is_upstream_failure(exc):
+                raise
+            upstream_failures.append(f"{type(exc).__name__}: {str(exc)[:200]}")
+            continue
         if not payloads:
             # The model answered in prose instead of calling the tool. The
             # answer is often still there, as a JSON object in the text.
@@ -177,6 +186,10 @@ def compile_requirement_fragments(
         # line items without a measurable constraint. Retry without inventing
         # fields and retain source-backed gaps below.
         prior_attempts.append(validated)
+    if upstream_failures and not merged:
+        raise UpstreamModelUnavailable(
+            "the model gateway did not finish the demand compile: " + "; ".join(upstream_failures[:3])
+        )
     if not merged:
         return CompilerResult(
             compilation=RequirementCompilation(
@@ -321,6 +334,19 @@ def merge_compilation_payloads(payloads: list[dict[str, Any]]) -> dict[str, Any]
                     seen.append(item)
             merged[key] = seen
     return merged
+
+
+class UpstreamModelUnavailable(RuntimeError):
+    """The model gateway failed before it answered."""
+
+
+def _is_upstream_failure(error: Exception) -> bool:
+    """Whether an error comes from the model gateway rather than from the answer."""
+    name = type(error).__name__.casefold()
+    text = str(error).casefold()
+    if "timeout" in name or "apierror" in name or "connection" in name or "stalled" in text:
+        return True
+    return any(marker in text for marker in ("upstream", "stream", "connection", "timed out", "timeout"))
 
 
 def _has_measurable_constraint(compilation: RequirementCompilation) -> bool:
