@@ -223,6 +223,26 @@ def canonical_alignment(
             reason="The proposal calls the pairing aligned but names no claim.",
         )
     if missing:
+        # The model named claims that do not exist for this candidate. The
+        # reviewed alias table decides which claim of this candidate carries the
+        # measurement, so the pairing is kept with the reviewed method.
+        if constraint is not None:
+            supplied = [
+                claim.claim_id
+                for claim in claims.values()
+                if _approved_pair(constraint.attribute_key, claim.attribute_key)
+            ]
+            if supplied:
+                return _aliased_alignment(
+                    constraint,
+                    claims[supplied[0]],
+                    supplied,
+                    proposal,
+                    note=(
+                        "The model named claims that do not exist for this candidate; the reviewed "
+                        "alias table links the attribute keys, so the pairing is kept."
+                    ),
+                )
         return SemanticAlignment(
             constraint_id=proposal.constraint_id,
             claim_ids=[],

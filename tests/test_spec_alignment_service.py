@@ -224,14 +224,30 @@ def test_a_pairing_that_names_no_claim_is_not_an_alignment():
     assert alignment.status == AlignmentStatus.NOT_ALIGNED
 
 
-def test_a_pairing_that_names_a_missing_claim_is_refused():
+def test_a_claim_that_does_not_exist_is_never_used():
+    """The model may name a claim that is not there. The one that is there is used.
+
+    The reviewed alias table says which claim of the candidate carries the
+    measurement, so the pairing stands on the reviewed method. A claim that
+    does not exist is never used.
+    """
     alignment = canonical_alignment(
         proposal(claim_ids=["clm1", "clm9"]),
         constraint=constraint(),
         claims={"clm1": typed_claim()},
     )
+    assert alignment.status == AlignmentStatus.ALIGNED
+    assert alignment.claim_ids == ["clm1"]
+
+
+def test_a_pairing_without_a_usable_claim_is_refused():
+    """Without a claim of the reviewed attribute, there is nothing to compare."""
+    alignment = canonical_alignment(
+        proposal(claim_ids=["clm9"]),
+        constraint=constraint(),
+        claims={"clm1": typed_claim(attribute_key="sensor_total_pixels")},
+    )
     assert alignment.status == AlignmentStatus.NOT_ALIGNED
-    assert "clm9" in alignment.reason
 
 
 def test_a_reviewed_pairing_needs_a_measurement_object():
