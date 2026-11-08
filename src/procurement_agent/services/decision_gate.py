@@ -95,6 +95,7 @@ def verify_decision(
                 )
             )
 
+    recommendation = proposal.recommendation
     if proposal.recommendation == CandidateRecommendation.SHORTLIST:
         if overall == ConstraintStatus.FAIL.value:
             violations.append(
@@ -107,17 +108,32 @@ def verify_decision(
                     ),
                 )
             )
-        elif overall == ConstraintStatus.UNKNOWN.value and not proposal.gaps:
+        elif overall == ConstraintStatus.UNKNOWN.value:
+            # Only a candidate that passed the hard requirements may be put on
+            # the short list. An unknown one is kept for further evidence and
+            # the reason is written down.
+            recommendation = CandidateRecommendation.INVESTIGATE
             violations.append(
                 GateViolation(
-                    code=GateViolationCode.UNKNOWN_SHORTLISTED_WITHOUT_GAP,
+                    code=GateViolationCode.UNKNOWN_SHORTLISTED,
                     subject=subject,
                     message=(
-                        "The candidate may be shortlisted while the check is unknown, but the decision "
-                        "has to name what is missing."
+                        "The candidate did not pass the hard requirements, so it cannot be on the "
+                        "short list. It stays for further evidence."
                     ),
                 )
             )
+            if not proposal.gaps:
+                violations.append(
+                    GateViolation(
+                        code=GateViolationCode.UNKNOWN_SHORTLISTED_WITHOUT_GAP,
+                        subject=subject,
+                        message=(
+                            "The candidate may be shortlisted while the check is unknown, but the decision "
+                            "has to name what is missing."
+                        ),
+                    )
+                )
 
     for evidence_id in proposal.evidence_ids:
         if evidence_id not in known_evidence:
@@ -180,7 +196,7 @@ def verify_decision(
         requirement_id=proposal.requirement_id,
         product_candidate_id=proposal.product_candidate_id,
         product_model_ref=model_ref,
-        recommendation=proposal.recommendation,
+        recommendation=recommendation,
         technical_verdict=proposal.technical_verdict,
         hard_spec_overall=overall,
         rationale=proposal.rationale,

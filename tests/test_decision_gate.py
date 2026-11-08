@@ -203,7 +203,13 @@ def test_a_passing_candidate_may_be_shortlisted():
     assert decision.violations == []
 
 
-def test_an_unknown_candidate_may_be_shortlisted_when_the_gap_is_named():
+def test_an_unknown_candidate_stays_off_the_short_list_even_with_a_gap():
+    """Only a candidate that passed the hard requirements may be shortlisted.
+
+    The rule is written down in the report's reading notes and on the page:
+    the short list is what passed the hard requirements. A candidate whose
+    check is unknown stays for further evidence, and the reason is kept.
+    """
     decision = verify_decision(
         proposal(
             recommendation=CandidateRecommendation.SHORTLIST,
@@ -215,7 +221,9 @@ def test_an_unknown_candidate_may_be_shortlisted_when_the_gap_is_named():
         known_evidence_ids=["ev1"],
         decided_at=NOW,
     )
-    assert decision.accepted is True
+    assert decision.recommendation == CandidateRecommendation.INVESTIGATE
+    assert decision.accepted is False
+    assert GateViolationCode.UNKNOWN_SHORTLISTED in {v.code for v in decision.violations}
 
 
 def test_an_unknown_candidate_may_not_be_shortlisted_without_a_gap():
