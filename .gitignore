@@ -66,3 +66,4 @@ _read_exp.py
 .pc.json
 .pl[0-9]*
 .operator_token.new
+.build_token_secret
