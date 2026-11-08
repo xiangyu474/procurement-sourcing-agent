@@ -148,6 +148,13 @@ another search task is justified. Inside candidate_claims, use `supplier_evidenc
 schema; each nested ClaimProposal has `attribute`, `value`, `unit`,
 `evidence_id`, and `source_quote`.
 
+The first product claim of a candidate answers the question of this task. When
+the task asks for a measurement, the first claim is that measurement, taken from
+the specification table, with its unit and the exact wording of the row. Other
+claims follow only if they answer the same question. Do not lead with the
+housing, the temperature or the model name when the task asked for a
+measurement: a measurement that is not returned cannot be checked.
+
 One-shot Claim extraction example (fictional; never reuse names/values):
 Source text: `Example Imaging lists Model EX-123. Model EX-123: 5 MP image sensor.`
 Return supplier_name_quote `Example Imaging`, product_name_quote `Model EX-123: 5 MP image sensor.`, model `EX-123`, model_quote `EX-123`, and one resolution Claim with short exact source_quote `5 MP image sensor`. Keep rationale and coverage_notes to one concise sentence. If no code is shown, keep model=null and explain the gap.

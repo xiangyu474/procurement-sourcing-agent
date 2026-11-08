@@ -363,7 +363,9 @@ class CandidateClaim(BaseModel):
     model_quote: str | None = Field(default=None, max_length=300, description="Short verbatim source substring containing the exact model code; required when model is set.")
     product_category: str | None = Field(default=None, max_length=200)
     product_evidence_id: str
-    product_claims: list[ClaimProposal] = Field(default_factory=list, max_length=2)
+    # The measurement the task asks about comes first, and a few other
+    # decision-relevant claims may follow it.
+    product_claims: list[ClaimProposal] = Field(default_factory=list, max_length=3)
     supplier_claims: list[ClaimProposal] = Field(default_factory=list, max_length=1)
     rationale: str = Field(min_length=8, max_length=800, description="Keep concise, ideally under 200 characters; state only what the cited sources establish.")
     unresolved_gaps: list[str] = Field(default_factory=list, max_length=6)

@@ -56,3 +56,6 @@ NUL
 .pdf_ev.json
 .spec_pass.json
 _read_exp.py
+
+# Local provider credentials (never in the repository)
+.provider_backup.json
