@@ -2850,6 +2850,11 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 					).bind(pipelineId, reportId).run();
 				}
 			}
+			// The report must describe this sample, not the run it was copied
+			// from, so it carries the version the page shows.
+			await startPipelineReport(env, projectId, pipelineId).catch((error) => {
+				console.error("sample report could not start", error);
+			});
 			return json({ project_id: projectId, pipeline_id: pipelineId, report_id: reportId }, 201);
 		}
 
