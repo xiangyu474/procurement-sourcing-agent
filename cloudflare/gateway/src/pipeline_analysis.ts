@@ -42,6 +42,9 @@ export function shapePipelineAnalysis(final: Row, report: Row): Row {
 			budget_currency: row.budget_currency, budget_unit: row.budget_unit, budget_tax_basis: row.budget_tax_basis,
 			history_scope: row.history_scope, history_scope_note: history.scope_note, history_available: history.available,
 			history_rows: history.transaction_count, statistics: history.statistics ?? null,
+			// The catalogue-wide rows are shown as an overview, never as the
+			// price of this item.
+			history_overview_rows: overview.transaction_count ?? 0,
 			overview_statistics: overview.statistics ?? null, overview_is_not_a_baseline: row.history_scope === "TABLE_OVERVIEW",
 			findings: rows(row.findings).map(f => pick(f, ["lowest_basis", "lowest_value", "saving", "saving_percent", "comparability", "explanation", "lowest_observation_id"])),
 			notes: row.notes ?? [],
