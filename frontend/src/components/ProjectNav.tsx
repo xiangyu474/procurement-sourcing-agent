@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { formatProjectDate, listStatus } from "../api/adapter";
+import { formatProjectDate, listStatus, openRailStatus } from "../api/adapter";
 import type { ProjectSummary } from "../api/types";
 
 function statusText(label: string): string {
@@ -18,6 +18,11 @@ export function ProjectNav(props: {
 	activeProjectId: string | null;
 	/** Pipeline status of the open project. The rail must not use the research run instead. */
 	pipelineStatus?: string | null;
+	/**
+	 * When the open project's latest known compile job failed, and no newer run
+	 * started after it. ISO time from the session, not a list-API field.
+	 */
+	compileFailedAt?: string | null;
 	busy: boolean;
 	sampleBusy: boolean;
 	onCreate: (title: string) => Promise<boolean>;
@@ -61,10 +66,16 @@ export function ProjectNav(props: {
 			</button>
 			<div className="project-list">
 				{props.projects.map((project) => {
-					const followed = project.id === props.activeProjectId ? props.pipelineStatus : null;
-					const raw = listStatus(followed || project.latest_run?.status || null, null);
-					const label = statusText(raw);
-					const tone = statusTone(raw);
+					const open = project.id === props.activeProjectId;
+					const decision = openRailStatus({
+						pipelineStatus: open ? props.pipelineStatus : null,
+						runStatus: project.latest_run?.status ?? null,
+						runUpdatedAt: project.latest_run?.updated_at ?? null,
+						compileFailedAt: open ? props.compileFailedAt : null,
+					});
+					const raw = listStatus(decision.status, null);
+					const label = decision.compileFailed ? "未完成" : statusText(raw);
+					const tone = statusTone(decision.compileFailed ? "未完成" : raw);
 					const created = formatProjectDate(project.created_at);
 					return (
 						<button

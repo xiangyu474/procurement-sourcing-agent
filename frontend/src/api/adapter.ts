@@ -95,6 +95,44 @@ export function listStatus(runStatus: string | null, activity: "compiling" | nul
 	return "处理中";
 }
 
+/** Same sentences as the gateway guest TEXT map for a failed requirement compile. */
+const COMPILE_ERROR_TEXT: Record<string, string> = {
+	COMPILE_UPSTREAM_UNAVAILABLE: "模型服务这次没有完成响应，请稍后重试。",
+	COMPILE_FAILED: "需求没能整理成可核对的条件，请稍后重试。",
+	REQUIREMENTS_SCHEMA_UNRESOLVED: "需求没能整理成可核对的条件，请稍后重试。",
+	NO_RECOGNIZABLE_DEMAND: "没有读到可整理的采购需求，请检查输入内容。",
+};
+
+export const COMPILE_ERROR_FALLBACK = "需求整理没有完成，请稍后重试。";
+
+/** Chinese for a compile job's `error` code. Unknown codes never pass through. */
+export function compileErrorMessage(error: string | null | undefined): string {
+	const code = error?.trim() ?? "";
+	if (!code) return COMPILE_ERROR_FALLBACK;
+	return COMPILE_ERROR_TEXT[code] ?? COMPILE_ERROR_FALLBACK;
+}
+
+/**
+ * Status the open project's rail should read.
+ * `compileFailedAt` is the time the session observed `CompileJob.status === "FAILED"`.
+ * That failure wins over an older pipeline and an older `latest_run`, until a run
+ * updated after it. Starting a pipeline clears `compileFailedAt`.
+ */
+export function openRailStatus(input: {
+	pipelineStatus: string | null | undefined;
+	runStatus: string | null | undefined;
+	runUpdatedAt: string | null | undefined;
+	compileFailedAt: string | null | undefined;
+}): { status: string | null; compileFailed: boolean } {
+	const failedAt = input.compileFailedAt?.trim() || null;
+	const runAt = input.runUpdatedAt?.trim() || null;
+	const compileFailed = Boolean(failedAt) && !(runAt && failedAt && runAt > failedAt);
+	if (compileFailed) return { status: "FAILED", compileFailed: true };
+	const pipeline = input.pipelineStatus?.trim() || null;
+	if (pipeline) return { status: pipeline, compileFailed: false };
+	return { status: input.runStatus?.trim() || null, compileFailed: false };
+}
+
 export function sanitizePublicText(text: string): string {
 	let value = text.replace(/Bearer\s+\S+/gi, "");
 	value = value.replace(/\b(?:sk|tvly|gens)-[A-Za-z0-9_-]+\b/gi, "");

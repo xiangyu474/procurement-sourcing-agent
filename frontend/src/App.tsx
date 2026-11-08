@@ -56,6 +56,7 @@ export function App() {
 					projects={workspace.projects}
 					activeProjectId={workspace.activeProjectId}
 					pipelineStatus={workspace.pipelineStatus}
+					compileFailedAt={workspace.compileFailedAt}
 					busy={workspace.busy}
 					sampleBusy={workspace.sampleBusy}
 					onCreate={workspace.onCreate}

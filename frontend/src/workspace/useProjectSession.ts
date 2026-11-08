@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import {
 	COMPILE_WAIT_TIMEOUT,
 	NO_RECOGNIZABLE_DEMAND,
+	compileErrorMessage,
 	hasDemandSource,
 	interpretCompilation,
 	isAbort,
@@ -52,6 +53,8 @@ export type ProjectSession = {
 	pipelineNote: string | null;
 	pipelineActive: boolean;
 	pipelineStatus: string | null;
+	/** When the open project's latest known compile job failed. Null after a newer pipeline starts. */
+	compileFailedAt: string | null;
 	/** Run that the current pipeline status describes. A different run keeps its own heading. */
 	pipelineRunId: string | null;
 	pipelineStages: PipelineStage[];
@@ -87,6 +90,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 	const [pipelineNote, setPipelineNote] = useState<string | null>(null);
 	const [pipelineActive, setPipelineActive] = useState(false);
 	const [pipelineStatus, setPipelineStatus] = useState<string | null>(null);
+	const [failedCompiles, setFailedCompiles] = useState<Record<string, string>>({});
 	const [pipelineRunId, setPipelineRunId] = useState<string | null>(null);
 	const [pipelineStages, setPipelineStages] = useState<PipelineStage[]>([]);
 	const pipelineStatusRef = useRef<string | null>(null);
@@ -660,7 +664,9 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 					throw caught;
 				}
 				if (job.status === "FAILED") {
-					setError({ summary: job.error?.trim() || "需求整理失败。" });
+					const projectId = current.id;
+					setFailedCompiles((known) => ({ ...known, [projectId]: new Date().toISOString() }));
+					setError({ summary: compileErrorMessage(job.error) });
 					return;
 				}
 				const requirements = await clientRef.current.getRequirements(current.id, { signal });
@@ -702,6 +708,12 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 			writePipelineKey(current.id, revision, null);
 			writePipelineId(current.id, accepted.pipeline_id);
 			acceptedProjectId = current.id;
+			setFailedCompiles((known) => {
+				if (!(current.id in known)) return known;
+				const next = { ...known };
+				delete next[current.id];
+				return next;
+			});
 			setStartOffer(null);
 			setPipelineStatus(accepted.status);
 			setPipelineRunId(accepted.run_id);
@@ -759,6 +771,7 @@ export function useProjectSession(clientRef: MutableRefObject<ApiClient>, runs: 
 		pipelineNote,
 		pipelineActive,
 		pipelineStatus,
+		compileFailedAt: activeProjectId ? failedCompiles[activeProjectId] ?? null : null,
 		pipelineRunId,
 		pipelineStages,
 		reportStatus,
