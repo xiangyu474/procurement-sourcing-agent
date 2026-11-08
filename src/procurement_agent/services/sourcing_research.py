@@ -141,7 +141,7 @@ def _looks_like_specification(line: str) -> bool:
     return any(term in folded for term in _SPECIFICATION_TERMS)
 
 
-def _focused_page_text(content: str, limit: int = 6000) -> str:
+def _focused_page_text(content: str, limit: int = 18_000) -> str:
     """Show the researcher the part of the page that carries the numbers.
 
     A datasheet keeps its specification table deep in the document, and the
@@ -155,7 +155,9 @@ def _focused_page_text(content: str, limit: int = 6000) -> str:
     marks = [index for index, line in enumerate(lines) if _looks_like_specification(line)]
     if not marks:
         return content[:limit]
-    span = 30
+    # The window has to hold the whole table. A table cut in half loses the
+    # rows that state the measurement, and the claim then cannot be checked.
+    span = 120
     best_start = marks[0]
     best_score = -1
     for index in marks:
