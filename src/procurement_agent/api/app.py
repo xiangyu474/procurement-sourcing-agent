@@ -1372,8 +1372,11 @@ async def build_report(payload: BuildReportRequest, x_internal_token: str | None
                 or context.get("run_id") != payload.run_id):
             raise HTTPException(status_code=409, detail="pipeline decision snapshot mismatch")
         decisions = context.get("decisions") or []
-        if not any(item.get("accepted") is True for item in decisions):
-            raise HTTPException(status_code=409, detail="no gate-accepted decisions")
+        # A report is written whenever the run produced candidates. A run that
+        # found no passing candidate still has something to report: what was
+        # searched, what the sources said, and what is still missing.
+        if not decisions and not (context.get("candidates") or []):
+            raise HTTPException(status_code=409, detail="the run produced no candidates to report")
         questions = [
             _text_value(question)
             for item in (context.get("requirements") or []) + (context.get("candidates") or [])
