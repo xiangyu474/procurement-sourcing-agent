@@ -234,6 +234,50 @@ describe("useProjectSession", () => {
 		expect(result.current.candidateCount).toBe(0);
 	});
 
+	it("shows the Chinese compile failure and remembers it for the rail", async () => {
+		sessionStorage.setItem("psi.activeProjectId", projectId);
+		let failed = true;
+		const startPipeline = vi.fn(async () => started);
+		const { result } = renderHook(() =>
+			useWorkspace(
+				client({
+					startPipeline,
+					getPipeline: async () => pipeline,
+					getRun: async () => run,
+					getRequirements: async () =>
+						failed
+							? { state: "ready", body: { analysis_version: 1, compilation: { requirements: [], issues: [] } } }
+							: {
+									state: "ready",
+									body: { analysis_version: 1, compilation: { requirements: [{ requirement_id: "r1" }], issues: [] } },
+								},
+					getCompileJob: async () => ({
+						compile_id: "compile-1",
+						project_id: projectId,
+						status: failed ? "FAILED" : "COMPLETED",
+						analysis_version: failed ? null : 1,
+						demand_revision: 1,
+						error: failed ? "NOT_A_REAL_CODE" : null,
+					}),
+				}),
+			),
+		);
+		await waitFor(() => expect(result.current.project?.id).toBe(projectId));
+		await act(async () => {
+			await result.current.onStart();
+		});
+		expect(startPipeline).not.toHaveBeenCalled();
+		expect(result.current.error?.summary).toBe("需求整理没有完成，请稍后重试。");
+		expect(result.current.error?.summary).not.toContain("NOT_A_REAL_CODE");
+		expect(result.current.compileFailedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+		failed = false;
+		await act(async () => {
+			await result.current.onStart();
+		});
+		await waitFor(() => expect(result.current.compileFailedAt).toBeNull());
+		expect(startPipeline).toHaveBeenCalledTimes(1);
+	});
+
 	it("starts a pipeline with the saved key and selects its run", async () => {
 		sessionStorage.setItem("psi.activeProjectId", projectId);
 		sessionStorage.setItem("psi.pipelineKey.v1", JSON.stringify({ [`${projectId}:1`]: "same-key" }));

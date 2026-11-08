@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "./types";
 import {
+	COMPILE_ERROR_FALLBACK,
+	compileErrorMessage,
 	explainRun,
 	interpretCompilation,
 	messageForApiError,
+	openRailStatus,
 	runStatusLabel,
 	sanitizePublicText,
 	stageLabel,
@@ -124,6 +127,47 @@ describe("adapter", () => {
 		const cleaned = sanitizePublicText("Bearer secret-value Supervisor DSL token Tavily");
 		expect(cleaned).not.toMatch(/secret-value|Supervisor|DSL|token|Tavily/i);
 		expect(cleaned).toContain("寻源流程");
+	});
+
+	it("maps compile job error codes to the gateway Chinese sentences", () => {
+		expect(compileErrorMessage("COMPILE_UPSTREAM_UNAVAILABLE")).toBe("模型服务这次没有完成响应，请稍后重试。");
+		expect(compileErrorMessage("COMPILE_FAILED")).toBe("需求没能整理成可核对的条件，请稍后重试。");
+		expect(compileErrorMessage("REQUIREMENTS_SCHEMA_UNRESOLVED")).toBe("需求没能整理成可核对的条件，请稍后重试。");
+		expect(compileErrorMessage("NO_RECOGNIZABLE_DEMAND")).toBe("没有读到可整理的采购需求，请检查输入内容。");
+		expect(compileErrorMessage("SOMETHING_ELSE")).toBe(COMPILE_ERROR_FALLBACK);
+		expect(compileErrorMessage("  COMPILE_FAILED  ")).toBe("需求没能整理成可核对的条件，请稍后重试。");
+		expect(compileErrorMessage(null)).toBe(COMPILE_ERROR_FALLBACK);
+		expect(compileErrorMessage("")).toBe(COMPILE_ERROR_FALLBACK);
+		expect(COMPILE_ERROR_FALLBACK).not.toMatch(/COMPILE_|[A-Z]{3,}/);
+	});
+
+	it("lets a failed compile replace an older run on the open project rail", () => {
+		const olderRun = "2026-11-07T01:00:00.000Z";
+		const failedAt = "2026-11-08T01:00:00.000Z";
+		expect(
+			openRailStatus({
+				pipelineStatus: "PARTIAL",
+				runStatus: "PARTIAL",
+				runUpdatedAt: olderRun,
+				compileFailedAt: failedAt,
+			}),
+		).toEqual({ status: "FAILED", compileFailed: true });
+		expect(
+			openRailStatus({
+				pipelineStatus: "RUNNING",
+				runStatus: "PARTIAL",
+				runUpdatedAt: "2026-11-08T02:00:00.000Z",
+				compileFailedAt: failedAt,
+			}),
+		).toEqual({ status: "RUNNING", compileFailed: false });
+		expect(
+			openRailStatus({
+				pipelineStatus: null,
+				runStatus: "PARTIAL",
+				runUpdatedAt: olderRun,
+				compileFailedAt: null,
+			}),
+		).toEqual({ status: "PARTIAL", compileFailed: false });
 	});
 
 	it("maps unauthorized and history import failures", () => {

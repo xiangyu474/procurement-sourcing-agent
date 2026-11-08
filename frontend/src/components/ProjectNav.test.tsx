@@ -157,4 +157,47 @@ describe("ProjectNav", () => {
 		expect(screen.getByText("进行中")).toBeTruthy();
 		expect(screen.queryByText("已结束")).toBeNull();
 	});
+
+	it("shows 未完成 when the open project's latest compile failed after the last run", () => {
+		render(
+			<ProjectNav
+				projects={[
+					{
+						id: "p1",
+						title: "摄像机",
+						history_availability: "NOT_PROVIDED",
+						demand_revision: 2,
+						analysis_version: 1,
+						created_at: "2026-11-07T00:00:00.000Z",
+						latest_run: { id: "run-1", status: "PARTIAL", current_stage: "PARTIAL", updated_at: "2026-11-07T01:00:00.000Z" },
+					},
+					{
+						id: "p2",
+						title: "另一项",
+						history_availability: "NOT_PROVIDED",
+						demand_revision: 1,
+						analysis_version: 1,
+						created_at: "2026-11-07T00:00:00.000Z",
+						latest_run: { id: "run-2", status: "PARTIAL", current_stage: "PARTIAL", updated_at: "2026-11-07T01:00:00.000Z" },
+					},
+				]}
+				activeProjectId="p1"
+				pipelineStatus="PARTIAL"
+				compileFailedAt="2026-11-08T01:00:00.000Z"
+				busy={false}
+				sampleBusy={false}
+				onCreate={async () => true}
+				onOpen={async () => true}
+				onSelect={() => {}}
+				onSample={async () => {}}
+			/>,
+		);
+		const open = screen.getByRole("button", { name: /摄像机/ });
+		expect(open.querySelector(".project-status")?.textContent).toBe("未完成");
+		expect(open.querySelector(".project-status")?.className).toContain("st-fail");
+		expect(open.textContent).not.toContain("部分完成");
+		expect(open.textContent).not.toContain("COMPILE_FAILED");
+		const other = screen.getByRole("button", { name: /另一项/ });
+		expect(other.querySelector(".project-status")?.textContent).toBe("部分完成");
+	});
 });
