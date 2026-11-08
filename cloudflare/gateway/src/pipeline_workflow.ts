@@ -211,6 +211,15 @@ export class ProcurementPipelineWorkflow extends WorkflowEntrypoint<Env, Pipelin
 				await recordPipelineStage(this.env.DB, pipelineId, "DECIDING", "RUNNING");
 			});
 			await step.do("decide-frozen-context", { retries: { limit: 1, delay: "15 seconds", backoff: "constant" }, timeout: "30 minutes" }, async () => {
+				// A research that found no candidate has nothing to decide. That is
+				// an answer, and the analysis says so in words.
+				const assessed = await snapshot(this.env.DB, pipelineId, "SPEC_RESULTS") as { assessments?: unknown[] };
+				const assessmentCount = Array.isArray(assessed.assessments) ? assessed.assessments.length : 0;
+				if (assessmentCount === 0) {
+					await save(this.env.DB, pipelineId, "PRICE_CONTEXT", { price_contexts: [] });
+					await save(this.env.DB, pipelineId, "DECISION_RESULTS", { decisions: [] });
+					return;
+				}
 				const output = await callContainer(this.env, "/internal/decide", {
 					project_id: projectId, pipeline_id: pipelineId, gateway_url: this.env.CONTAINER_GATEWAY_URL,
 					token: this.env.INTERNAL_GATEWAY_TOKEN, runtime_config: runtime(this.env),
