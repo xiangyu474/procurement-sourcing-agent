@@ -54,7 +54,10 @@ resolution", "max. video resolution" or "输出分辨率" line of the specificat
 table. A page that only states an "effective resolution" or a sensor pixel
 count answers a different question, so a task that asks for that line is worth
 a search of its own. Every researcher task gets at
-most 2 searches and 2 fetches, so two tasks fill the shared search budget. Do
+most 2 searches and 2 fetches, so two tasks fill the shared search budget. A
+demand may name many items; research the items whose constraints are hard and
+measurable first, because an item without a measurable constraint cannot be
+decided against a supplier. Do
 not record a follow-up question you cannot delegate in the same run. The
 researcher returns source-attributed leads only. Do not claim technical PASS,
 formal supplier qualification, current supply capacity, purchasable price, or

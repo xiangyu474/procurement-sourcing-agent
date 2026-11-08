@@ -69,10 +69,14 @@ export async function buildFinalContext(input: FinalInput): Promise<Row> {
 			model_config: raw.model_config ?? {}, prompt_versions: raw.prompt_versions ?? {} };
 		assessments.push(result); assessmentsByKey.set(pair, result);
 	}
+	// The model may not decide every candidate. That is a gap in the answer,
+	// not a broken answer: the decided ones are kept and the rest is recorded.
 	const seen = new Set<string>();
+	const decisionGaps: string[] = [];
 	for (const decision of decisions) {
 		const pair = key(decision); const assessment = assessmentsByKey.get(pair);
-		if (!assessment || seen.has(pair)) throw new Error("SNAPSHOT_DECISION_MISMATCH");
+		if (!assessment) { decisionGaps.push(String(decision.product_candidate_id ?? pair)); continue; }
+		if (seen.has(pair)) continue;
 		seen.add(pair);
 		if (decision.hard_spec_overall !== assessment.hard_spec_overall) throw new Error("SNAPSHOT_VERDICT_MISMATCH");
 		if (decision.accepted === true && decision.technical_verdict === "VERIFIED_PASS" && assessment.hard_spec_overall !== "PASS") {
@@ -86,13 +90,15 @@ export async function buildFinalContext(input: FinalInput): Promise<Row> {
 			if (!evidenceIds.has(str(id))) throw new Error("SNAPSHOT_EVIDENCE_MISSING");
 		}
 	}
-	if (seen.size !== assessmentsByKey.size) throw new Error("SNAPSHOT_MISSING_DECISION");
+	for (const [pair, assessment] of assessmentsByKey) {
+		if (!seen.has(pair)) decisionGaps.push(String(assessment.product_candidate_id ?? pair));
+	}
 	for (const price of prices) if (!requirementIds.has(str(price.requirement_id))) throw new Error("SNAPSHOT_PRICE_MISMATCH");
 	return {
 		schema_version: "pipeline-decision-v1", pipeline_id: input.pipelineId, project_id: input.projectId,
 		project_title: input.projectTitle, run_id: input.runId, demand_revision: input.demandRevision,
 		research_status: input.researchStatus, demand_sha256: input.demandSha256,
 		source_snapshot_hashes: input.snapshotHashes, requirements, candidates, claims, evidence,
-		assessments, decisions, price_contexts: prices,
+		assessments, decisions, price_contexts: prices, decision_gaps: decisionGaps,
 	};
 }
