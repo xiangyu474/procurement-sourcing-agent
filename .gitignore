@@ -59,3 +59,10 @@ _read_exp.py
 
 # Local provider credentials (never in the repository)
 .provider_backup.json
+
+# 本地会话、凭据与临时产物（不得进 Git）
+.c*.txt
+.p[0-9]*
+.pc.json
+.pl[0-9]*
+.operator_token.new
