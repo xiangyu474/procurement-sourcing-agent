@@ -17,4 +17,8 @@
 
 克隆后需要 `git lfs pull` 才能拿到 `demo.mp4` ✓（仓库里提交的是 LFS 指针 ✓）。
 
+直接播放：<https://media.githubusercontent.com/media/xiangyu474/procurement-sourcing-agent/main/docs/m4/demo/demo.mp4> ✓✓
+
+在仓库中查看：<https://github.com/xiangyu474/procurement-sourcing-agent/blob/main/docs/m4/demo/demo.mp4> ✓✓
+
 录制步骤与旁白见 `docs/m4/backend_contract_response.md` §7.9 与 §7.11 ✓✓；解说词见 `docs/m4/demo_narration.md` ✓✓。
