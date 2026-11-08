@@ -17,11 +17,10 @@ os.environ["GENESIS_BASE_URL"] = provider["GENESIS_BASE_URL"]
 os.environ["GENESIS_ACCESS_TOKEN"] = provider["GENESIS_ACCESS_TOKEN"]
 os.environ["GENESIS_MODEL_ID"] = provider["GENESIS_MODEL_ID"]
 
-from procurement_agent.domain.requirements import RequirementSourceType
+from procurement_agent.infra import load_settings
+from procurement_agent.infra.llm import build_chat_model
 from procurement_agent.ingestion.compiler import compile_requirement_fragments
 from procurement_agent.ingestion.pptx import extract_pptx_fragments
-from procurement_agent.infra.llm import build_chat_model
-from procurement_agent.infra import load_settings
 
 deck = pathlib.Path(
     "../参赛要求与官方资料/命题赛道素材_已解压/命题赛道素材/寻价比源素材/1/智能视频采集终端生产采购项目_v1.pptx"
