@@ -259,7 +259,10 @@ async def compile_demand(payload: CompileDemandRequest, x_internal_token: str | 
     if not fragments:
         raise HTTPException(status_code=422, detail="at least one non-empty text/PPTX demand source is required")
 
-    model = build_chat_model(load_settings(), timeout=600)
+    # The compile has three attempts. A per-call timeout of three minutes keeps
+    # all of them inside the workflow step, so a stalled model stream ends in a
+    # clear failure instead of a step timeout.
+    model = build_chat_model(load_settings(), timeout=180)
     try:
         result = await run_in_threadpool(
             build_demand_intake,
@@ -707,9 +710,23 @@ async def decide(payload: DecisionRequest, x_internal_token: str | None = Header
     requirements = [
         Requirement.model_validate(item) for item in context.get("requirements") or []
     ]
-    transactions = [
-        HistoricalTransaction.model_validate(item) for item in context.get("history_transactions") or []
-    ]
+    # The frozen snapshot carries a reference to the imported workbook. The
+    # rows are read from the gateway, where the immutable copy lives.
+    transactions: list[HistoricalTransaction] = []
+    reference = context.get("history_reference") or {}
+    if isinstance(reference, dict) and reference.get("r2_key"):
+        async with httpx.AsyncClient(timeout=120) as history_client:
+            history_response = await history_client.get(
+                f"{payload.gateway_url.rstrip('/')}/internal/projects/{payload.project_id}/history",
+                headers={"x-internal-token": payload.token},
+            )
+            if history_response.status_code == 404:
+                raise HTTPException(status_code=404, detail="the imported history was not found")
+            history_response.raise_for_status()
+            transactions = [
+                HistoricalTransaction.model_validate(item)
+                for item in (history_response.json().get("transactions") or [])
+            ]
     evidence_ids = [str(item) for item in context.get("evidence_ids") or []]
 
     price_findings: dict[str, list[Any]] = {}

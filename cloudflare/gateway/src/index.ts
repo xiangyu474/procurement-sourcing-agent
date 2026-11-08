@@ -1966,6 +1966,21 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 			// The data the formal report is built from. Everything the report
 			// writes is read here, so the report cannot contain a number that
 			// is not in the database.
+			// The imported history of one project, read from the immutable copy in
+			// R2. The container asks for it when it prices the requirement.
+			const historyMatch = url.pathname.match(/^\/internal\/projects\/([^/]+)\/history$/);
+			if (historyMatch && request.method === "GET") {
+				const projectId = decodeURIComponent(historyMatch[1]);
+				const { results: historyRows } = await env.DB.prepare(
+					`SELECT normalized_r2_key FROM history_datasets WHERE project_id = ?1 ORDER BY imported_at DESC LIMIT 1`,
+				).bind(projectId).all<{ normalized_r2_key: string }>();
+				if (!historyRows.length) return json({ transactions: [] });
+				const stored = await env.BUCKET.get(historyRows[0].normalized_r2_key);
+				if (!stored) return json({ transactions: [] });
+				const normalized = JSON.parse(await stored.text()) as { transactions?: unknown[] };
+				return json({ transactions: normalized.transactions ?? [] });
+			}
+
 			const reportContextMatch = url.pathname.match(/^\/internal\/projects\/([^/]+)\/report-context$/);
 			if (reportContextMatch && request.method === "GET") {
 				const projectId = decodeURIComponent(reportContextMatch[1]);
@@ -2572,6 +2587,30 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 				.first<{ id: string; revision: number; text_content: string | null }>();
 			if (!row || !row.text_content) return json({ error: "not_found" }, 404);
 			return json({ source_id: row.id, revision: row.revision, text: row.text_content });
+		}
+
+		// The latest demand compilation of a project. A visitor who reloads
+		// the page can pick up the job that is still running instead of
+		// starting a second one.
+		const compileLatestMatch = url.pathname.match(
+			/^\/api\/projects\/([^/]+)\/requirement-compile\/latest$/,
+		);
+		if (compileLatestMatch && request.method === "GET") {
+			const projectId = decodeURIComponent(compileLatestMatch[1]);
+			const row = await env.DB.prepare(
+				`SELECT id, status, error, detail_json FROM project_jobs
+				 WHERE project_id = ?1 AND job_type = 'COMPILE' ORDER BY created_at DESC LIMIT 1`,
+			).bind(projectId).first<Record<string, unknown>>();
+			if (!row) return json({ error: "not_found" }, 404);
+			const detail = JSON.parse(String(row.detail_json ?? "{}")) as Record<string, unknown>;
+			return json({
+				compile_id: row.id,
+				project_id: projectId,
+				status: row.status,
+				analysis_version: detail.analysis_version ?? null,
+				demand_revision: detail.demand_revision ?? null,
+				error: guestSessionId && row.error ? guestCompileReason(String(row.error ?? "")) : row.error,
+			});
 		}
 
 		// The state of one demand compilation.

@@ -86,7 +86,14 @@ export class ProcurementPipelineWorkflow extends WorkflowEntrypoint<Env, Pipelin
 						if (!Array.isArray(value.transactions)) throw new Error("HISTORY_SNAPSHOT_INVALID");
 						transactions = value.transactions;
 					}
-					await save(this.env.DB, pipelineId, "HISTORY_CONTEXT", { dataset_id: row.history_dataset_id, transactions });
+					// The imported workbook is immutable in R2, so the snapshot keeps a
+					// reference instead of a copy. A thousand history rows do not fit
+					// in one snapshot, and the rows are read from R2 where they are used.
+					await save(this.env.DB, pipelineId, "HISTORY_CONTEXT", {
+						dataset_id: row.history_dataset_id,
+						r2_key: row.history_r2_key,
+						row_count: transactions.length,
+					});
 				}
 				await update(this.env.DB, pipelineId, "RUNNING", "RESEARCHING");
 				await recordPipelineStage(this.env.DB, pipelineId, "RESEARCH", "RUNNING");
@@ -185,12 +192,20 @@ export class ProcurementPipelineWorkflow extends WorkflowEntrypoint<Env, Pipelin
 			await step.do("freeze-decision-context", { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "2 minutes" }, async () => {
 				const spec = JSON.parse(await snapshot(this.env.DB, pipelineId, "SPEC_CONTEXT")) as SpecContext;
 				const results = JSON.parse(await snapshot(this.env.DB, pipelineId, "SPEC_RESULTS")) as SpecResults;
-				const history = JSON.parse(await snapshot(this.env.DB, pipelineId, "HISTORY_CONTEXT")) as { transactions: unknown[] };
+				const history = JSON.parse(await snapshot(this.env.DB, pipelineId, "HISTORY_CONTEXT")) as {
+					dataset_id?: string | null; r2_key?: string | null; row_count?: number | null;
+				};
 				await save(this.env.DB, pipelineId, "DECISION_CONTEXT", {
 					project_id: projectId, demand_revision: spec.demand_revision, run_id: runId,
 					requirements: spec.requirements, assessments: results.assessments.map(row => row.assessment),
 					evidence_ids: [...new Set(spec.candidates.flatMap(candidate => candidate.evidence_ids))],
-					history_transactions: history.transactions, history_price_unit: null,
+					// The history is read from R2 by the container when it prices it.
+					history_reference: {
+						dataset_id: history.dataset_id,
+						r2_key: history.r2_key,
+						row_count: history.row_count,
+					},
+					history_price_unit: null,
 				});
 				await update(this.env.DB, pipelineId, "RUNNING", "DECIDING");
 				await recordPipelineStage(this.env.DB, pipelineId, "DECIDING", "RUNNING");

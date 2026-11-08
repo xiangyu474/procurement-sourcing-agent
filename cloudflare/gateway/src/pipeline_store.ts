@@ -83,7 +83,7 @@ export async function storePipelineSnapshot(
 	db: D1Database, pipelineId: string, snapshotType: string, payload: string,
 ): Promise<SnapshotResult> {
 	if (!/^[A-Z_]{1,60}$/.test(snapshotType)) throw new Error("invalid_snapshot_type");
-	if (new TextEncoder().encode(payload).byteLength > 1_000_000) throw new Error("snapshot_too_large");
+	if (new TextEncoder().encode(payload).byteLength > 2_500_000) throw new Error("snapshot_too_large");
 	// Reject malformed snapshots before they become immutable.
 	JSON.parse(payload);
 	const hash = await sha256(payload);
