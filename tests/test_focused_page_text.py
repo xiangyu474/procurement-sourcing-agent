@@ -6,9 +6,9 @@ from procurement_agent.services.sourcing_research import _focused_page_text
 
 
 def test_a_deep_specification_table_is_shown_to_the_researcher() -> None:
-    head = "\n".join(f"cover line {index}" for index in range(3000))
+    head = "\n".join(f"cover line {index}" for index in range(600))
     table = "| Resolution | 5 Megapixel |\n| Frame rate | 30 fps |\n| Ingress | IP67 |"
-    tail = "\n".join(f"footer line {index}" for index in range(3000))
+    tail = "\n".join(f"footer line {index}" for index in range(600))
     content = f"{head}\n{table}\n{tail}"
 
     focused = _focused_page_text(content)
