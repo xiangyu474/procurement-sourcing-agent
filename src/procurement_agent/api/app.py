@@ -259,10 +259,10 @@ async def compile_demand(payload: CompileDemandRequest, x_internal_token: str | 
     if not fragments:
         raise HTTPException(status_code=422, detail="at least one non-empty text/PPTX demand source is required")
 
-    # The compile has three attempts. A per-call timeout of three minutes keeps
-    # all of them inside the workflow step, so a stalled model stream ends in a
-    # clear failure instead of a step timeout.
-    model = build_chat_model(load_settings(), timeout=180)
+    # The official deck compiles in about 140 seconds. The per-call timeout is
+    # three times that, so a slow answer is still an answer, and three
+    # attempts of it fit inside the workflow step.
+    model = build_chat_model(load_settings(), timeout=300)
     try:
         result = await run_in_threadpool(
             build_demand_intake,
