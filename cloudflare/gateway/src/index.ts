@@ -687,29 +687,10 @@ async function persistM2ResearchBundle(env: Env, bundle: M2BundlePayload): Promi
 	return { evidenceCount: bundle.evidence.length, candidateCount: bundle.candidates.length };
 }
 
-export class SourcingContainer extends Container {
-	defaultPort = 8000;
-	// A sourcing run can hold one request open for many minutes. Keep the
-	// instance alive long enough for the run to finish instead of stopping it
-	// under the request.
-	sleepAfter = "20m";
-	// Probe the application's own health route so readiness reflects the
-	// Python process, not just an open TCP port.
-	pingEndpoint = "localhost/health";
-
-	constructor(ctx: DurableObjectState<{}>, env: Env) {
-		super(ctx, env);
-		// The Python process reads its tracing configuration once, at import
-		// time, and the reader caches that lookup. Passing the values when the
-		// instance starts is the only way they are seen.
-		this.envVars = {
-			...(env.LANGSMITH_TRACING ? { LANGSMITH_TRACING: env.LANGSMITH_TRACING } : {}),
-			...(env.LANGSMITH_PROJECT ? { LANGSMITH_PROJECT: env.LANGSMITH_PROJECT } : {}),
-			...(env.LANGSMITH_API_KEY ? { LANGSMITH_API_KEY: env.LANGSMITH_API_KEY } : {}),
-		};
-	}
-}
-
+// The competition is over and the container binding is gone. The class is
+// removed from the code so the Durable Object can be retired with a
+// tombstone. The read-only demo keeps working: the example run, its
+// evidence and its report are read from D1 and R2.
 interface CompileRequest {
 	projectId: string;
 	analysisVersion: number;
@@ -2724,10 +2705,10 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 					await env.DB.prepare(
 						"UPDATE project_pipelines SET report_id = NULL, report_status = 'NOT_STARTED', report_error_code = NULL WHERE id = ?1",
 					).bind(existing.pipeline_id).run();
-					await startPipelineReport(env, existing.project_id, existing.pipeline_id).catch((error) => {
-						console.error("sample report could not start", error);
-					});
-					return json({ project_id: existing.project_id, pipeline_id: existing.pipeline_id, report_id: null, reused: true, report: "GENERATING" });
+					// The report is written by the container, which is gone. The
+					// sample keeps its analysis and its evidence, and the page
+					// says the report was not generated.
+					return json({ project_id: existing.project_id, pipeline_id: existing.pipeline_id, report_id: null, reused: true, report: "NOT_GENERATED" });
 				}
 				return json({ project_id: existing.project_id, pipeline_id: existing.pipeline_id, report_id: existing.report_id, reused: true });
 			}
@@ -2848,12 +2829,10 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
 			await env.DB.prepare(
 				"UPDATE project_pipelines SET report_id = NULL, report_status = 'NOT_STARTED', report_error_code = NULL WHERE id = ?1",
 			).bind(pipelineId).run();
-			// The report must describe this sample, not the run it was copied
-			// from, so it carries the version the page shows.
-			await startPipelineReport(env, projectId, pipelineId).catch((error) => {
-				console.error("sample report could not start", error);
-			});
-			return json({ project_id: projectId, pipeline_id: pipelineId, report_id: reportId }, 201);
+			// The report is written by the container, which is gone. The sample
+			// keeps its analysis and its evidence, and the page says the report
+			// was not generated.
+			return json({ project_id: projectId, pipeline_id: pipelineId, report_id: null }, 201);
 		}
 
 		const analysisMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/analysis$/);

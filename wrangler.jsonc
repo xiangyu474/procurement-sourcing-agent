@@ -10,32 +10,17 @@
 		"directory": "frontend/dist",
 		"not_found_handling": "single-page-application"
 	},
-	"triggers": {
-		"crons": ["*/25 * * * *"]
-	},
+	// The competition is over. The container binding is gone so the Worker can
+	// run on the free plan. The read-only demo still works: the example run,
+	// its evidence and its report are read from D1 and R2. Only starting a
+	// new analysis needs the container, and that path now returns an error.
 	"observability": {
-		"enabled": true
-	},
-	"containers": [
-		{
-			"class_name": "SourcingContainer",
-			"image": "./Dockerfile",
-			"instance_type": "standard-4",
-			"max_instances": 8
-		}
-	],
-	"durable_objects": {
-		"bindings": [
-			{
-				"name": "SOURCING_CONTAINER",
-				"class_name": "SourcingContainer"
-			}
-		]
+		"enabled": false
 	},
 	"exports": {
 		"SourcingContainer": {
 			"type": "durable-object",
-			"storage": "sqlite"
+			"state": "deleted"
 		}
 	},
 	"workflows": [
